@@ -958,9 +958,13 @@ limit. Choose the person (**Choose…** until you do). **Mirror** swaps left and
 right, for dancers who mirror each other. **Offset** is a time shift in frames:
 a negative value copies the other person's motion from earlier frames, a
 positive value from later frames. The hidden person keeps their own heading and
-their own start and end positions: the other person's path is turned
-accordingly, and the pose is blended into the captured poses over a few frames
-at both ends. It is unavailable unless that person has one captured take of
+position at both ends of the range, and the other person's steps are turned to
+that heading. If the other person travels differently, the path is adjusted
+evenly over the range and the Console reports by how much, with a line such as
+`Frames 101–120 copied from Person 2: the path was adjusted by 28.5 cm (1.36 cm
+per frame) to meet the captured motion.` Pose and height are blended into the
+captured motion at both ends, over more frames when the poses differ more.
+Contact timings in the range are the other person's. It is unavailable unless that person has one captured take of
 their own covering the range plus one frame on each side at the offset; the row
 then shows `<name> has no captured motion covering this range with this
 offset.` (or `Choose a person to copy from.`) and **Fill hidden ranges** is
@@ -973,8 +977,8 @@ take with the suffix ` · filled`, and export file names end with `_filled`.
 
 Interpolated and copied frames are marked by a thin band on the timeline. Export
 also writes a console line such as `Person 1_filled: 45 of 313 frames are
-interpolated across hidden ranges.` When a take has copied frames the line reads
-`Person 1_filled: 45 of 313 frames are filled across hidden ranges (0
+interpolated across hidden ranges.` When a take has copied frames, it writes a
+line such as `Person 1_filled: 45 of 313 frames are filled across hidden ranges (0
 interpolated, 45 copied from another person).`
 
 A joined take is used only while it is current. If a source take is

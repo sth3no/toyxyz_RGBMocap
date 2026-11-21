@@ -726,9 +726,11 @@ source files keep their stamps, each filled range is still a gap of
 `person['takes']` and `gap_fill` still selects the same choice (method and params; a copy choice is
 `{'method': 'copy', 'person', 'mirror', 'offset'}`), so setting a
 range back to `none` deactivates the join without deleting it. Gap records in
-`fill.json` carry `params` (`{}` for smooth); `donors` lists the other people
-read (`person`, `project`, `first`, `end`, `files` with stamps), and a changed
-donor file makes the join stale. The donor is one captured take of the other
+`fill.json` carry `params` (`{}` for smooth) and, for a copy, `residual_cm`
+beside `params` (a report, ignored by currency); `donors` lists the other
+people's takes read (`person`, `project`, `first`, `end`, `files` with stamps).
+A copy stays current while the donor files it read keep their stamps and the
+user's choice is unchanged. The donor is one captured take of the other
 person, never a joined take, covering the range plus one frame on each side at
 the offset (`hidden_ranges.donor_take`, `method_issue`). With a `kind`, a
 current join replaces its sources only when `kinds` contains the base of that
@@ -750,9 +752,30 @@ the shared scene like any take: `scene_camera.take_projects` lists it after the
 person's takes, so it enters the shared floor inputs, and creating, removing or
 deactivating one changes the shared-floor signature. It never becomes the scene
 reference camera. `take_join.assemble` dispatches per gap through `FILLS`; a later
-method plugs in there with its own fill function and `params`. A donor is
-brought into the joined world through the camera pairing at the frame before the
-range, with the same heading-and-horizontal-position rule as the seams. Source takes are never modified. For the user-facing behavior
+method plugs in there with its own fill function and `params`.
+
+Copy from person (`gap_fill.copy_fill`, `take_join._copy`): the donor is read
+in its own world (world params only, `transl` turned into pelvis positions with
+the donor's pelvis; no camera-space params of the donor are read). Only heading
+differences, displacements and heights are used. The donor's facing is turned
+by the heading difference to the hidden person at each end, interpolated across
+the range; its horizontal steps are rotated the same way, and the remaining
+horizontal difference to where the hidden person reappears (the residual) is
+spread linearly. `assemble` returns it per copied gap, the worker prints
+`Frames A–B copied from <name>: the path was adjusted by X cm (Y cm per frame)
+to meet the captured motion.` as an `info` event and stores `residual_cm`. Pose
+blend: per joint, local rotations compose on the right; the boundary difference
+`D = donor⁻¹ · boundary` is faded out with smoothstep weights (`donor ·
+slerp(I, D, 1 − w)`), so a matching donor is reproduced exactly. The blend
+length at each end is `ceil(largest joint angle of D / 6°)` frames, clamped to
+5–30 and to half the range. Height: the donor's pelvis height above its own
+floor (y = 0) times `leg_hidden / leg_donor` (rest pelvis height above the
+lowest rest joint, from `SMPLX_NEUTRAL.npz`; 1.0 when unavailable), with the
+height difference at each end faded out over the same blend frames. Contact
+probabilities are the donor's. Mirror reflects across the vertical plane along
+the donor's facing at its first row. Camera-space rows of a copied gap are its
+joined-world rows seen through a camera pairing interpolated between the two
+seams. Source and donor takes are never modified. For the user-facing behavior
 and limits see [the user guide](USER_GUIDE.md#hidden-ranges).
 
 ## Character retargeting and export

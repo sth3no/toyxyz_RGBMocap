@@ -9,13 +9,17 @@
 | File | Result |
 | --- | --- |
 | `test_hidden_ranges.py` | 14 tests passed |
-| `test_gap_fill.py` | 20 tests passed |
+| `test_gap_fill.py` | 26 tests passed |
 | `test_take_joins.py` | 32 tests passed |
-| `test_take_join.py` | 44 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
-| `test_hidden_ranges_ui.py` | 21 tests passed |
+| `test_take_join.py` | 50 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
+| `test_hidden_ranges_ui.py` | 23 tests passed |
 | `test_take_labels.py` | 4 tests passed |
-| whole `tests/` folder | 161 tests, 2 skipped; the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
+| whole `tests/` folder | 175 tests, 2 skipped; the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
 
+- The tests include a "twin" check: the hidden person's own motion, used as the
+  other person (also turned about the vertical axis and moved, and mirrored
+  twice), is reproduced across the range to 1e-9 in every pose key and in the
+  pelvis path. Smooth join output is bit-identical to step 1 (digest test).
 - No file that is hashed into a cache identity was changed; only files created
   for this feature and `people_store.py`, `people_ui.py` and `take_selection.py`,
   which are in no identity list, were edited.
@@ -23,34 +27,59 @@
   313 frames, every pixel black on frames 100-119 and 200-224; two people, each
   with takes 0-100, 120-200 and 225-313). The black frames hide both people at
   once, so the copy used a time offset: person 1's two ranges were filled from
-  person 2 with Offset -30 (frames 69-90 and 169-195 of person 2).
-- Ran `take_join_boot.py --person-id 1 --result initial` with **Mirror** on and
-  then off: exit 0 both times, 45 frames marked copied, 268 captured. Pelvis
-  step per frame, Mirror off: world median 1.51 cm, at the seams 99-100,
-  119-120, 199-200 and 224-225 1.52, 1.53, 1.50, 1.57 cm; camera space median
-  1.43 cm, seams 1.46, 1.47, 1.28, 1.38 cm. Mirror on: world 1.53, 1.51, 1.50,
-  1.57 cm; camera space 1.47, 1.45, 1.29, 1.37 cm.
-- The source segments stay upright: largest tilt against their own world
-  2.6e-6 deg (float32 storage). The new join was reported current; person 2's
-  own smooth join stayed current; all 112 files of person 2 were unchanged in
-  size and modification time. A third run with unchanged settings wrote nothing
-  (`cached: true`).
-- With `QT_QPA_PLATFORM=offscreen`, the main window constructed on this project
-  (not shown). Person 1's rows showed Copy from person, Person 2, `-30 f`, no
-  message and **Fill hidden ranges** enabled. Setting Offset to 0 through the
-  spin box showed `Person 2 has no captured motion covering this range with this
-  offset.` and disabled it; -30 cleared that. Person 2 showed two Smooth join
-  rows. `people.json` was restored byte for byte. Fill was not pressed.
-- The copied motion was not looked at: no visual check in the viewport or in
-  exported files. The numbers above are pelvis steps and tilt only.
+  person 2 with Offset -30 (frames 69-90 and 169-195 of person 2), Mirror off.
+- Ran `take_join_boot.py --person-id 1 --result initial` on the final code: exit
+  0, 45 frames marked copied. The Console lines were `Frames 101–120 copied from
+  Person 2: the path was adjusted by 28.5 cm (1.36 cm per frame) to meet the
+  captured motion.` and `Frames 201–225 copied from Person 2: the path was
+  adjusted by 33.4 cm (1.28 cm per frame) to meet the captured motion.` A second
+  run with unchanged settings wrote nothing (`cached: true`) and printed the same
+  two lines. The join was reported current, person 2's own smooth join stayed
+  current, and all source take files of both people kept their size and
+  modification time.
+- Person 2 stands almost still in this clip (pelvis 0.02-0.03 cm per frame in
+  the copied frames), so nearly all the motion inside the two filled ranges is
+  the path adjustment above: the pelvis moves 1.57 and 1.63 cm per frame on
+  average (captured median 1.46 cm). Small seam steps therefore do not show that
+  the copy is good. Measured read-only on the written take: lowest ankle or foot
+  joint inside the ranges -1.5 and -4.1 cm (captured frames: median +4.0, lowest
+  -1.6 cm); before this revision of the method it was -7.8 and -13.2 cm. Largest
+  per-joint rotation step at the four seams 1.4-2.3 degrees, inside the blends
+  at most 13.6 degrees (captured frames: 95th percentile of the per-frame largest
+  step 18.4 degrees). Blend lengths chosen: 10 and 12 frames at each end.
+- Ground truth on real motion (in memory, nothing written): 30 frames were cut
+  out of the middle of person 1's takes 120-200 (frames 145-174) and 225-313
+  (frames 254-283) and filled again, then compared with the cut-out frames:
+
+| Fill | Mean joint-angle error | Mean pelvis error |
+| --- | --- | --- |
+| Copy from the same motion in another world ("twin") | 0.00 / 0.00 degrees | 3.5 / 4.6 cm |
+| The twin 3 frames late | 5.2 / 4.8 degrees | 7.9 / 7.0 cm |
+| Person 2 (standing still) | 18.5 / 16.6 degrees | 13.9 / 14.1 cm |
+| Smooth join | 9.3 / 8.3 degrees | 8.8 / 10.7 cm |
+
+  The twin's pelvis error is the placement of the second part of the cut take
+  at its seam (7.2 / 9.2 cm), which the path adjustment spreads over the range;
+  with both parts in the same world the twin is reproduced to below 1e-12 cm
+  and 1e-13 degrees. Copying a person who does something else is worse than
+  Smooth join.
+- With `QT_QPA_PLATFORM=offscreen`, the Hidden ranges panel alone (not the main
+  window, no project files) was built on the final code: stepping Offset to a
+  value the other person does not cover showed the message and disabled **Fill
+  hidden ranges** at once, without saving; stepping to a covered value cleared
+  it; pressing Fill saved the pending Offset first and then asked for the fill.
+  An earlier revision of this step was also checked in the main window on the
+  test project; that check was not repeated on the final code.
+- The copied motion was not looked at: no visual check in the viewport, of a
+  render or in exported files. The numbers above are measurements only.
 - Not run: a fill with Copy from person started from the GUI (the worker was
   started from the command line); the panel in a shown window; interactive use
-  by a person; the `export` and `correct` stages, FBX/BVH export or retargeting
-  of a take with copied frames; a scene where the other person is visible during
-  the hidden range (Offset 0), a real group-dance clip, a clip with a real
-  occluder; any ExMR project; a FootMR result; copying fingers (GVHMR results
-  have none); import of exported files into other software; a clean
-  installation.
+  by a person; Apply Correction (`correct`) and export (`export`, FBX/BVH,
+  retargeting) of a take with copied frames; Mirror on the final code; a scene
+  where the other person is visible during the hidden range (Offset 0), a real
+  group-dance clip, a clip with a real occluder; any ExMR project; a FootMR
+  result; copying fingers (GVHMR results have none); import of exported files
+  into other software; a clean installation.
 
 ## Hidden ranges and Smooth join (2026-11-21)
 
