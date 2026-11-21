@@ -718,16 +718,31 @@ Hidden ranges are opt-in. `person['gap_fill']` in `people.json` holds the per-ga
 choices. `person['joins']` holds the joined takes, separately from
 `person['takes']`; without a `joins` key behavior is unchanged. A joined take
 is a new folder `<person>/takes/{first:09d}_{end:09d}_fill_v1` containing a
-normal take plus `fill.json` (sources with file stamps, gaps, method) and
-`fill_mask.npy` (0 captured, 1 interpolated; 2 and 3 are reserved). Consumers
-pick takes through `people_store.active_takes` and `join_current`, which return
-the joined take only while it is current and otherwise the source takes. Code
-that reads `person['takes']` directly does not see joined takes unless it
-switches deliberately. `take_join` runs as its own job stage through
-`take_join_boot.py` and `mocap/take_join.py`, outside `mocap/worker.py`, so no
-stage fingerprint changes. Later takes are anchored to the earlier one at each
-seam in camera space, not by each take's first-frame scene camera. Joined takes
-are excluded from the shared scene floor inputs and never become the scene
+normal take plus `fill.json` (sources with file stamps, gaps and methods, and
+`kinds`, the base results it provides) and `fill_mask.npy` (0 captured, 1
+interpolated; 2 and 3 are reserved). Consumers pick takes through
+`people_store.active_takes(root, person, kind)`. A join is current while its
+source files keep their stamps, each filled range is still a gap of
+`person['takes']` and `gap_fill` still selects the same method, so setting a
+range back to `none` deactivates the join without deleting it. With a `kind`, a
+current join replaces its sources only when `kinds` contains the base of that
+kind (`corrected_` removed); a `fill.json` without `kinds` provides only its
+`kind`. Code that reads `person['takes']` directly does not see joined takes.
+
+`take_join` runs as its own job stage through `take_join_boot.py` and
+`mocap/take_join.py`, outside `mocap/worker.py`; the GUI builds its command in
+the stdlib-only `mocap/take_join_runtime.py`. Filling again with unchanged
+inputs writes nothing. The feature changes no file that is hashed into a stage,
+correction or other cache identity (`worker.fingerprint`,
+`flow_correction.code_identity`, `mixamo_data.code_identity` and the other
+identity lists); `scene_floor.py` is unchanged. At each seam the later take is
+anchored to the previous one through the camera pairing of the last frame
+before and the first frame after the gap, but only the heading about +Y and the
+horizontal pelvis position of that pairing are used: each take keeps its own
+up axis and its height above its own floor. A current joined take is part of
+the shared scene like any take: `scene_camera.take_projects` lists it after the
+person's takes, so it enters the shared floor inputs, and creating, removing or
+deactivating one changes the shared-floor signature. It never becomes the scene
 reference camera. Source takes are never modified. For the user-facing behavior
 and limits see [the user guide](USER_GUIDE.md#hidden-ranges).
 

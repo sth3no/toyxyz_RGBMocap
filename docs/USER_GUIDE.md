@@ -961,7 +961,13 @@ across hidden ranges.`
 A joined take is used only while it is current. If a source take is
 reconstructed again, the joined take is out of date: the selector shows
 **Fill hidden ranges** as its status and the source takes are used again. Click
-**Fill hidden ranges** to write a new joined take.
+**Fill hidden ranges** to write a new joined take. Choosing **Do not fill**
+again also returns to the separate takes; the joined take is kept.
+
+A joined take is used only for the motion result it was made from. For other
+results the source takes are used. After a fill, other people's takes may ask
+for **Apply Correction** again, because the shared scene floor includes the
+joined take.
 
 Limits of this version:
 

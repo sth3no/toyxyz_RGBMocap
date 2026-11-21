@@ -3,51 +3,73 @@
 ## Hidden ranges and Smooth join (2026-11-21)
 
 - Windows 11 Pro, NVIDIA GeForce RTX 5060 Ti (16 GB), 31 GB RAM, shared runtime
-  Python 3.10.22 with torch 2.7.1+cu128. Ran the `unittest` files below with
-  `runtime\python.exe -B -m unittest discover -s tests -p "<file>"`:
+  Python 3.10.22 with torch 2.7.1+cu128. Ran the `unittest` files below on the
+  final code with `runtime\python.exe -B -m unittest discover -s tests -p "<file>"`:
 
 | File | Result |
 | --- | --- |
 | `test_hidden_ranges.py` | 10 tests passed |
 | `test_gap_fill.py` | 7 tests passed |
-| `test_take_joins.py` | 22 tests passed |
-| `test_take_join.py` | 18 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
-| `test_hidden_ranges_ui.py` | 10 tests passed |
+| `test_take_joins.py` | 24 tests passed |
+| `test_take_join.py` | 27 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
+| `test_hidden_ranges_ui.py` | 12 tests passed |
 | `test_take_labels.py` | 4 tests passed |
-| whole `tests/` folder | 97 tests; the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
+| whole `tests/` folder | 110 tests, 2 skipped (the case above and a symlink test that needs a privilege); the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
 
-- Made a test clip from the GVHMR sample `tennis.mp4` (812x720), re-encoded to
-  30 fps, 313 frames, with every pixel black on frames 100-119 and 200-224. This
-  is a synthetic occlusion, not footage with a real occluder. Ran Prepare, Find
-  People (YOLO + OSNet; 4 people found, identities kept across both black
-  ranges), Prepare Person for people 1 and 2, and GVHMR with export for all six
-  takes through the app's worker stages without the GUI. Each person got takes
-  0-100, 120-200 and 225-313, with gaps of 20 and 25 frames.
-- Joined person 1 with `--result initial`: about 3 s, one joined take of 313
-  frames with 45 marked interpolated. `result_is_current` was true and
-  `active_takes` returned the joined take alone.
-- Pelvis translation step per frame at the four seams (median over the take
-  about 1.5-1.7 cm): global 0.2-1.8 cm; camera space 0.55, 2.15, 0.80 and
-  2.07 cm at 99-100, 119-120, 199-200 and 224-225. Before seam anchoring the
-  camera-space steps at 99-100 and 199-200 were 9.7 cm and 12.5 cm.
-- Ran the existing `export` stage on the joined take (`--result initial`): exit
-  0, BVH and preview files written. Ran `correct` and then `export` with
-  `--result corrected_initial` on it: both exit 0.
-- The joined take's scene camera equals its first source take's (difference
-  0.0), and `scene_floor.inputs` is identical with and without the join.
-- With `QT_QPA_PLATFORM=offscreen`, the main window constructed on this project.
-  The take selector showed `Frames 1–313 · Ready · filled`, and the default
-  export of a checked person selected only the joined take. An FBX export of
-  person 1's joined take wrote the file and logged `Person 1_filled: 45 of 313
-  frames are interpolated across hidden ranges.`
-- Also offscreen, for person 2 through the real job queue: chose the methods in
-  the panel, pressed Fill, `take_join` succeeded, the follow-up export job was
-  queued, the joined take became active and the timeline band covered frames
-  101-120 and 201-225. The queued export then **failed** with MemoryError
-  because the machine had about 2 GB of free RAM at that moment. It was not
-  re-run successfully.
+- `git diff` against `main` is empty for `mocap/scene_floor.py`,
+  `flow_scene.py`, `flow_placement.py`, `mamma_scene.py` and
+  `prompthmr_scene.py`. No changed file appears in a code identity list
+  (`worker.fingerprint`, `flow_correction.code_identity`,
+  `mixamo_data.code_identity`, `flow_backend`, `flow_hamer`, `exmr_backend`,
+  the PromptHMR, MAMMA, GEM-X, PEAR, HandFlow, FootMR and GVHMR preprocessing
+  identities, runtime verification).
+- Test project, built earlier on this branch and not changed since: the GVHMR
+  sample `tennis.mp4` (812x720) re-encoded to 30 fps, 313 frames, with every
+  pixel black on frames 100-119 and 200-224. This is a synthetic occlusion, not
+  footage with a real occluder. Prepare, Find People (YOLO + OSNet), Prepare
+  Person and GVHMR with export ran through the app's worker stages without the
+  GUI. People 1 and 2 each have takes 0-100, 120-200 and 225-313 (gaps of 20
+  and 25 frames).
+- On the final code, ran `take_join_boot.py --result initial` for people 1 and
+  2: about 2 s each, one joined take of 313 frames per person. Each source
+  take's own world has its floor near y = 0 (5th percentile of the lowest foot
+  joint -0.002 to 0.026 m). Per take of the joined take:
+
+| Person, take | Up-axis tilt vs the first take | Mean pelvis height, joined / own world | Heading change |
+| --- | --- | --- | --- |
+| 1, frames 1-100 | 0.00 deg | 1.001 / 1.001 m | 0.0 deg |
+| 1, frames 121-200 | 0.00 deg | 1.006 / 1.006 m | -1.5 deg |
+| 1, frames 226-313 | 0.00 deg | 0.993 / 0.993 m | -3.5 deg |
+| 2, frames 1-100 | 0.00 deg | 0.979 / 0.979 m | 0.0 deg |
+| 2, frames 121-200 | 0.00 deg | 0.973 / 0.973 m | 0.0 deg |
+| 2, frames 226-313 | 0.00 deg | 0.989 / 0.989 m | 0.2 deg |
+
+  With the previous full rigid seam transform, person 1's later takes were
+  tilted 2.72 and 4.94 deg, with mean pelvis heights 1.029 and 1.108 m.
+- Pelvis step per frame at the seams 99-100, 119-120, 199-200 and 224-225:
+  person 1 global 0.22, 1.77, 0.89, 1.17 cm and camera space 0.55, 2.15, 0.80,
+  2.07 cm (median over the take 1.55 and 1.68 cm); person 2 global 0.14, 0.01,
+  0.03, 0.06 cm and camera space 0.56, 0.08, 0.32, 0.74 cm (median 0.04 and
+  0.47 cm; person 2 barely moves).
+- Ran the join for person 1 again with unchanged inputs: `complete` reported
+  `cached: true`; sizes and modification times of every file in the joined take
+  and of `people.json` were unchanged.
+- With `QT_QPA_PLATFORM=offscreen`, the main window constructed on this project
+  (construction only, nobody looked at it). The joined takes had not been
+  exported again after the new join, so the selector showed
+  `Frames 1–313 · Prepare Preview · filled` for both people, with the timeline
+  band at frames 101-120 and 201-225. Choosing **Do not fill** for the first
+  range of person 1 changed the joined take's status to `Fill hidden ranges`;
+  choosing **Smooth join** again restored `Prepare Preview`. `people.json` was
+  restored afterwards.
+- Importing `mocap.paths` and building the `take_join` command loads neither
+  numpy, scipy nor torch.
+- Not run on the final code: the `export` and `correct` stages, an FBX export
+  and a fill through the GUI job queue on a joined take (these ran on an earlier
+  revision of this branch, before the seam change).
 - Not run: interactive use of the GUI by a person (appearance, clicking,
-  viewport drawing across the gaps, Export dialogs); any ExMR project; any
+  viewport drawing across the gaps, Export dialogs); Apply Correction started
+  from the GUI; character retargeting from a joined take; any ExMR project; any
   `footmr_initial` join; a fill started with a corrected result through the GUI;
   a clip with a real occluder; a project without `people.json` opened in the
   GUI; a clean installation or `update.cmd`; import of the exported files into
