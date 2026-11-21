@@ -72,7 +72,10 @@ def load_people(root):
         safe_child(root, person['preview'])
         for take in person.get('takes', []):
             safe_child(root, take['project'])
-        for join in person.get('joins', []):
+        joins = person.get('joins') or []
+        if not isinstance(joins, list):
+            raise ValueError('Invalid person list')
+        for join in joins:
             safe_child(root, join['project'])
     return state
 
@@ -122,15 +125,21 @@ def visible_runs(indices, fps, first, end, max_gap_seconds=.5):
 def join_current(root, person, join):
     """A joined take is used only while every source file still has the stamp it was built from."""
     try:
+        sources, first, end = join['sources'], join['first'], join['end']
+        if not (isinstance(join['project'], str) and isinstance(sources, list) and sources and all(isinstance(x, str) for x in sources)
+                and type(first) is int and type(end) is int):
+            return False
         folder = safe_child(root, join['project'])
         if (folder / 'fill_pending.json').exists():
             return False
         fill = read_people_json(folder / 'fill.json')
-        if fill.get('version') != 1 or not fill['sources']:
+        if fill.get('version') != 1 or [x['project'] for x in fill['sources']] != sources or (fill['first'], fill['end']) != (first, end):
             return False
         takes = {t['project']: (t['first'], t['end']) for t in person.get('takes', [])}
         for source in fill['sources']:
             if takes.get(source['project']) != (source['first'], source['end']):
+                return False
+            if not source['files']:
                 return False
             base = safe_child(root, source['project'])
             for name, stamp in source['files'].items():
@@ -144,13 +153,14 @@ def join_current(root, person, join):
 
 def active_takes(root, person):
     takes = person.get('takes', [])
-    try:
-        current = [j for j in person.get('joins') or [] if join_current(root, person, j)]
-    except Exception:
-        current = []
+    joins = person.get('joins')
+    current, owned = [], set()
+    for j in joins if isinstance(joins, list) else []:
+        if join_current(root, person, j) and owned.isdisjoint(j['sources']):
+            current.append(j)
+            owned.update(j['sources'])
     if not current:
         return takes
-    owned = {s for j in current for s in j['sources']}
     out = [t for t in takes if t['project'] not in owned]
     out += [{'project': j['project'], 'first': j['first'], 'end': j['end'], 'join': True} for j in current]
     return sorted(out, key=lambda t: t['first'])

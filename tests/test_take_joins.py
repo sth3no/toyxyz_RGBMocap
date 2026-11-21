@@ -70,4 +70,27 @@ class TakeJoinsTest(unittest.TestCase):
         self.assertIsNone(ps.joined_project_current(self.root/S(0,100)))
         (self.root/S(120,200)/'tracking.npz').write_bytes(b'changed content!')
         self.assertFalse(ps.joined_project_current(self.root/J))
+    def test_malformed_join_records_are_stale(self):
+        j=self.person['joins'][0];del j['sources']
+        self.assertFalse(ps.join_current(self.root,self.person,j))
+        self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+        for bad in(None,'x',{'a':1},[None,5]):
+            self.person['joins']=bad;self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+    def test_join_must_match_fill_json(self):
+        j=self.person['joins'][0]
+        j['sources']=j['sources'][:1];self.assertFalse(ps.join_current(self.root,self.person,j))
+        j['sources']=[S(120,200),S(0,100)];self.assertFalse(ps.join_current(self.root,self.person,j))
+        j['sources']=[S(0,100),S(120,200)];j['end']=199;self.assertFalse(ps.join_current(self.root,self.person,j))
+    def test_load_people_rejects_non_list_joins(self):
+        self.person['joins']=None;ps.save_people(self.root,self.state);ps.load_people(self.root)
+        self.person['joins']='x';ps.save_people(self.root,self.state)
+        with self.assertRaises(ValueError):ps.load_people(self.root)
+    def test_empty_fingerprints_are_stale(self):
+        f=self.root/J/'fill.json';d=json.loads(f.read_text(encoding='utf-8'));d['sources'][0]['files']={}
+        f.write_text(json.dumps(d),encoding='utf-8')
+        self.assertFalse(ps.join_current(self.root,self.person,self.person['joins'][0]))
+    def test_overlapping_joins_first_wins(self):
+        j=self.person['joins'][0];k=dict(j,project='p1/takes/other');self.person['joins']=[j,k]
+        (self.root/'p1/takes/other').mkdir();(self.root/'p1/takes/other/fill.json').write_text((self.root/J/'fill.json').read_text(encoding='utf-8'),encoding='utf-8')
+        self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person)],[J])
 if __name__=='__main__':unittest.main()
