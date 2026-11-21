@@ -919,7 +919,8 @@ an estimate and can leave residual sliding or penetration.
 | **Character checkboxes / selected row** | Show or hide imported characters independently of source people. Select a character to export it; right-click it for Retarget, Export Character or Remove Character. |
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. |
-| **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. |
+| **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
+| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default) or **Smooth join**. **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -936,6 +937,41 @@ People share correction mode/floor; timings and pelvis offsets remain per person
 Apply Correction updates all available takes, including hidden ones. Checked
 takes with missing base motion are listed in Console and can be reconstructed separately.
 Relative depth and contacts between people are estimates; collision avoidance is not provided.
+
+### Hidden ranges
+
+A hidden range is the gap between two consecutive takes of the same person, for
+example while the person is covered by an object. By default nothing is filled:
+the gap stays empty and each take is used as before.
+
+To fill a gap, choose **Smooth join** for that range in **Hidden ranges**, then
+click **Fill hidden ranges**. **Smooth join** is plain interpolation between the
+last frame before the gap and the first frame after it, with no model. It is
+available only for gaps of up to 30 frames.
+
+The result is one new joined take that covers the takes and the chosen gaps. The
+scene, **Apply Correction**, export and retargeting use it instead of the source
+takes. The source takes are kept unchanged. The take selector shows the joined
+take with the suffix ` · filled`, and export file names end with `_filled`.
+
+Interpolated frames are marked by a thin band on the timeline. Export also
+writes a console line such as `Person 1_filled: 45 of 313 frames are interpolated
+across hidden ranges.`
+
+A joined take is used only while it is current. If a source take is
+reconstructed again, the joined take is out of date: the selector shows
+**Fill hidden ranges** as its status and the source takes are used again. Click
+**Fill hidden ranges** to write a new joined take.
+
+Limits of this version:
+
+- GVHMR, and ExMR with **Static Camera**; a moving camera is not supported.
+- Only `initial` and `footmr_initial` results and their corrected variants.
+  HTD-refined and HandFlow results are not supported.
+- FlowHMR, PromptHMR, MAMMA and GEM-X projects are not supported. The panel
+  shows the reason when it is unavailable.
+- Manual contact-lock edits on the source takes are not carried into the joined
+  take; the panel says so.
 
 ## Stream bones to Blender
 

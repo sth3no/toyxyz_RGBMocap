@@ -1,5 +1,58 @@
 # Source package validation
 
+## Hidden ranges and Smooth join (2026-11-21)
+
+- Windows 11 Pro, NVIDIA GeForce RTX 5060 Ti (16 GB), 31 GB RAM, shared runtime
+  Python 3.10.22 with torch 2.7.1+cu128. Ran the `unittest` files below with
+  `runtime\python.exe -B -m unittest discover -s tests -p "<file>"`:
+
+| File | Result |
+| --- | --- |
+| `test_hidden_ranges.py` | 10 tests passed |
+| `test_gap_fill.py` | 7 tests passed |
+| `test_take_joins.py` | 22 tests passed |
+| `test_take_join.py` | 18 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
+| `test_hidden_ranges_ui.py` | 10 tests passed |
+| `test_take_labels.py` | 4 tests passed |
+| whole `tests/` folder | 97 tests; the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
+
+- Made a test clip from the GVHMR sample `tennis.mp4` (812x720), re-encoded to
+  30 fps, 313 frames, with every pixel black on frames 100-119 and 200-224. This
+  is a synthetic occlusion, not footage with a real occluder. Ran Prepare, Find
+  People (YOLO + OSNet; 4 people found, identities kept across both black
+  ranges), Prepare Person for people 1 and 2, and GVHMR with export for all six
+  takes through the app's worker stages without the GUI. Each person got takes
+  0-100, 120-200 and 225-313, with gaps of 20 and 25 frames.
+- Joined person 1 with `--result initial`: about 3 s, one joined take of 313
+  frames with 45 marked interpolated. `result_is_current` was true and
+  `active_takes` returned the joined take alone.
+- Pelvis translation step per frame at the four seams (median over the take
+  about 1.5-1.7 cm): global 0.2-1.8 cm; camera space 0.55, 2.15, 0.80 and
+  2.07 cm at 99-100, 119-120, 199-200 and 224-225. Before seam anchoring the
+  camera-space steps at 99-100 and 199-200 were 9.7 cm and 12.5 cm.
+- Ran the existing `export` stage on the joined take (`--result initial`): exit
+  0, BVH and preview files written. Ran `correct` and then `export` with
+  `--result corrected_initial` on it: both exit 0.
+- The joined take's scene camera equals its first source take's (difference
+  0.0), and `scene_floor.inputs` is identical with and without the join.
+- With `QT_QPA_PLATFORM=offscreen`, the main window constructed on this project.
+  The take selector showed `Frames 1–313 · Ready · filled`, and the default
+  export of a checked person selected only the joined take. An FBX export of
+  person 1's joined take wrote the file and logged `Person 1_filled: 45 of 313
+  frames are interpolated across hidden ranges.`
+- Also offscreen, for person 2 through the real job queue: chose the methods in
+  the panel, pressed Fill, `take_join` succeeded, the follow-up export job was
+  queued, the joined take became active and the timeline band covered frames
+  101-120 and 201-225. The queued export then **failed** with MemoryError
+  because the machine had about 2 GB of free RAM at that moment. It was not
+  re-run successfully.
+- Not run: interactive use of the GUI by a person (appearance, clicking,
+  viewport drawing across the gaps, Export dialogs); any ExMR project; any
+  `footmr_initial` join; a fill started with a corrected result through the GUI;
+  a clip with a real occluder; a project without `people.json` opened in the
+  GUI; a clean installation or `update.cmd`; import of the exported files into
+  Blender, Unreal or other software.
+
 ## Unified Model Manager (2026-11-20)
 
 - In an isolated Windows app, verified every workflow tab and the Installed

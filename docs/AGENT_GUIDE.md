@@ -712,6 +712,25 @@ runtime dependency, source motion or contact change is part of export.
 Qt palette, fonts, widget styles, and timeline geometry when the user clicks
 **OK**. The system display scale still applies.
 
+### Hidden ranges and joined takes
+
+Hidden ranges are opt-in. `person['gap_fill']` in `people.json` holds the per-gap
+choices. `person['joins']` holds the joined takes, separately from
+`person['takes']`; without a `joins` key behavior is unchanged. A joined take
+is a new folder `<person>/takes/{first:09d}_{end:09d}_fill_v1` containing a
+normal take plus `fill.json` (sources with file stamps, gaps, method) and
+`fill_mask.npy` (0 captured, 1 interpolated; 2 and 3 are reserved). Consumers
+pick takes through `people_store.active_takes` and `join_current`, which return
+the joined take only while it is current and otherwise the source takes. Code
+that reads `person['takes']` directly does not see joined takes unless it
+switches deliberately. `take_join` runs as its own job stage through
+`take_join_boot.py` and `mocap/take_join.py`, outside `mocap/worker.py`, so no
+stage fingerprint changes. Later takes are anchored to the earlier one at each
+seam in camera space, not by each take's first-frame scene camera. Joined takes
+are excluded from the shared scene floor inputs and never become the scene
+reference camera. Source takes are never modified. For the user-facing behavior
+and limits see [the user guide](USER_GUIDE.md#hidden-ranges).
+
 ## Character retargeting and export
 
 - **File > Import Character...** accepts Mixamo-style FBX, VRM and PMX, and adds the character in rest pose below people. Up to eight characters per project are supported.
