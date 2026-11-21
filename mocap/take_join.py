@@ -21,6 +21,14 @@ def pair(world_orient, cam_orient, world_transl, cam_transl, pelvis):
     return T
 
 
+def upright(full, pelvis):
+    """Heading of a seam transform only (twist about +Y); the pelvis keeps the x, z of `full` and its own height."""
+    x, y, z, w = Rotation.from_matrix(full[:3, :3]).as_quat()
+    T = np.eye(4);T[:3, :3] = Rotation.from_rotvec([0., 2*np.arctan2(y, w), 0.]).as_matrix();p = np.asarray(pelvis, np.float64)
+    T[[0, 2], 3] = (full[:3, :3]@p+full[:3, 3]-T[:3, :3]@p)[[0, 2]]
+    return T
+
+
 def _linear(a, b, frames):
     t = (np.arange(1, frames+1)/(frames+1))[:, None];return a+(b-a)*t
 
@@ -55,8 +63,9 @@ def assemble(sources, gaps):
         n = s['end']-s['first']
         if len(s['logits']) != n or len(s['boxes']) != n or len(s['observed']) != n or len(s['incam']['transl']) != n or \
                 any(len(p['transl']) != n for p in s['params'].values()):raise ValueError('Take arrays do not match its frame range')
-    # Each take's world drifts against the fixed camera, so a take is anchored at its seam:
-    # its first frame keeps the camera pairing of the previous take's last joined frame.
+    # Each take's world drifts against the fixed camera, so a take is anchored at its seam: its first frame
+    # takes the heading and floor position of the previous take's last camera pairing. The tilt of one frame
+    # pair is gravity noise, so it is dropped and every take keeps its own up axis and height.
     pelvis, joined = first['pelvis'], [(first['params'], first['incam'])]
     for s in sources[1:]:
         g, c = joined[-1][0]['initial'], joined[-1][1]
@@ -64,7 +73,7 @@ def assemble(sources, gaps):
         end = pair(last(g['global_orient']), last(c['global_orient']), last(g['transl']), last(c['transl']), pelvis)
         a, b = s['params']['initial'], s['incam']
         start = pair(np.asarray(a['global_orient'])[0], np.asarray(b['global_orient'])[0], np.asarray(a['transl'])[0], np.asarray(b['transl'])[0], s['pelvis'])
-        T = np.linalg.inv(end)@start
+        T = upright(np.linalg.inv(end)@start, np.asarray(a['transl'], np.float64).reshape(-1, 3)[0]+s['pelvis'])
         # Camera space is shared by every take; only the replaced shape moves the pelvis.
         joined.append(({k: rigid_params(p, T, s['pelvis'], pelvis) for k, p in s['params'].items()},
                        rigid_params(s['incam'], np.eye(4), s['pelvis'], pelvis)))
@@ -90,13 +99,6 @@ class Refused(ValueError):
 
 UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this version; select one of them.'
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
-
-
-def command(args):
-    from .paths import ROOT
-    if getattr(sys, 'frozen', False) or os.environ.get('RGB_MOCAP_MANAGED') == '1':
-        return [str(ROOT/'runtime/python.exe'), '-I', '-X', 'utf8', '-B', '-u', str(ROOT/'take_join_boot.py'), *map(str, args)]
-    return [sys.executable, '-X', 'utf8', '-B', '-u', '-m', 'mocap.take_join', *map(str, args)]
 
 
 def emit(kind, **data):
@@ -126,13 +128,17 @@ def _check(root, ident, result):
     from .paths import MODELS
     from .people_store import load_people, safe_child
     if not (root/'project.json').is_file() or not (root/'people.json').is_file():raise Refused('Open a scene with people before filling hidden ranges.')
-    model = require_supported_project(root).key
+    try:
+        model = require_supported_project(root).key
+        static = model == 'exmr' and saved(root)['static_camera']
+        state = load_people(root)
+    except (OSError, ValueError, KeyError) as error:raise Refused(str(error)) from None
     if model not in ('gvhmr', 'exmr'):raise Refused('Hidden ranges can be filled only in GVHMR and ExMR scenes.')
-    if model == 'exmr' and not saved(root)['static_camera']:raise Refused('Hidden ranges need a fixed camera. Turn on Static camera in the ExMR settings.')
+    if model == 'exmr' and not static:raise Refused('Hidden ranges need a fixed camera. Turn on Static camera in the ExMR settings.')
     if result not in RESULTS:raise Refused(f'Unknown motion result: {result}')
     kinds = result_sources(base_result(result))
     if has_handflow(result) or any(k.endswith('refined') for k in kinds):raise Refused(UNSUPPORTED)
-    person = next((p for p in load_people(root)['people'] if p['id'] == ident), None)
+    person = next((p for p in state['people'] if p['id'] == ident), None)
     if person is None:raise Refused('Person no longer exists. Run Find person again.')
     choices = person.get('gap_fill') or {}
     chains = hidden_ranges.chains(person.get('takes', []), choices)
@@ -152,7 +158,25 @@ def _check(root, ident, result):
     if len(rates) != 1:raise Refused('The takes to join have different frame rates.')
     key = lambda a, b: hidden_ranges.gap_key(dict(first=a['end'], end=b['first']))
     gaps = [[dict(first=a['end'], end=b['first'], method=choices[key(a, b)]['method']) for a, b in zip(chain, chain[1:])] for chain in chains]
-    return model, chains, gaps, kinds, names, body
+    return model, person, chains, gaps, kinds, names, body
+
+
+def _pipeline(model, result):
+    from .motion_tools import body_result
+    return dict(model=model, result=result, htd_refine=False, footmr=body_result(result).startswith('footmr_'), handflow=False)
+
+
+def _unchanged(root, person, chain, gaps, kinds):
+    """The folder of this chain's recorded join when it is current and holds what would be written, else None."""
+    from .motion_tools import result_is_current
+    from .people_store import join_fill, safe_child
+    folder = safe_child(root, person['preview'])/'takes'/f"{chain[0]['first']:09d}_{chain[-1]['end']:09d}_fill_v1"
+    for join in person.get('joins') or []:
+        if join['project'] != folder.relative_to(root).as_posix() or join.get('sources') != [t['project'] for t in chain]:continue
+        fill = join_fill(root, person, join)
+        if fill is None or fill.get('kinds') != kinds or fill['gaps'] != [dict(g, params={}) for g in gaps]:return None
+        return folder if all(result_is_current(folder, k) for k in kinds) else None
+    return None
 
 
 def _load(root, take, kinds, names, pelvis):
@@ -177,7 +201,7 @@ def _load(root, take, kinds, names, pelvis):
                 params=params, incam=incam, logits=logits, boxes=boxes, observed=observed, source_model=model)
 
 
-def _write(root, ident, sources, gaps, joined, kinds, base, model):
+def _write(root, ident, sources, gaps, joined, kinds, base, pipeline):
     import torch
     from .motion_tools import RESULTS
     from .people_store import join_current, load_people, safe_child, save_people
@@ -206,7 +230,7 @@ def _write(root, ident, sources, gaps, joined, kinds, base, model):
         name, key = RESULTS[kind]
         payload = {key: _tensors(joined['params'][kind])}
         if kind == 'initial':
-            payload.update(smpl_params_incam=_tensors(joined['incam']), source_model=lead['source_model'] or model,
+            payload.update(smpl_params_incam=_tensors(joined['incam']), source_model=lead['source_model'] or pipeline['model'],
                            net_outputs={'static_conf_logits': torch.from_numpy(joined['logits'].astype(np.float32))[None]})
         _save(payload, target/name)
     for kind in kinds:  # A leftover result of an earlier join with another kind becomes stale.
@@ -216,11 +240,12 @@ def _write(root, ident, sources, gaps, joined, kinds, base, model):
     lead_state = json.loads((lead['folder']/'project.json').read_text(encoding='utf-8'));state = dict(lead_state)
     for k in RANGE_KEYS:state.pop(k, None)
     state.update({k: shared[k] for k in RANGE_KEYS if k in shared})
-    state.update(frames=end-first, stages={}, person_frames=[first, end], joined=True)
+    # The joined take holds only the fill's results, so it opens on the result it was made from.
+    state.update(frames=end-first, stages={}, person_frames=[first, end], joined=True, pipeline=pipeline)
     if 'start' in lead_state:state['start'] = lead_state['start']
     inherit_storage(lead['folder'], target, state)
     atomic_json(target/'project.json', state)
-    atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, first=first, end=end,
+    atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
         gaps=[dict(first=g['first'], end=g['end'], method=g['method'], params={}) for g in gaps]))
     pending.unlink()
@@ -235,20 +260,25 @@ def _write(root, ident, sources, gaps, joined, kinds, base, model):
 
 
 def run(root, ident, result, projects):
-    """Appends each joined folder to `projects` once it is recorded in people.json."""
+    """Appends each joined folder to `projects` once it is recorded in people.json; True when nothing was written."""
     from .motion_tools import base_result
-    model, chains, gaps, kinds, names, body = _check(root, ident, result)
+    model, person, chains, gaps, kinds, names, body = _check(root, ident, result)
+    pipeline = _pipeline(model, result)
     with np.load(body, allow_pickle=False) as data:
         regressor = data['J_regressor'][0];template = regressor@data['v_template']
         shapes = np.einsum('v,vci->ci', regressor, data['shapedirs'][..., :10])
     pelvis = lambda betas: template+shapes@np.asarray(betas, np.float64)[:10]
     plans = []
     for chain, chain_gaps in zip(chains, gaps):
+        # Filling again with unchanged inputs keeps the joined take, its correction and its previews.
+        kept = _unchanged(root, person, chain, chain_gaps, kinds)
+        if kept is not None:plans.append((kept, None, None));continue
         sources = [_load(root, t, kinds, names, pelvis) for t in chain]
         plans.append((sources, chain_gaps, assemble(sources, chain_gaps)))
     for i, (sources, chain_gaps, joined) in enumerate(plans):
         emit('progress', stage=STAGE, current=i, total=len(plans), message=f'Filling hidden ranges: joined take {i+1} of {len(plans)}')
-        projects.append(str(_write(root, ident, sources, chain_gaps, joined, kinds, base_result(result), model)))
+        projects.append(str(sources if joined is None else _write(root, ident, sources, chain_gaps, joined, kinds, base_result(result), pipeline)))
+    return all(joined is None for _, _, joined in plans)
 
 
 def main(argv=None):
@@ -261,13 +291,13 @@ def main(argv=None):
     parser.add_argument('--result', default='initial', help='initial, footmr_initial or a corrected_ variant')
     args = parser.parse_args(argv);started = time.monotonic();root = Path(args.project).resolve();projects = []
     try:
-        run(root, args.person_id, args.result, projects)
+        cached = run(root, args.person_id, args.result, projects)
     except Exception as error:
         if not isinstance(error, Refused):traceback.print_exc(file=sys.stderr)
         if projects:emit('takes_joined', project=str(root), person_id=args.person_id, projects=projects)  # Earlier chains are recorded.
         emit('failed', stage=STAGE, message=str(error) or type(error).__name__);return 1
     emit('takes_joined', project=str(root), person_id=args.person_id, projects=projects)
-    emit('complete', stage=STAGE, output=projects[-1], cached=False, elapsed=time.monotonic()-started)
+    emit('complete', stage=STAGE, output=projects[-1], cached=cached, elapsed=time.monotonic()-started)
     return 0
 
 

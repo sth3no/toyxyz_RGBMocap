@@ -20,7 +20,7 @@ def worker_command(stage: str, *args: str) -> list[str]:
         from .sam31_runtime import command as sam31_command
         return sam31_command(args)
     if stage == 'take_join':
-        from .take_join import command as join_command
+        from .take_join_runtime import command as join_command
         return join_command(args)
     if stage in ('gemx_reconstruct', 'gemx_correct'):
         from .gemx_runtime import command as gemx_command

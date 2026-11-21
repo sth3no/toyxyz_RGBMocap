@@ -8,7 +8,12 @@ STEP=.01
 P0=np.array([0.,.3,0.]);PB=np.array([.05,.25,-.02])
 def rigid(rv=(0.,0.,0.),t=(0.,0.,0.)):
     T=np.eye(4);T[:3,:3]=R.from_rotvec(rv).as_matrix();T[:3,3]=t;return T
-WA,WB,WC=rigid((.4,-.7,.2),(.3,-.1,2.)),rigid((-.3,.5,1.1),(-1.,.4,3.)),rigid((.9,.2,-.6),(.5,1.,-2.))
+WA=rigid((.4,-.7,.2),(.3,-.1,2.))
+# A later take's world differs from A's by a heading and a floor position (gravity-consistent pairing) ...
+WB,WC=WA@rigid((0.,.5,0.),(-1.,0.,3.)),WA@rigid((0.,-.9,0.),(.5,0.,-2.))
+# ... or, with one frame pair's gravity noise, also by a tilt and a height: yaw 30 deg about Y after 4 deg about X.
+SEAM=rigid(R.from_matrix(R.from_euler('y',30,degrees=True).as_matrix()@R.from_euler('x',4,degrees=True).as_matrix()).as_rotvec(),(.4,.07,-.3))
+WT=WA@SEAM
 
 def tpair(go_w,go_c,tr_w,tr_c,p):
     # Independent of the code under test: camera pelvis = Rw2c @ world pelvis + t.
@@ -63,12 +68,29 @@ class AssembleTest(unittest.TestCase):
         np.testing.assert_allclose(g['transl'][110:],truth['transl'],atol=1e-9)
         np.testing.assert_allclose(rot(g['global_orient'][110:]),rot(truth['global_orient']),atol=1e-9)
         np.testing.assert_allclose(g['body_pose'][110:],b['params']['initial']['body_pose'])
+    def test_tilted_seam_keeps_later_take_upright(self):
+        a,b,out=pair(W=WT);g,own=out['params']['initial'],b['params']['initial']
+        yaw=R.from_euler('y',30,degrees=True).as_matrix()
+        # Exactly the yaw part of the seam: the up axis of B stays +Y of its own world.
+        np.testing.assert_allclose(rot(g['global_orient'][110:]),yaw@rot(own['global_orient']),atol=1e-9)
+        np.testing.assert_allclose((g['transl'][110:]+P0)[:,1],(own['transl']+PB)[:,1],atol=1e-12)  # own pelvis heights
+        # Heading and floor position at the seam still follow the camera pairing.
+        np.testing.assert_allclose((g['transl'][110]+P0)[[0,2]],(SEAM[:3,:3]@(own['transl'][0]+PB)+SEAM[:3,3])[[0,2]],atol=1e-9)
+        step=np.diff(g['transl'][110:],axis=0);np.testing.assert_allclose(step,np.diff(own['transl'],axis=0)@yaw.T,atol=1e-12)
+        np.testing.assert_allclose(out['incam']['transl'][110:],b['incam']['transl']+PB-P0,atol=1e-12)  # camera space unchanged
+    def test_upright_extracts_yaw(self):
+        from mocap.take_join import upright
+        T=upright(SEAM,np.array([.2,1.,.5]))
+        np.testing.assert_allclose(T[:3,:3],R.from_euler('y',30,degrees=True).as_matrix(),atol=1e-12)
+        self.assertEqual(T[1,3],0.)
+        np.testing.assert_allclose(upright(rigid((0.,-2.,0.),(1.,2.,3.)),np.zeros(3)),rigid((0.,-2.,0.),(1.,0.,3.)),atol=1e-12)
     def test_drift_stays_in_its_take(self):
-        a=source(0,100,drift=(.08,0.,-.05));b=source(110,200,W=WB,pelvis=PB)
+        a=source(0,100,drift=(.08,0.,-.05));b=source(110,200,W=WT,pelvis=PB)
         out=assemble([a,b],[gap(a,b)]);g,c=out['params']['initial'],out['incam']
         Rend=tpair(g['global_orient'][99],c['global_orient'][99],g['transl'][99],c['transl'][99],P0)[:3,:3]
-        np.testing.assert_allclose(g['transl'][110]-g['transl'][99],Rend.T@(c['transl'][110]-c['transl'][99]),atol=1e-9)
-        for x in(c['transl'],g['transl']):self.steps_ok(x,100);self.steps_ok(x,110,111)
+        # Horizontally the seam step is the camera-space step; vertically each take keeps its own height.
+        np.testing.assert_allclose((g['transl'][110]-g['transl'][99])[[0,2]],(Rend.T@(c['transl'][110]-c['transl'][99]))[[0,2]],atol=1e-9)
+        for x in(c['transl'],g['transl'][:,[0,2]]):self.steps_ok(x,100);self.steps_ok(x,110,111)
     def test_gap_is_continuous(self):
         _,_,out=pair()
         for x in(out['params']['initial']['transl'],out['incam']['transl'],out['params']['initial']['body_pose'],out['incam']['global_orient']):
@@ -147,9 +169,32 @@ class WriteTest(unittest.TestCase):
         self.before={p:stamp(p) for p in root.rglob('*') if p.is_file()}
     def snapshot(self):return {p:p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
     def join(self,result='initial'):
-        out=io.StringIO()
-        with contextlib.redirect_stdout(out),contextlib.redirect_stderr(io.StringIO()):code=take_join.main(['--project',str(self.root),'--person-id','1','--result',result])
+        out,self.stderr=io.StringIO(),io.StringIO()
+        with contextlib.redirect_stdout(out),contextlib.redirect_stderr(self.stderr):code=take_join.main(['--project',str(self.root),'--person-id','1','--result',result])
         return code,[json.loads(l[len('@@MOCAP@@'):]) for l in out.getvalue().splitlines() if l.startswith('@@MOCAP@@')]
+    def folder(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1';return {p:(p.read_bytes(),stamp(p)) for p in [*J.rglob('*'),self.root/'people.json'] if p.is_file()}
+    def test_refill_with_unchanged_inputs_writes_nothing(self):
+        self.assertEqual(self.join()[0],0);before=self.folder()
+        code,events=self.join()
+        self.assertEqual(code,0);self.assertEqual([e['type'] for e in events],['progress','takes_joined','complete'])
+        self.assertEqual(events[1]['projects'],[str(self.root/'p1/takes/000000000_000000200_fill_v1')]);self.assertIs(events[2]['cached'],True)
+        self.assertEqual(self.folder(),before)  # bytes and mtimes
+        self.assertIs(self.join('footmr_initial')[1][-1]['cached'],False)  # another result is written
+    def test_manifest_names_the_fill_result(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        self.assertEqual(self.join('corrected_footmr_initial')[0],0)
+        self.assertEqual(json.loads((J/'project.json').read_text(encoding='utf-8'))['pipeline'],
+            dict(model=self.MODEL,result='corrected_footmr_initial',htd_refine=False,footmr=True,handflow=False))
+        self.assertEqual(json.loads((J/'fill.json').read_text(encoding='utf-8'))['kinds'],['initial','footmr_initial'])
+    def test_expected_failures_are_refused_without_traceback(self):
+        manifest=json.loads((self.root/'project.json').read_text(encoding='utf-8'))
+        for model,options,message in(('flowhmr',{},'Hidden ranges can be filled only in GVHMR and ExMR scenes.'),('exmr',dict(static_camera='yes'),'Invalid ExMR settings'),
+                ('removed_tool',{},None)):
+            (self.root/'project.json').write_text(json.dumps(dict(manifest,pipeline=dict(model=model),exmr_options=options)),encoding='utf-8')
+            code,events=self.join()
+            self.assertEqual((code,[e['type'] for e in events]),(1,['failed']),model);self.assertEqual(self.stderr.getvalue(),'',model)
+            if message:self.assertEqual(events[0]['message'],message)
     def test_writes_current_joined_take(self):
         import torch
         from mocap.motion_tools import result_is_current
@@ -162,11 +207,13 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(join,dict(project='p1/takes/000000000_000000200_fill_v1',first=0,end=200,sources=[TAKE(0,100),TAKE(110,200)]))
         self.assertEqual(person['gap_fill'],self.person['gap_fill'])
         self.assertTrue(ps.join_current(self.root,person,join));self.assertTrue(result_is_current(J,'initial'))
-        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'));self.assertEqual(fill['kind'],'initial')
+        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'));self.assertEqual((fill['kind'],fill['kinds']),('initial',['initial']))
         self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='smooth',params={})])
         manifest=json.loads((J/'project.json').read_text(encoding='utf-8'))
         self.assertEqual((manifest['frames'],manifest['person_frames'],manifest['stages'],manifest['joined'],manifest['start']),(200,[0,200],{},True,0.))
         self.assertEqual(manifest['timeline']['frames'],200);self.assertAlmostEqual(manifest['end'],200/30)
+        self.assertEqual(manifest['pipeline'],dict(model=self.MODEL,result='initial',htd_refine=False,footmr=False,handflow=False))
+        self.assertIs(events[2]['cached'],False)
         record=torch.load(J/'hmr4d_results.pt',weights_only=False)
         self.assertEqual(tuple(record['smpl_params_global']['body_pose'].shape),(200,63));self.assertEqual(record['smpl_params_global']['transl'].dtype,torch.float32)
         self.assertEqual(tuple(record['net_outputs']['static_conf_logits'].shape),(1,200,6));self.assertEqual(record['source_model'],self.MODEL)
@@ -205,4 +252,11 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(read(J),read(self.root/TAKE(0,100)))
         self.assertIn('exmr_camera_sources.json',camera_sources(J));self.assertFalse((J/'exmr_receipt.json').exists())
 class ExmrWriteTest(WriteTest):MODEL='exmr'
+class CommandTest(unittest.TestCase):
+    def test_gui_command_loads_no_numeric_packages(self):
+        import sys
+        code=("import sys;from mocap.paths import worker_command;c=worker_command('take_join','--project','x');"
+              "print(c[-2:]==['--project','x'],sorted(m for m in ('scipy','numpy','torch','mocap.take_join') if m in sys.modules))")
+        out=subprocess.run([sys.executable,'-B','-c',code],cwd=paths.ROOT,capture_output=True,text=True,check=True).stdout
+        self.assertEqual(out.strip(),'True []')
 if __name__=='__main__':unittest.main()
