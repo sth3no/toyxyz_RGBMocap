@@ -72,6 +72,8 @@ def load_people(root):
         safe_child(root, person['preview'])
         for take in person.get('takes', []):
             safe_child(root, take['project'])
+        for join in person.get('joins', []):
+            safe_child(root, join['project'])
     return state
 
 
@@ -115,3 +117,69 @@ def visible_runs(indices, fps, first, end, max_gap_seconds=.5):
     if start is not None and previous + 1 - start >= 4 and count >= 3:
         runs.append((start, previous + 1))
     return runs
+
+
+def join_current(root, person, join):
+    """A joined take is used only while every source file still has the stamp it was built from."""
+    try:
+        folder = safe_child(root, join['project'])
+        if (folder / 'fill_pending.json').exists():
+            return False
+        fill = read_people_json(folder / 'fill.json')
+        if fill.get('version') != 1 or not fill['sources']:
+            return False
+        takes = {t['project']: (t['first'], t['end']) for t in person.get('takes', [])}
+        for source in fill['sources']:
+            if takes.get(source['project']) != (source['first'], source['end']):
+                return False
+            base = safe_child(root, source['project'])
+            for name, stamp in source['files'].items():
+                stat = (base / name).stat()
+                if [stat.st_size, stat.st_mtime_ns] != list(stamp):
+                    return False
+        return True
+    except Exception:
+        return False
+
+
+def active_takes(root, person):
+    takes = person.get('takes', [])
+    try:
+        current = [j for j in person.get('joins') or [] if join_current(root, person, j)]
+    except Exception:
+        current = []
+    if not current:
+        return takes
+    owned = {s for j in current for s in j['sources']}
+    out = [t for t in takes if t['project'] not in owned]
+    out += [{'project': j['project'], 'first': j['first'], 'end': j['end'], 'join': True} for j in current]
+    return sorted(out, key=lambda t: t['first'])
+
+
+def join_anchor(state, relative):
+    for person in state.get('people', []):
+        for join in person.get('joins') or []:
+            if join.get('project') == relative and join.get('sources'):
+                return join['sources'][0]
+    return relative
+
+
+def owned_projects(person):
+    return [t['project'] for t in person.get('takes', [])] + [j['project'] for j in person.get('joins') or []]
+
+
+def joined_project_current(project):
+    """None for an ordinary take folder, else whether its joined take is still current."""
+    project = Path(project).resolve()
+    if not (project / 'fill.json').is_file():
+        return None
+    try:
+        root = root_for(project)
+        state = load_people(root)
+        for person in state['people']:
+            for join in person.get('joins') or []:
+                if safe_child(root, join['project']) == project:
+                    return join_current(root, person, join)
+    except Exception:
+        pass
+    return False
