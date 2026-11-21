@@ -116,6 +116,15 @@ class AssembleTest(unittest.TestCase):
         g,cam=out['params']['initial'],out['incam'];frames=np.r_[0:50,60:100,115:150]
         truth=rigid_params({k:cam[k][frames] for k in('global_orient','transl')},np.linalg.inv(WA),P0,P0)
         np.testing.assert_allclose(g['transl'][frames],truth['transl'],atol=1e-9)
+    def test_tilt_does_not_accumulate_over_three_takes(self):
+        seam=lambda ax,tilt,yaw,t:rigid(R.from_matrix(R.from_euler('y',yaw,degrees=True).as_matrix()@R.from_euler(ax,tilt,degrees=True).as_matrix()).as_rotvec(),t)
+        a,b,c=source(0,50),source(60,100,W=WA@seam('x',4,30,(.4,.07,-.3)),pelvis=PB),source(115,150,W=WA@seam('z',3,-50,(-.2,-.05,.5)))
+        out=assemble([a,b,c],[gap(a,b),gap(b,c)]);g=out['params']['initial']
+        for s,P in((b,PB),(c,P0)):
+            sl=slice(s['first'],s['end']);own=s['params']['initial']
+            Rd=R.from_rotvec(g['global_orient'][sl]).as_matrix()@np.swapaxes(R.from_rotvec(own['global_orient']).as_matrix(),1,2)
+            self.assertLess(np.abs(np.degrees(R.from_matrix(Rd).as_rotvec())[:,[0,2]]).max(),1e-6)  # only a rotation about +Y
+            np.testing.assert_allclose((g['transl'][sl]+P0)[:,1],(own['transl']+P)[:,1],atol=1e-9)
     def test_hand_poses_dropped_unless_every_source_has_them(self):
         a,b=source(0,100),source(110,200)
         for s in(a,b):s['params']['initial']['left_hand_pose']=np.zeros((s['end']-s['first'],45))
@@ -187,6 +196,11 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(json.loads((J/'project.json').read_text(encoding='utf-8'))['pipeline'],
             dict(model=self.MODEL,result='corrected_footmr_initial',htd_refine=False,footmr=True,handflow=False))
         self.assertEqual(json.loads((J/'fill.json').read_text(encoding='utf-8'))['kinds'],['initial','footmr_initial'])
+    def test_refill_with_other_result_updates_manifest(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        self.assertEqual(self.join('initial')[0],0);code,events=self.join('corrected_initial')
+        self.assertEqual(code,0);self.assertIs(events[-1]['cached'],False)
+        self.assertEqual(json.loads((J/'project.json').read_text(encoding='utf-8'))['pipeline']['result'],'corrected_initial')
     def test_expected_failures_are_refused_without_traceback(self):
         manifest=json.loads((self.root/'project.json').read_text(encoding='utf-8'))
         for model,options,message in(('flowhmr',{},'Hidden ranges can be filled only in GVHMR and ExMR scenes.'),('exmr',dict(static_camera='yes'),'Invalid ExMR settings'),

@@ -964,7 +964,8 @@ reconstructed again, the joined take is out of date: the selector shows
 **Fill hidden ranges** to write a new joined take. Choosing **Do not fill**
 again also returns to the separate takes; the joined take is kept.
 
-A joined take is used only for the motion result it was made from. For other
+A joined take is used for the results it provides: the result it was made from,
+the results that one is built on, and their corrected variants. For other
 results the source takes are used. After a fill, other people's takes may ask
 for **Apply Correction** again, because the shared scene floor includes the
 joined take.

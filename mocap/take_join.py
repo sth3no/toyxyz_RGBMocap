@@ -166,7 +166,7 @@ def _pipeline(model, result):
     return dict(model=model, result=result, htd_refine=False, footmr=body_result(result).startswith('footmr_'), handflow=False)
 
 
-def _unchanged(root, person, chain, gaps, kinds):
+def _unchanged(root, person, chain, gaps, kinds, pipeline):
     """The folder of this chain's recorded join when it is current and holds what would be written, else None."""
     from .motion_tools import result_is_current
     from .people_store import join_fill, safe_child
@@ -175,7 +175,9 @@ def _unchanged(root, person, chain, gaps, kinds):
         if join['project'] != folder.relative_to(root).as_posix() or join.get('sources') != [t['project'] for t in chain]:continue
         fill = join_fill(root, person, join)
         if fill is None or fill.get('kinds') != kinds or fill['gaps'] != [dict(g, params={}) for g in gaps]:return None
-        return folder if all(result_is_current(folder, k) for k in kinds) else None
+        try:written = json.loads((folder/'project.json').read_text(encoding='utf-8')).get('pipeline')
+        except (OSError, ValueError):return None
+        return folder if written == pipeline and all(result_is_current(folder, k) for k in kinds) else None
     return None
 
 
@@ -271,7 +273,7 @@ def run(root, ident, result, projects):
     plans = []
     for chain, chain_gaps in zip(chains, gaps):
         # Filling again with unchanged inputs keeps the joined take, its correction and its previews.
-        kept = _unchanged(root, person, chain, chain_gaps, kinds)
+        kept = _unchanged(root, person, chain, chain_gaps, kinds, pipeline)
         if kept is not None:plans.append((kept, None, None));continue
         sources = [_load(root, t, kinds, names, pelvis) for t in chain]
         plans.append((sources, chain_gaps, assemble(sources, chain_gaps)))

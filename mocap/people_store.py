@@ -134,7 +134,7 @@ def join_fill(root, person, join):
         if (folder / 'fill_pending.json').exists():
             return None
         fill = read_people_json(folder / 'fill.json')
-        if fill.get('version') != 1 or [x['project'] for x in fill['sources']] != sources or (fill['first'], fill['end']) != (first, end):
+        if fill.get('version') != 1 or not isinstance(fill.get('kind'), str) or [x['project'] for x in fill['sources']] != sources or (fill['first'], fill['end']) != (first, end):
             return None
         takes = {t['project']: (t['first'], t['end']) for t in person.get('takes', [])}
         for source in fill['sources']:

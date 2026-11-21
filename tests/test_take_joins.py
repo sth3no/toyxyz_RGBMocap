@@ -75,6 +75,10 @@ class TakeJoinsTest(unittest.TestCase):
         self.write_fill(kind='footmr_initial',kinds=['initial','footmr_initial'])
         for kind in('initial','footmr_initial','corrected_footmr_initial'):self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person,kind)],[J],kind)
         self.assertEqual(ps.active_takes(self.root,self.person,'footmr_refined'),sources)
+    def test_fill_without_kind_is_stale(self):
+        f=self.root/J/'fill.json';d=json.loads(f.read_text(encoding='utf-8'));d.pop('kinds',None);d.pop('kind',None);f.write_text(json.dumps(d),encoding='utf-8')
+        self.assertFalse(ps.join_current(self.root,self.person,self.person['joins'][0]))
+        for kind in(None,'initial'):self.assertEqual(ps.active_takes(self.root,self.person,kind),self.person['takes'])
     def test_legacy_fill_without_kinds_provides_its_kind(self):
         self.write_fill(kind='footmr_initial')
         self.assertEqual(ps.join_kinds(json.loads((self.root/J/'fill.json').read_text(encoding='utf-8'))),['footmr_initial'])
