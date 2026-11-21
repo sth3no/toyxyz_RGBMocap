@@ -7,9 +7,22 @@ import json
 import os
 import sys
 import numpy as np
+from scipy.spatial.transform import Rotation
 from .gap_fill import INTERPOLATED, POSE_KEYS, fill_logits, rigid_params, smooth_fill
 
 STAGE = 'take_join'
+
+
+def pair(world_orient, cam_orient, world_transl, cam_transl, pelvis):
+    """World-to-camera of one frame; SMPL rotates about the rest pelvis (as scene_camera.paired_camera)."""
+    rotation = lambda v: Rotation.from_rotvec(np.asarray(v, np.float64).reshape(3)).as_matrix()
+    T = np.eye(4);T[:3, :3] = rotation(cam_orient)@rotation(world_orient).T;p = np.asarray(pelvis, np.float64)
+    T[:3, 3] = np.asarray(cam_transl, np.float64).reshape(3)+p-T[:3, :3]@(np.asarray(world_transl, np.float64).reshape(3)+p)
+    return T
+
+
+def _linear(a, b, frames):
+    t = (np.arange(1, frames+1)/(frames+1))[:, None];return a+(b-a)*t
 
 
 def _stitch(parts, sources, gaps, base, total, fill):
@@ -19,9 +32,9 @@ def _stitch(parts, sources, gaps, base, total, fill):
     return out
 
 
-def _params(parts, sources, gaps, base, total, only=None):
+def _params(parts, sources, gaps, base, total):
     # A pose key missing from any take (e.g. GVHMR hands) is dropped rather than invented.
-    keys = [k for k in POSE_KEYS if all(k in p for p in parts) and (only is None or k in only)]+['transl']
+    keys = [k for k in POSE_KEYS if all(k in p for p in parts)]+['transl']
     parts = [{k: np.asarray(p[k], np.float64).reshape(len(p['transl']), -1) for k in keys} for p in parts]
     out = {k: np.empty((total, parts[0][k].shape[1]), np.float64) for k in keys}
     for s, p in zip(sources, parts):
@@ -42,28 +55,37 @@ def assemble(sources, gaps):
         n = s['end']-s['first']
         if len(s['logits']) != n or len(s['boxes']) != n or len(s['observed']) != n or len(s['incam']['transl']) != n or \
                 any(len(p['transl']) != n for p in s['params'].values()):raise ValueError('Take arrays do not match its frame range')
-    moved = lambda s, p, T: p if s is first else rigid_params(p, T, s['pelvis'], first['pelvis'])
+    # Each take's world drifts against the fixed camera, so a take is anchored at its seam:
+    # its first frame keeps the camera pairing of the previous take's last joined frame.
+    pelvis, joined = first['pelvis'], [(first['params'], first['incam'])]
+    for s in sources[1:]:
+        g, c = joined[-1][0]['initial'], joined[-1][1]
+        last = lambda v: np.asarray(v, np.float64).reshape(len(v), -1)[-1]
+        end = pair(last(g['global_orient']), last(c['global_orient']), last(g['transl']), last(c['transl']), pelvis)
+        a, b = s['params']['initial'], s['incam']
+        start = pair(np.asarray(a['global_orient'])[0], np.asarray(b['global_orient'])[0], np.asarray(a['transl'])[0], np.asarray(b['transl'])[0], s['pelvis'])
+        T = np.linalg.inv(end)@start
+        # Camera space is shared by every take; only the replaced shape moves the pelvis.
+        joined.append(({k: rigid_params(p, T, s['pelvis'], pelvis) for k, p in s['params'].items()},
+                       rigid_params(s['incam'], np.eye(4), s['pelvis'], pelvis)))
     params = {}
     for kind, own in first['params'].items():
-        parts = [moved(s, s['params'][kind], s['transform']) for s in sources]
-        params[kind] = _params(parts, sources, gaps, base, total)
+        params[kind] = _params([j[0][kind] for j in joined], sources, gaps, base, total)
         params[kind]['betas'] = np.repeat(np.asarray(own['betas'], np.float64)[:1], total, 0)
-    # Camera space is shared by every take; only the replaced shape moves the pelvis.
-    incam = _params([moved(s, s['incam'], np.eye(4)) for s in sources], sources, gaps, base, total, params['initial'])
-    camera = np.asarray(first['world_to_camera'], np.float64); pelvis = first['pelvis']
-    for g in gaps:
-        span = slice(g['first']-base, g['end']-base)
-        moved_gap = rigid_params({k: v[span] for k, v in params['initial'].items() if k in incam}, camera, pelvis, pelvis)
-        for k in incam:incam[k][span] = np.asarray(moved_gap[k], np.float64).reshape(g['end']-g['first'], -1)
+    incam = _params([j[1] for j in joined], sources, gaps, base, total)
     incam['betas'] = np.repeat(np.asarray(first['incam']['betas'], np.float64)[:1], total, 0)
     logits = _stitch([np.asarray(s['logits'], np.float64) for s in sources], sources, gaps, base, total,
                      lambda a, b, n: fill_logits(a[-1], b[0], n))
     boxes = _stitch([np.asarray(s['boxes'], np.float64) for s in sources], sources, gaps, base, total,
-                    lambda a, b, n: fill_logits(a[-1], b[0], n))
+                    lambda a, b, n: _linear(a[-1], b[0], n))
     mask = np.full(total, INTERPOLATED, np.uint8); observed = np.zeros(total, bool)
     for s in sources:
         mask[s['first']-base:s['end']-base] = 0; observed[s['first']-base:s['end']-base] = np.asarray(s['observed'], bool)
     return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed)
+
+
+class Refused(ValueError):
+    """A deliberate refusal with a message for the user; nothing has been written."""
 
 
 UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this version; select one of them.'
@@ -103,47 +125,37 @@ def _check(root, ident, result):
     from .motion_tools import RESULTS, base_result, has_handflow, require_supported_project, result_is_current, result_sources
     from .paths import MODELS
     from .people_store import load_people, safe_child
-    if not (root/'project.json').is_file() or not (root/'people.json').is_file():raise ValueError('Open a scene with people before filling hidden ranges.')
+    if not (root/'project.json').is_file() or not (root/'people.json').is_file():raise Refused('Open a scene with people before filling hidden ranges.')
     model = require_supported_project(root).key
-    if model not in ('gvhmr', 'exmr'):raise ValueError('Hidden ranges can be filled only in GVHMR and ExMR scenes.')
-    if model == 'exmr' and not saved(root)['static_camera']:raise ValueError('Hidden ranges need a fixed camera. Turn on Static camera in the ExMR settings.')
-    if result not in RESULTS:raise ValueError(f'Unknown motion result: {result}')
+    if model not in ('gvhmr', 'exmr'):raise Refused('Hidden ranges can be filled only in GVHMR and ExMR scenes.')
+    if model == 'exmr' and not saved(root)['static_camera']:raise Refused('Hidden ranges need a fixed camera. Turn on Static camera in the ExMR settings.')
+    if result not in RESULTS:raise Refused(f'Unknown motion result: {result}')
     kinds = result_sources(base_result(result))
-    if has_handflow(result) or any(k.endswith('refined') for k in kinds):raise ValueError(UNSUPPORTED)
+    if has_handflow(result) or any(k.endswith('refined') for k in kinds):raise Refused(UNSUPPORTED)
     person = next((p for p in load_people(root)['people'] if p['id'] == ident), None)
-    if person is None:raise ValueError('Person no longer exists. Run Find person again.')
+    if person is None:raise Refused('Person no longer exists. Run Find person again.')
     choices = person.get('gap_fill') or {}
     chains = hidden_ranges.chains(person.get('takes', []), choices)
-    if not chains:raise ValueError('No hidden range is selected for filling.')
+    if not chains:raise Refused('No hidden range is selected for filling.')
     body = MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz'
-    if not body.is_file():raise ValueError('Import SMPLX_NEUTRAL.npz to join takes.')
+    if not body.is_file():raise Refused('Import SMPLX_NEUTRAL.npz to join takes.')
     names = list(dict.fromkeys(['tracking.npz', *(RESULTS[k][0] for k in kinds)]))
     rates = set()
     for take in (t for chain in chains for t in chain):
         folder = safe_child(root, take['project']);state = json.loads((folder/'project.json').read_text(encoding='utf-8'))
-        if state.get('frames') != take['end']-take['first']:raise ValueError(f'Take {folder.name} does not match its frame range. Prepare the person motion again.')
+        if state.get('frames') != take['end']-take['first']:raise Refused(f'Take {folder.name} does not match its frame range. Prepare the person motion again.')
         rates.add(state.get('fps'))
         for name in names:
-            if not (folder/name).is_file():raise ValueError(f'Take {folder.name} has no {name}. Reconstruct it first.')
+            if not (folder/name).is_file():raise Refused(f'Take {folder.name} has no {name}. Reconstruct it first.')
         for kind in kinds:
-            if not result_is_current(folder, kind):raise ValueError(f'The {kind} result of take {folder.name} is out of date. Reconstruct it first.')
-    if len(rates) != 1:raise ValueError('The takes to join have different frame rates.')
+            if not result_is_current(folder, kind):raise Refused(f'The {kind} result of take {folder.name} is out of date. Reconstruct it first.')
+    if len(rates) != 1:raise Refused('The takes to join have different frame rates.')
     key = lambda a, b: hidden_ranges.gap_key(dict(first=a['end'], end=b['first']))
     gaps = [[dict(first=a['end'], end=b['first'], method=choices[key(a, b)]['method']) for a, b in zip(chain, chain[1:])] for chain in chains]
     return model, chains, gaps, kinds, names, body
 
 
-def _cameras(root, takes):
-    from .people_store import safe_child
-    from .scene_camera import prepare_cameras, read_camera
-    folders = [safe_child(root, t['project']) for t in takes]
-    if any(read_camera(f) is None for f in folders):prepare_cameras(root)  # Same caches the scene loader writes.
-    cameras = [read_camera(f) for f in folders]
-    if any(c is None for c in cameras):raise ValueError('Cannot prepare the shared scene camera for these takes. Reconstruct them again.')
-    return cameras
-
-
-def _load(root, take, camera, kinds, names, pelvis):
+def _load(root, take, kinds, names, pelvis):
     import torch
     from .motion_tools import RESULTS
     from .people_store import safe_child
@@ -159,9 +171,9 @@ def _load(root, take, camera, kinds, names, pelvis):
             incam, model = numpy(record['smpl_params_incam']), record.get('source_model')
             logits = record['net_outputs']['static_conf_logits'][0].double().numpy()
         del record
-    if {n: _stamp(folder/n) for n in names} != files:raise ValueError(f'Take {folder.name} changed while it was read; try again.')
+    if {n: _stamp(folder/n) for n in names} != files:raise Refused(f'Take {folder.name} changed while it was read; try again.')
     return dict(first=take['first'], end=take['end'], project=take['project'], folder=folder, files=files, K=K,
-                world_to_camera=np.asarray(camera['world_to_camera'], np.float64), pelvis=pelvis(params['initial']['betas'][0]),
+                pelvis=pelvis(params['initial']['betas'][0]),
                 params=params, incam=incam, logits=logits, boxes=boxes, observed=observed, source_model=model)
 
 
@@ -175,13 +187,13 @@ def _write(root, ident, sources, gaps, joined, kinds, base, model):
     from .video import prepare_people_clip
     first, end, lead = sources[0]['first'], sources[-1]['end'], sources[0]
     person = next((p for p in load_people(root)['people'] if p['id'] == ident), None)
-    if person is None:raise ValueError('Person no longer exists. Run Find person again.')
+    if person is None:raise Refused('Person no longer exists. Run Find person again.')
     target = safe_child(root, person['preview'])/'takes'/f'{first:09d}_{end:09d}_fill_v1'
     target.mkdir(parents=True, exist_ok=True);pending = target/'fill_pending.json'
     # The marker stays after a failure, so a half-written folder is never current.
     atomic_json(pending, dict(version=1, person=ident, first=first, end=end))
     clip = prepare_people_clip(root, first, end);shared = json.loads((clip/'project.json').read_text(encoding='utf-8'))
-    if shared['frames'] != end-first:raise ValueError('Joined take media does not match its frame range')
+    if shared['frames'] != end-first:raise RuntimeError('Joined take media does not match its frame range')
     for name in ('input.mp4', 'preview.mp4', 'preview.json'):
         if (clip/name).is_file():_link(clip/name, target/name)
     temporary = target/'tracking.partial.npz'
@@ -215,34 +227,28 @@ def _write(root, ident, sources, gaps, joined, kinds, base, model):
     join = dict(project=target.relative_to(root).as_posix(), first=first, end=end, sources=[s['project'] for s in sources])
     state = load_people(root)  # The editor may have saved other fields meanwhile.
     person = next((p for p in state['people'] if p['id'] == ident), None)
-    if person is None:raise ValueError('Person no longer exists. Run Find person again.')
+    if person is None:raise RuntimeError('Person no longer exists; the joined take was not recorded. Run Find person again.')
     person['joins'] = [j for j in person.get('joins') or [] if not (j.get('first', end) < end and first < j.get('end', first))]+[join]
+    if not join_current(root, person, join):raise RuntimeError('The joined take was written but does not validate; it was not recorded.')
     save_people(root, state)
-    if not join_current(root, person, join):raise RuntimeError('The joined take was written but does not validate; it will not be used.')
     return target
 
 
-def run(root, ident, result):
+def run(root, ident, result, projects):
+    """Appends each joined folder to `projects` once it is recorded in people.json."""
     from .motion_tools import base_result
-    root = Path(root).resolve()
     model, chains, gaps, kinds, names, body = _check(root, ident, result)
-    takes = [t for chain in chains for t in chain]
-    cameras = dict(zip((t['project'] for t in takes), _cameras(root, takes)))
     with np.load(body, allow_pickle=False) as data:
         regressor = data['J_regressor'][0];template = regressor@data['v_template']
         shapes = np.einsum('v,vci->ci', regressor, data['shapedirs'][..., :10])
     pelvis = lambda betas: template+shapes@np.asarray(betas, np.float64)[:10]
     plans = []
     for chain, chain_gaps in zip(chains, gaps):
-        sources = [_load(root, t, cameras[t['project']], kinds, names, pelvis) for t in chain]
-        inverse = np.linalg.inv(sources[0]['world_to_camera'])
-        for s in sources:s['transform'] = inverse@s['world_to_camera']
+        sources = [_load(root, t, kinds, names, pelvis) for t in chain]
         plans.append((sources, chain_gaps, assemble(sources, chain_gaps)))
-    projects = []
     for i, (sources, chain_gaps, joined) in enumerate(plans):
         emit('progress', stage=STAGE, current=i, total=len(plans), message=f'Filling hidden ranges: joined take {i+1} of {len(plans)}')
         projects.append(str(_write(root, ident, sources, chain_gaps, joined, kinds, base_result(result), model)))
-    return root, projects
 
 
 def main(argv=None):
@@ -253,11 +259,12 @@ def main(argv=None):
     parser.add_argument('--project', required=True, help='scene root folder')
     parser.add_argument('--person-id', type=int, required=True)
     parser.add_argument('--result', default='initial', help='initial, footmr_initial or a corrected_ variant')
-    args = parser.parse_args(argv);started = time.monotonic()
+    args = parser.parse_args(argv);started = time.monotonic();root = Path(args.project).resolve();projects = []
     try:
-        root, projects = run(args.project, args.person_id, args.result)
+        run(root, args.person_id, args.result, projects)
     except Exception as error:
-        if not isinstance(error, ValueError):traceback.print_exc(file=sys.stderr)  # Refusals carry their own message.
+        if not isinstance(error, Refused):traceback.print_exc(file=sys.stderr)
+        if projects:emit('takes_joined', project=str(root), person_id=args.person_id, projects=projects)  # Earlier chains are recorded.
         emit('failed', stage=STAGE, message=str(error) or type(error).__name__);return 1
     emit('takes_joined', project=str(root), person_id=args.person_id, projects=projects)
     emit('complete', stage=STAGE, output=projects[-1], cached=False, elapsed=time.monotonic()-started)
