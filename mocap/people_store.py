@@ -124,7 +124,7 @@ def visible_runs(indices, fps, first, end, max_gap_seconds=.5):
 
 
 def join_fill(root, person, join):
-    """fill.json while the join is current: unchanged source files, and each filled range still a hidden range with the same method chosen."""
+    """fill.json while the join is current: unchanged source files, and each filled range still a hidden range with the same choice, and unchanged donor files."""
     try:
         sources, first, end = join['sources'], join['first'], join['end']
         if not (isinstance(join['project'], str) and isinstance(sources, list) and sources and all(isinstance(x, str) for x in sources)
@@ -151,8 +151,16 @@ def join_fill(root, person, join):
         choices = person.get('gap_fill') or {}
         for gap in fill['gaps']:
             key = hidden_ranges.gap_key(gap)
-            if key not in found or (choices.get(key) or {}).get('method') != gap['method']:
+            if key not in found or hidden_ranges.choice_params(choices.get(key)) != (gap['method'], gap.get('params') or {}):
                 return None
+        for donor in fill.get('donors') or []:
+            if not donor['files']:
+                return None
+            base = safe_child(root, donor['project'])
+            for name, stamp in donor['files'].items():
+                stat = (base / name).stat()
+                if [stat.st_size, stat.st_mtime_ns] != list(stamp):
+                    return None
         return fill
     except Exception:
         return None

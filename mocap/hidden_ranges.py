@@ -1,5 +1,6 @@
 SMOOTH_MAX_FRAMES=30
-METHODS=('none','smooth')
+METHODS=('none','smooth','copy')
+OFFSET_LIMIT=600
 
 def gaps(takes):
     out=[];prev=None
@@ -10,17 +11,47 @@ def gaps(takes):
 
 def gap_key(gap):return f"{gap['first']}_{gap['end']}"
 
-def method_issue(method,gap):
+def choice_params(choice):
+    """(method, params) of a gap choice record, normalised; ValueError for a malformed one."""
+    if choice is None or choice=={}:return 'none',{}
+    if not isinstance(choice,dict):raise ValueError('Invalid gap choice')
+    m=choice.get('method','none')
+    if m not in METHODS:raise ValueError(f'Unknown method: {m}')
+    if m!='copy':return m,{}
+    p,mirror,off=choice.get('person'),choice.get('mirror',False),choice.get('offset',0)
+    if type(p) is not int or type(mirror) is not bool or type(off) is not int or abs(off)>OFFSET_LIMIT:raise ValueError('Invalid copy choice')
+    return m,dict(person=p,mirror=mirror,offset=off)
+
+def donor_take(takes,gap,offset):
+    """Last source take containing the frames just before and after the gap, shifted by offset."""
+    lo,hi=gap['first']-1+offset,gap['end']+1+offset;found=None
+    for t in takes:
+        if isinstance(t,dict) and type(t.get('first')) is int and type(t.get('end')) is int and t['first']<=lo and t['end']>=hi:found=t
+    return found
+
+def method_issue(method,gap,choice=None,people=None,ident=None):
     if method=='none':return None
+    if method=='copy':
+        ask='Choose a person to copy from.'
+        try:p=choice_params(dict(choice or {},method='copy'))[1]
+        except (ValueError,TypeError):return ask
+        donor=next((x for x in people or [] if isinstance(x,dict) and x.get('id')==p['person']),None)
+        if donor is None or p['person']==ident:return ask
+        takes=donor.get('takes');name=donor.get('name') or f"Person {p['person']}"
+        if donor_take(takes if isinstance(takes,list) else [],gap,p['offset']) is None:return f'{name} has no captured motion covering this range with this offset.'
+        return None
     if method!='smooth':raise ValueError(f'Unknown method: {method}')
     n=gap['end']-gap['first']
     return f'Smooth join is limited to {SMOOTH_MAX_FRAMES} frames; this range has {n}.' if n>SMOOTH_MAX_FRAMES else None
 
-def chains(takes,choices):
+def chains(takes,choices,people=None,ident=None):
     out=[];cur=[]
     for g in gaps(takes):
-        m=(choices.get(gap_key(g)) or {}).get('method','none')
-        if m!='none' and method_issue(m,g) is None:
+        try:
+            c=choices.get(gap_key(g));m=choice_params(c)[0]
+            ok=m!='none' and method_issue(m,g,c,people,ident) is None
+        except Exception:ok=False
+        if ok:
             if not cur or cur[-1] is not g['before']:
                 if cur:out.append(cur)
                 cur=[g['before']]

@@ -164,4 +164,42 @@ class TakeJoinsTest(unittest.TestCase):
         self.assertEqual([a['project'] for a in scene_floor.inputs(self.root)['actors']],[S(0,100),S(120,200),J])
         self.person['gap_fill']={};ps.save_people(self.root,self.state)  # Do not fill: the join is not current
         self.assertEqual([a['project'] for a in scene_floor.inputs(self.root)['actors']],[S(0,100),S(120,200)])
+    D='p2/takes/000000000_000000200_scene_v1'
+    def copy_fixture(self,**params):
+        d=self.root/self.D;d.mkdir(parents=True);(d/'hmr4d_results.pt').write_bytes(b'donor result')
+        self.state['people'].append(dict(id=2,color='#000000',preview='p2',takes=[dict(project=self.D,first=0,end=200)]))
+        p=dict(person=2,mirror=False,offset=0);p.update(params)
+        self.write_fill(gaps=[dict(first=100,end=120,method='copy',params=p)],donors=[dict(person=2,project=self.D,first=0,end=200,files={'hmr4d_results.pt':stamp(d/'hmr4d_results.pt')})])
+        self.person['gap_fill']={'100_120':dict(method='copy',**p)}
+    def current(self):return ps.join_current(self.root,self.person,self.person['joins'][0])
+    def test_copy_join_current_while_choice_and_donor_match(self):
+        self.copy_fixture();self.assertTrue(self.current())
+        self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person)],[J])
+    def test_copy_join_stale_after_donor_file_changes(self):
+        self.copy_fixture();(self.root/self.D/'hmr4d_results.pt').write_bytes(b'rewritten with other length')
+        self.assertFalse(self.current());self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+    def test_copy_join_stale_for_missing_or_empty_donor(self):
+        self.copy_fixture();(self.root/self.D/'hmr4d_results.pt').unlink();self.assertFalse(self.current())
+        self.write_fill(donors=[dict(person=2,project=self.D,first=0,end=200,files={})]);self.assertFalse(self.current())
+        self.write_fill(donors=[dict(person=2,project='../../x',first=0,end=200,files={'a':[1,2]})]);self.assertFalse(self.current())
+        self.write_fill(donors=[5]);self.assertFalse(self.current())
+    def test_copy_join_stale_when_choice_changes(self):
+        self.copy_fixture();ch=self.person['gap_fill']['100_120']
+        ch['mirror']=True;self.assertFalse(self.current());ch['mirror']=False;self.assertTrue(self.current())
+        ch['offset']=5;self.assertFalse(self.current());ch['offset']=0
+        ch['person']=3;self.assertFalse(self.current());ch['person']=2
+        self.person['gap_fill']['100_120']={'method':'smooth'};self.assertFalse(self.current())
+        self.person['gap_fill']['100_120']={'method':'copy','person':'x'};self.assertFalse(self.current())
+        self.person['gap_fill']['100_120']='copy';self.assertFalse(self.current())
+    def test_copy_choice_defaults_match_recorded_params(self):
+        self.copy_fixture();self.person['gap_fill']['100_120']={'method':'copy','person':2};self.assertTrue(self.current())
+    def test_step1_record_without_params_or_donors_stays_current(self):
+        d=json.loads((self.root/J/'fill.json').read_text(encoding='utf-8'));del d['gaps'][0]['params'];d.pop('donors',None)
+        (self.root/J/'fill.json').write_text(json.dumps(d),encoding='utf-8')
+        self.person['gap_fill']={'100_120':{'method':'smooth'}};self.assertTrue(self.current())
+        self.person['gap_fill']={'100_120':{'method':'none'}};self.assertFalse(self.current())
+    def test_malformed_donors_or_gaps_never_raise(self):
+        for bad in('x',5,{'a':1},[None],[{'project':1,'files':{}}]):
+            self.write_fill(donors=bad);self.assertFalse(self.current(),bad)
+            self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
 if __name__=='__main__':unittest.main()

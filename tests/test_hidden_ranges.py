@@ -33,3 +33,45 @@ class HiddenRangesTest(unittest.TestCase):
     def test_gaps_unsorted_with_nested_take(self):
         g=h.gaps([T(250,300),T(50,100),T(0,200)])
         self.assertEqual([(x['first'],x['end'],x['before']['first']) for x in g],[(200,250,0)])
+
+    def test_choice_params(self):
+        for c in(None,{},{'method':'none'}):self.assertEqual(h.choice_params(c),('none',{}))
+        self.assertEqual(h.choice_params({'method':'smooth','person':3}),('smooth',{}))
+        self.assertEqual(h.choice_params({'method':'copy','person':2}),('copy',dict(person=2,mirror=False,offset=0)))
+        self.assertEqual(h.choice_params({'method':'copy','person':2,'mirror':True,'offset':-600}),('copy',dict(person=2,mirror=True,offset=-600)))
+        self.assertEqual(h.choice_params(dict(method='copy',person=2,offset=600))[1]['offset'],600)
+        for bad in({'method':'bogus'},{'method':'copy'},{'method':'copy','person':'2'},{'method':'copy','person':True},{'method':'copy','person':2.0},
+                {'method':'copy','person':2,'offset':601},{'method':'copy','person':2,'offset':-601},{'method':'copy','person':2,'offset':1.5},
+                {'method':'copy','person':2,'offset':True},{'method':'copy','person':2,'mirror':1},{'method':'copy','person':2,'mirror':'yes'},'copy',[1]):
+            with self.assertRaises(ValueError,msg=bad):h.choice_params(bad)
+    def test_donor_take(self):
+        g=dict(first=100,end=120)
+        self.assertEqual(h.donor_take([T(0,90),T(95,130)],g,0),T(95,130))
+        self.assertEqual(h.donor_take([T(0,91),T(95,130)],g,-30),T(0,91));self.assertIsNone(h.donor_take([T(0,90),T(95,130)],g,-30))
+        self.assertIsNone(h.donor_take([T(0,110),T(110,200)],g,0))
+        self.assertEqual(h.donor_take([T(50,150),T(60,160)],g,0),T(60,160))
+        self.assertEqual(h.donor_take([T(60,160),T(50,150)],g,0),T(50,150))
+        self.assertIsNone(h.donor_take([T(0,90)],g,0))
+        self.assertIsNone(h.donor_take([],g,0))
+    def test_method_issue_copy(self):
+        g=dict(first=100,end=120);people=[dict(id=1,name='Person 1',takes=[T(0,200)]),dict(id=2,name="Person 2",takes=[T(0,91)])]
+        c=lambda **k:dict(method='copy',**k)
+        ask='Choose a person to copy from.'
+        self.assertEqual(h.method_issue('copy',g),ask)
+        for ch in(c(),c(person=1),c(person=9),None,{}):self.assertEqual(h.method_issue('copy',g,ch,people,1),ask,ch)
+        self.assertEqual(h.method_issue('copy',g,c(person=2),people,1),'Person 2 has no captured motion covering this range with this offset.')
+        self.assertIsNone(h.method_issue('copy',g,c(person=2,offset=-30),people,1))
+        self.assertIsNone(h.method_issue('copy',g,c(person=1),people,2))
+        self.assertIsNone(h.method_issue('smooth',g));self.assertIsNone(h.method_issue('none',g))
+    def test_chains_with_copy(self):
+        takes=[T(0,100),T(120,200),T(220,300)]
+        people=[dict(id=1,takes=takes),dict(id=2,name='Two',takes=[T(0,400)])]
+        ch={'100_120':{'method':'smooth'},'200_220':{'method':'copy','person':2}}
+        self.assertEqual([[t['first'] for t in c] for c in h.chains(takes,ch,people,1)],[[0,120,220]])
+        self.assertEqual(h.chains(takes,ch),[[takes[0],takes[1]]])
+        ch['200_220']={'method':'copy','person':1}
+        self.assertEqual([[t['first'] for t in c] for c in h.chains(takes,ch,people,1)],[[0,120]])
+        for bad in({'method':'copy','person':'x'},{'method':'copy','person':2,'offset':9999},{'method':'copy','person':2,'mirror':1},'copy',5):
+            ch['200_220']=bad;self.assertEqual([[t['first'] for t in c] for c in h.chains(takes,ch,people,1)],[[0,120]],bad)
+        ch['200_220']={'method':'copy','person':2}
+        self.assertEqual(h.chains(takes,ch,[None,5,dict(id=2,takes='x')],1),[[takes[0],takes[1]]])
