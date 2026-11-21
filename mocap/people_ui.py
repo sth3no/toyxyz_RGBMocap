@@ -536,16 +536,18 @@ class PeopleWorkspace:
         if not found:self.hidden_ranges.hide();return
         from .hidden_ranges_state import panel_state
         choices=person.get('gap_fill') or {}
-        reason,manual=panel_state(self.people_root,found,choices,self.model_choice.currentData(),self.active_result)
-        self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason)
+        people=self.people_state['people'] if self.people_state else []
+        reason,manual=panel_state(self.people_root,found,choices,self.model_choice.currentData(),self.active_result,people,person.get('id'))
+        self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason,people,person.get('id'))
         self.hidden_ranges.set_manual_note(manual)
 
-    def gap_choice_changed(self,key,method):
+    def gap_choice_changed(self,key,method,donor=None,mirror=False,offset=0):
         from copy import deepcopy
         from .hidden_ranges_state import choose
         if self.people_state is None or self.current_person() is None:return
         state=deepcopy(self.people_state);person=next(p for p in state['people'] if p['id']==self.active_person_id)
-        choose(person.setdefault('gap_fill',{}),key,method)
+        if not isinstance(person.get('gap_fill'),dict):person['gap_fill']={}
+        choose(person['gap_fill'],key,method,donor,mirror,offset)
         if not person['gap_fill']:del person['gap_fill']
         try:save_people(self.people_root,state)
         except (ValueError,OSError) as error:
