@@ -44,7 +44,7 @@ def fill_logits(before_last, after_first, frames):
     t = (np.arange(1, frames + 1) / (frames + 1))[:, None]
     return a + (b - a) * t
 
-BLEND = 5
+BLEND_RATE, BLEND_MIN, BLEND_MAX = 6.0, 5, 30  # degrees per frame; frames
 MIRROR_BODY = ((0, 1), (3, 4), (6, 7), (9, 10), (12, 13), (15, 16), (17, 18), (19, 20))
 HANDS = ('left_hand_pose', 'right_hand_pose')
 FLIP = np.array([1., -1., -1.])
@@ -83,26 +83,47 @@ def mirror_logits(logits, pairs=((0, 2), (1, 3), (4, 5))):
     for a, b in pairs: out[..., [a, b]] = x[..., [b, a]]
     return out
 
-def copy_fill(before, after, donor, keys):
+def _blend(diffs, n):
+    """Frames over which a boundary difference fades out: more for a larger difference, at most half the range."""
+    deg = max([np.degrees(np.linalg.norm(d, axis=-1)).max() for d in diffs] + [0.])
+    return min(n // 2, int(np.clip(np.ceil(deg / BLEND_RATE - 1e-9), BLEND_MIN, BLEND_MAX)))
+
+def copy_fill(before, after, donor, keys, height_scale=1.0, stats=None):
+    """Gap rows from the donor's n+2 rows (rows 0 and n+1 face the boundary frames); transl is the pelvis position."""
     f = lambda d, k: np.asarray(d[k], np.float64)
     dp = f(donor, 'transl').reshape(-1, 3); n = len(dp) - 2
     if n < 1: raise ValueError('Copy needs at least one hidden frame')
-    s = np.arange(1, n + 2) / (n + 1); dy = yaw(f(donor, 'global_orient').reshape(-1, 3))
+    s = np.arange(n + 2) / (n + 1); dy = yaw(f(donor, 'global_orient').reshape(-1, 3))
     y0 = yaw(f(before, 'global_orient').reshape(-1, 3)[-1]) - dy[0]
     y1 = yaw(f(after, 'global_orient').reshape(-1, 3)[0]) - dy[-1]
-    turn = _ry(y0 + s * _wrap(y1 - y0))  # steps 1..n+1; the last equals y1
+    turn = _ry(y0 + s * _wrap(y1 - y0))  # rows 0..n+1; row 0 turns by y0, row n+1 by y1
     p0, p1 = f(before, 'transl').reshape(-1, 3)[-1], f(after, 'transl').reshape(-1, 3)[0]
-    acc = p0 + np.cumsum(turn.apply(np.diff(dp, axis=0)), 0)
-    out = {'transl': acc[:n] - s[:n, None] * (acc[-1] - p1)}
-    B = min(BLEND, n // 2); w = [3 * u * u - 2 * u ** 3 for u in np.arange(1, B + 1) / (B + 1)]
+    acc = p0 + np.cumsum(turn[1:].apply(np.diff(dp, axis=0)), 0)
+    res = acc[-1] - p1; out = {'transl': acc[:n] - s[1:n + 1, None] * res}
+    # Heights are measured from each world's floor; the boundary differences fade out with the pose blends below.
+    h = height_scale * dp[:, 1]; out['transl'][:, 1] = h[1:-1]
+    rows, diffs = {}, {}
     for k in keys:
-        b, a = np.atleast_2d(f(before, k)), np.atleast_2d(f(after, k))
+        if k not in donor: continue
+        b, a = np.atleast_2d(f(before, k))[-1].reshape(-1, 3), np.atleast_2d(f(after, k))[0].reshape(-1, 3)
+        r = R.from_rotvec(f(donor, k).reshape(-1, 3))
+        if k == 'global_orient': r = turn * r
+        v = r.as_rotvec().reshape(n + 2, -1, 3); rows[k] = v
+        # Local rotations compose on the right: donor row · D equals the boundary pose.
+        diffs[k] = [(R.from_rotvec(v[i]).inv() * R.from_rotvec(x)).as_rotvec() for i, x in ((0, b), (-1, a))]
+    B = [_blend([d[side] for d in diffs.values()], n) for side in (0, 1)]
+    u = lambda j, side: 1 - _smoothstep(j / (B[side] + 1))
+    for j in range(1, B[0] + 1): out['transl'][j - 1, 1] += u(j, 0) * (p0[1] - h[0])
+    for j in range(1, B[1] + 1): out['transl'][n - j, 1] += u(j, 1) * (p1[1] - h[-1])
+    for k in keys:
         if k not in donor:
-            out[k] = _slerp(b[-1], a[0], s[:n]).reshape(n, -1); continue
-        v = f(donor, k).reshape(n + 2, -1)[1:-1].copy()
-        if k == 'global_orient': v = (turn[:n] * R.from_rotvec(v)).as_rotvec()
-        for j in range(1, B + 1):
-            v[j - 1] = _slerp(b[-1], v[j - 1], [w[j - 1]]).reshape(-1)
-            v[n - j] = _slerp(a[0], v[n - j], [w[j - 1]]).reshape(-1)
-        out[k] = v
+            b, a = np.atleast_2d(f(before, k)), np.atleast_2d(f(after, k))
+            out[k] = _slerp(b[-1], a[0], s[1:n + 1]).reshape(n, -1); continue
+        v = rows[k]; o = v[1:-1].copy(); D0, D1 = diffs[k]
+        for j in range(1, B[0] + 1): o[j - 1] = (R.from_rotvec(v[j]) * R.from_rotvec(D0 * u(j, 0))).as_rotvec()
+        for j in range(1, B[1] + 1): o[n - j] = (R.from_rotvec(v[n + 1 - j]) * R.from_rotvec(D1 * u(j, 1))).as_rotvec()
+        out[k] = o.reshape(n, -1)
+    if stats is not None: stats.update(residual=float(np.linalg.norm(res[[0, 2]])), blend=tuple(B))
     return out
+
+def _smoothstep(x): return 3 * x * x - 2 * x ** 3

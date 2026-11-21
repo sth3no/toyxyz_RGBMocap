@@ -75,9 +75,56 @@ class GapFillTest(unittest.TestCase):
         np.testing.assert_allclose(out['transl'],np.c_[np.arange(1,11)*.1,np.ones(10),np.zeros(10)],atol=1e-9)   # walks +X, not +Z
         np.testing.assert_allclose(g.yaw(out['global_orient']),np.pi/2,atol=1e-9)
     def test_copy_blends_pose_at_the_edges(self):
-        d=donor_walk(14);d['body_pose'][:]=.6;b=pose(2,transl=(0,1,0));a=pose(2,transl=(0,1,1.3))
-        v=g.copy_fill(b,a,d,('global_orient','body_pose'))['body_pose'][:,0]
-        self.assertTrue(0<v[0]<v[1]<v[4]<.6);np.testing.assert_allclose(v[5:7],.6,atol=1e-9);self.assertTrue(0<v[-1]<v[-5]<.6)
+        d=donor_walk(32);d['body_pose'][:]=.6;b=pose(2,transl=(0,1,0));a=pose(2,transl=(0,1,3.1))   # n=30; 59.5 deg per joint: 10 blend frames
+        st={};v=g.copy_fill(b,a,d,('global_orient','body_pose'),stats=st)['body_pose'][:,0];self.assertEqual(st['blend'],(10,10))
+        self.assertTrue(np.all(np.diff(np.r_[0,v[:11]])>0));np.testing.assert_allclose(v[10:20],.6,atol=1e-12)   # rises from the boundary, then the donor's
+        np.testing.assert_allclose(v[:10],.6*g._smoothstep(np.arange(1,11)/11),atol=1e-12);np.testing.assert_allclose(v[::-1],v,atol=1e-12)
+    def test_copy_blend_length_follows_the_difference(self):
+        for n,want in((40,15),(20,10)):
+            d=donor_walk(n+2);b=pose(2,transl=(0,1,0));a=pose(2,transl=(0,1,.1*(n+1)));b['body_pose'][:,3:6]=[np.pi/2,0,0]   # 90 deg on one joint
+            st={};o=g.copy_fill(b,a,d,('global_orient','body_pose'),stats=st);self.assertEqual(st['blend'],(want,5))
+            j=np.vstack([b['body_pose'][-1:,3:6],o['body_pose'][:,3:6]]);step=np.degrees((R.from_rotvec(j[1:])*R.from_rotvec(j[:-1]).inv()).magnitude())
+            if n==40:self.assertLess(step.max(),10)
+            np.testing.assert_allclose(o['body_pose'][want:,3:6],0,atol=1e-12)
+    def test_copy_difference_composes_on_the_right(self):
+        n=12;d=donor_walk(n+2);d['body_pose'][:,:3]=np.c_[np.zeros(n+2),.08*np.arange(n+2),np.full(n+2,.4)]   # turning joint
+        b=pose(2,transl=(0,1,0));a=pose(2,transl=(0,1,1.3));b['body_pose'][:,:3]=[.5,0,0];a['body_pose'][:,:3]=d['body_pose'][-1,:3]
+        st={};o=g.copy_fill(b,a,d,('global_orient','body_pose'),stats=st)['body_pose'][:,:3];B=st['blend'][0]
+        v=R.from_rotvec(d['body_pose'][:,:3]);D0=(v[0].inv()*R.from_rotvec([.5,0,0])).as_rotvec();L0=(R.from_rotvec([.5,0,0])*v[0].inv()).as_rotvec()
+        for j in range(1,B+1):
+            u=1-g._smoothstep(j/(B+1))
+            np.testing.assert_allclose(o[j-1],(v[j]*R.from_rotvec(D0*u)).as_rotvec(),atol=1e-12)
+            self.assertGreater(np.linalg.norm(o[j-1]-(R.from_rotvec(L0*u)*v[j]).as_rotvec()),1e-3)   # left side would differ
+        np.testing.assert_allclose(o[B:],d['body_pose'][B+1:n+1,:3],atol=1e-12)
+    def test_copy_of_a_twin_is_exact(self):
+        rng=np.random.default_rng(3);N,f0,f1=60,20,40;t=np.arange(N)[:,None]
+        m=dict(global_orient=(R.from_rotvec(np.c_[0*t,.02*t-.5,0*t])*R.from_rotvec(.1*np.sin(t/7+rng.normal(0,1,(1,3))))).as_rotvec(),
+               body_pose=.3*np.sin(t/9+rng.normal(0,3,(1,63))),left_hand_pose=.2*np.sin(t/5+rng.normal(0,3,(1,45))),right_hand_pose=.2*np.cos(t/6+rng.normal(0,3,(1,45))),
+               transl=np.c_[np.sin(t/10),.9+.05*np.sin(t/4),.03*t],betas=np.zeros((N,10)))
+        keys=('global_orient','body_pose','left_hand_pose','right_hand_pose');rows=lambda a,b:{k:v[a:b] for k,v in m.items()}
+        M=R.from_rotvec([0,1.3,0])
+        moved=lambda d:dict(d,global_orient=(M*R.from_rotvec(d['global_orient'])).as_rotvec(),transl=M.apply(d['transl'])+[3,0,-2])   # same floor
+        for name,d in(('same world',rows(f0-1,f1+1)),('turned and moved',moved(rows(f0-1,f1+1))),('mirrored back',g.mirror_params(g.mirror_params(moved(rows(f0-1,f1+1)))))):
+            st={};out=g.copy_fill(rows(f0-2,f0),rows(f1,f1+2),d,keys,stats=st)
+            for k in(*keys,'transl'):np.testing.assert_allclose(out[k],m[k][f0:f1],atol=1e-9,err_msg=f'{name} {k}')
+            self.assertLess(st['residual'],1e-9)
+    def test_copy_height_scale(self):
+        n=20;d=donor_walk(n+2);b=pose(2,transl=(0,.8,0));a=pose(2,transl=(0,.8,.1*(n+1)))       # donor pelvis at 1.0
+        np.testing.assert_allclose(g.copy_fill(b,a,d,('global_orient','body_pose'),height_scale=.8)['transl'][:,1],.8,atol=1e-12)
+        a['transl'][:,1]=.6;st={};y=g.copy_fill(b,a,d,('global_orient','body_pose'),height_scale=.8,stats=st)['transl'][:,1]   # reappears 0.2 lower
+        B=st['blend'][1];self.assertEqual(B,5);np.testing.assert_allclose(y[:n-B],.8,atol=1e-12)
+        self.assertTrue(np.all(np.diff(np.r_[.8,y[n-B:],.6])<0))                          # sinks only inside the end blend
+        np.testing.assert_allclose(y[n-B:],.8-.2*(1-g._smoothstep(np.arange(B,0,-1)/(B+1))),atol=1e-12)
+    def test_copy_heading_change_across_the_gap(self):
+        n=10;d=donor_walk(n+2);d['transl'][:,0]=.03*np.arange(n+2)**1.5                    # curved donor path facing +Z
+        b=pose(2,orient=(0,.3,0),transl=(1,1,2));a=pose(2,orient=(0,.9,0),transl=(2.,1,2.5))
+        out=g.copy_fill(b,a,d,('global_orient','body_pose'));acc=[b['transl'][-1]];th=[]
+        for i in range(1,n+2):
+            t=.3+i/(n+1)*.6;c,s=np.cos(t),np.sin(t);th.append(t)
+            acc.append(acc[-1]+np.array([[c,0,s],[0,1,0],[-s,0,c]])@(d['transl'][i]-d['transl'][i-1]))
+        acc=np.array(acc);res=acc[-1]-a['transl'][0];want=np.array([acc[i]-i/(n+1)*res for i in range(1,n+1)])
+        np.testing.assert_allclose(out['transl'][:,[0,2]],want[:,[0,2]],atol=1e-12);np.testing.assert_allclose(out['transl'][:,1],1,atol=1e-12)
+        np.testing.assert_allclose(g.yaw(out['global_orient']),th[:n],atol=1e-12)
     def test_copy_short_gap_and_missing_donor_hands(self):
         b=pose(2);a=pose(2);b['left_hand_pose']=np.zeros((2,45));a['left_hand_pose']=np.full((2,45),.2)
         out=g.copy_fill(b,a,donor_walk(3),('global_orient','body_pose','left_hand_pose'))                       # one-frame gap
@@ -96,11 +143,18 @@ class GapFillTest(unittest.TestCase):
         np.testing.assert_allclose(q['right_hand_pose'],p['left_hand_pose']*flip,atol=1e-12)
         np.testing.assert_allclose(q['left_hand_pose'],p['right_hand_pose']*flip,atol=1e-12)
         np.testing.assert_array_equal(q['betas'],p['betas'])
+    def test_mirror_turns_a_lean_to_the_left_into_a_lean_to_the_right(self):
+        lean=R.from_rotvec([0,0,-.3])                                                 # SMPL +X is the body's left: up tilts to +X
+        for heading in(0.,np.pi/2):
+            p=pose(1,orient=(R.from_rotvec([0,heading,0])*lean).as_rotvec(),transl=(0,1,0));q=g.mirror_params(p)
+            left=R.from_rotvec([0,heading,0]).apply([1,0,0]);up=lambda x:R.from_rotvec(x['global_orient'][0]).apply([0,1,0])
+            self.assertAlmostEqual(up(p)@left,np.sin(.3),places=12);self.assertAlmostEqual(up(q)@left,-np.sin(.3),places=12)   # now leans to the right
+            self.assertAlmostEqual(up(q)[1],np.cos(.3),places=12);self.assertAlmostEqual(float(g.yaw(q['global_orient'])[0]),heading,places=12)
     def test_copy_heading_wraps_the_short_way(self):
         d=donor_walk(5);b=pose(1,orient=(0,3.1,0));a=pose(1,orient=(0,-3.1,0),transl=(0,1,0))
         y=g.yaw(g.copy_fill(b,a,d,('global_orient',))['global_orient'])
         s=np.arange(1,4)/4;want=3.1+s*(2*np.pi-6.2);want=np.where(want>np.pi,want-2*np.pi,want)
-        self.assertAlmostEqual(abs(y[1]),abs(want[1]),places=9)   # frames 0 and 2 are edge-blended (B=1)
+        np.testing.assert_allclose(np.abs(y),np.abs(want),atol=1e-9)   # facing matches at both ends, so the blends change nothing
         self.assertTrue(np.all(np.abs(y)>3.0));self.assertTrue(np.all(np.diff(np.unwrap(np.r_[3.1,y,-3.1]))>0))
     def test_copy_spreads_the_residual(self):
         d=donor_walk(10);b=pose(1,transl=(0,1,0));a=pose(1,transl=(.4,1,1.2))      # donor path ends at (0,1,.9): residual (-.4,0,-.3)
