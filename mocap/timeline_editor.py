@@ -24,6 +24,7 @@ class TimelineSlider(FootLockEditor,QSlider):
         self.has_motion = False
         self.person_color = self.person_name = None
         self.video_track_label = 'Source clip'
+        self.fill_runs = ()  # (first, end) frames filled across hidden ranges; set when a project loads.
         self.view_start = 0.0
         self.view_span = None
         self._cache = None
@@ -214,7 +215,7 @@ class TimelineSlider(FootLockEditor,QSlider):
     def paintEvent(self, _):
         key = (current_appearance(), self.size(), self.devicePixelRatioF(), self.minimum(), self.maximum(), self.view_start,
                self.span(), self.fps, self.has_motion, self.clip_in, self.clip_out,self.contact_revision,self.contact_edit_enabled,self.contact_track_enabled,
-               self.person_color,self.person_name,self.video_track_label,
+               self.person_color,self.person_name,self.video_track_label,self.fill_runs,
                (self._foot_drag['foot'],self._foot_drag['index']) if self._foot_drag else None,self._selected_contact)
         if key != self._cache_key:
             ratio = self.devicePixelRatioF()
@@ -239,6 +240,10 @@ class TimelineSlider(FootLockEditor,QSlider):
                 left, right = self.clip_edges() if row == 0 else (self.LEFT, self.width() - self.RIGHT)
                 left, right = max(self.LEFT, left), min(self.width() - self.RIGHT, right)
                 p.fillRect(QRectF(left, y + 2, max(0, right - left), row_height - 5), tint)
+            y = 28 + row_height
+            for first_fill, end_fill in self.fill_runs:
+                left, right = max(self.LEFT, self.frame_x(first_fill - .5)), min(self.width() - self.RIGHT, self.frame_x(end_fill - .5))
+                if right > left:p.fillRect(QRectF(left, y, right - left, 3), QColor("#d8a24a"))
             self.paint_contact_tracks(p)
             # Draw the time grid above the translucent tracks. The visible tick
             # count remains bounded by viewport width, independent of duration.

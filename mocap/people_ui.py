@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (QWidget,QFrame,QVBoxLayout,QHBoxLayout,QLabel,QPu
     QListWidget,QListWidgetItem,QColorDialog,QComboBox,QFileDialog,QTabWidget,QCheckBox,
     QStyledItemDelegate,QStyleOptionViewItem,QToolTip,QStyle,QMenu,QInputDialog,QMessageBox)
 
-from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,join_current,owned_projects
+from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,owned_projects
+from .hidden_ranges_ui import HiddenRangesPanel
 
 
 PEOPLE_HELP = (
@@ -125,6 +126,7 @@ class PeopleWorkspace:
         self._people_stages = []
         self._people_return_id = None
         self._people_return_project=None
+        self._join_result=None
         from .scene_data import SceneDataLoader
         self.scene_data=None;self._scene_key=None
         self.scene_cache=OrderedDict()
@@ -284,10 +286,14 @@ class PeopleWorkspace:
         column.addWidget(self.people_list,1)
         self.person_takes = QComboBox()
         self.person_takes.setAccessibleName('Visible motion interval')
-        self.person_takes.setToolTip(tooltip_text('Choose a visible section of this person\'s motion. Separate takes avoid filling gaps while the person is out of view.'))
+        self.person_takes.setToolTip(tooltip_text('Choose a visible section of this person\'s motion. Separate takes avoid filling gaps while the person is out of view; use Hidden ranges below to join them on request.'))
         self.person_takes.currentIndexChanged.connect(self.person_take_selected)
         self.person_takes.hide()
         column.addWidget(self.person_takes)
+        self.hidden_ranges=HiddenRangesPanel()
+        self.hidden_ranges.choice_changed.connect(self.gap_choice_changed)
+        self.hidden_ranges.fill_requested.connect(self.fill_hidden_ranges)
+        column.addWidget(self.hidden_ranges)
         self.people_note = QLabel('')
         self.people_note.setObjectName('muted');self.people_note.setWordWrap(True)
         self.people_note.hide()
@@ -349,7 +355,7 @@ class PeopleWorkspace:
                                            and any(recipe(True, fps) for fps in self.rife_input_rates()))
         self.find_person_button.setEnabled(enabled and self.video_readable)
         self.people_list.setEnabled(enabled)
-        self.person_takes.setEnabled(enabled)
+        self.person_takes.setEnabled(enabled);self.hidden_ranges.setEnabled(enabled)
 
     def reset_people(self):
         self.clear_people_scene()
@@ -357,8 +363,9 @@ class PeopleWorkspace:
         self._single_actor = self._single_actor_project = None
         self.motion_view.single_actor_visible=True
         self._people_syncing = True
-        self.people_list.clear();self.person_takes.clear();self.person_takes.hide()
+        self.people_list.clear();self.person_takes.clear();self.person_takes.hide();self.hidden_ranges.hide()
         self._people_syncing = False
+        self.slider.fill_runs=()
         self.set_people_note('')
         self.sync_shared_floor_controls()
         self.apply_person_color()
@@ -385,6 +392,10 @@ class PeopleWorkspace:
         self.people_root,self.people_state = root,state
         self.sync_shared_floor_controls()
         if self._scene_key is not None and self._scene_key[0]!=str(root):self.clear_people_scene()
+        from .hidden_ranges_ui import fill_runs,read_mask
+        # Read once per load; only a joined take has a mask.
+        joined=any(safe_child(root,j['project'])==Path(project).resolve() for p in state['people'] for j in p.get('joins') or [])
+        self.slider.fill_runs=fill_runs(read_mask(Path(project))) if joined else ()
         ident = manifest.get('person_id',state.get('active',state['people'][0]['id']))
         self.active_person_id = ident
         self._people_syncing = True
@@ -518,6 +529,40 @@ class PeopleWorkspace:
                 if choice.project==self.project:self.person_takes.setCurrentIndex(index)
             self.person_takes.setVisible(len(takes)>1)
         finally:self.person_takes.blockSignals(False)
+        self.refresh_hidden_ranges(person)
+
+    def refresh_hidden_ranges(self,person):
+        from .hidden_ranges import gaps
+        found=gaps(person.get('takes',[])) if person else []
+        if not found:self.hidden_ranges.hide();return
+        from .hidden_ranges_ui import panel_state
+        choices=person.get('gap_fill') or {}
+        reason,manual=panel_state(self.people_root,found,choices,self.model_choice.currentData(),self.active_result)
+        self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason)
+        self.hidden_ranges.set_manual_note(manual)
+
+    def gap_choice_changed(self,key,method):
+        from .hidden_ranges_ui import choose
+        person=self.current_person()
+        if self.people_state is None or person is None:return
+        choose(person.setdefault('gap_fill',{}),key,method)
+        if not person['gap_fill']:del person['gap_fill']
+        save_people(self.people_root,self.people_state)
+        self.refresh_hidden_ranges(person)
+
+    def fill_hidden_ranges(self):
+        person=self.current_person()
+        if self.busy or self.contact_saving or self.people_state is None or person is None:return
+        self._people_batch=True;self._people_inference_jobs=[];self._people_post_jobs=[]
+        # Stay on the current take unless the worker records a joined take.
+        self._people_return_id=person['id'];self._people_return_project=self.project
+        self._join_result=self.active_result
+        self.start_jobs([('take_join',['--project',str(self.people_root),'--person-id',str(person['id']),'--result',self.active_result])])
+
+    def log_filled_exports(self,files):
+        if not self.people_state:return
+        from .hidden_ranges_ui import export_lines
+        for line in export_lines(self.people_root,self.people_state,files):self.log.append(line)
 
     def person_checked(self,item):
         if self._people_syncing:return
@@ -771,6 +816,14 @@ class PeopleWorkspace:
                 self.jobs=grouped_jobs(self._people_inference_jobs,self.people_root)+self.jobs+self._people_post_jobs
                 self._people_inference_jobs=[];self._people_post_jobs=[]
             return True
+        if event['type']=='takes_joined' and self._join_result:
+            # The joined folder is known only now; the kind is the one the fill was started with.
+            kind=self._join_result
+            stages=('correct','export') if kind.startswith('corrected_') else ('export',)
+            self.jobs.extend((stage,['--project',path,'--result',kind]) for path in event['projects'] for stage in stages)
+            self.people_state=load_people(self.people_root)
+            if event['projects']:self._people_return_project=Path(event['projects'][0])
+            return True
         if event['type']=='people_found':
             self._people_found_root=Path(event['project'])
             return True
@@ -805,18 +858,19 @@ class PeopleWorkspace:
         kind=self.active_result
         edits=self.contact_tracks.get(base_result(kind),{})
         for person in people:
-            takes=person.get('takes',[])+(person.get('joins') or [])
-            for number,take in enumerate(takes,1):
+            takes,joins=person.get('takes',[]),person.get('joins') or []
+            # Source and joined takes are numbered separately; only a joined take in use is usable.
+            usable={t['project'] for t in active_takes(self.people_root,person) if t.get('join')} if joins else set()
+            for joined,number,total,take in [(False,n,len(takes),t) for n,t in enumerate(takes,1)]+[(True,n,len(joins),t) for n,t in enumerate(joins,1)]:
                 project=safe_child(self.people_root,take['project'])
                 if paths is not None and project not in paths:
                     continue
-                joined=number>len(person.get('takes',[]))
                 active=project==self.project
                 pending=active and kind.startswith('corrected_') and (self.contact_saving or edits.get('unsaved'))
                 try:
                     source=self.current_export() if active else selected_export(project,kind)
                     # A stale joined take keeps valid files of its own; it must not look ready.
-                    if joined and not join_current(self.people_root,person,take):source=None
+                    if joined and take['project'] not in usable:source=None
                     issue=diagnose_take(project,kind,pending) if source is None else None
                 except (OSError,ValueError,KeyError,TypeError) as error:
                     from .storage import path_error_message
@@ -832,7 +886,7 @@ class PeopleWorkspace:
                         issue=TakeIssue('Prepare Preview', path_error_message(error),
                                         'Select the take and click Prepare Preview to rebuild the shared scene.')
                         source=None
-                choices.append(TakeChoice(person['id'],person['name'],number,len(takes),
+                choices.append(TakeChoice(person['id'],person['name'],number,total,
                                           take['first'],take['end'],project,source,issue,joined))
         return choices
 

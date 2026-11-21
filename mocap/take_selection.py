@@ -28,14 +28,18 @@ class TakeChoice:
     def frames(self):
         return f'Frames {self.first + 1}–{self.end}'
 
+    # A joined take is numbered among the person's joined takes, a source take among the source takes.
     @property
     def stem(self):
         name = export_stem(self.person_name)
+        if self.joined:
+            return f'{name}_filled_{self.number:02d}' if self.total > 1 else f'{name}_filled'
         return f'{name}_take_{self.number:02d}' if self.total > 1 else name
 
     @property
     def label(self):
-        return f'{self.person_name}, Take {self.number} ({self.frames.lower()})'
+        take = 'Filled take' if self.joined else f'Take {self.number}'
+        return f'{self.person_name}, {take} ({self.frames.lower()})'
 
 
 @dataclass(frozen=True)
