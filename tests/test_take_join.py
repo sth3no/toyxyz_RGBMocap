@@ -20,10 +20,10 @@ def tpair(go_w,go_c,tr_w,tr_c,p):
     Rw2c=R.from_rotvec(go_c).as_matrix()@R.from_rotvec(go_w).as_matrix().T;T=np.eye(4);T[:3,:3]=Rw2c
     T[:3,3]=np.asarray(tr_c)+p-Rw2c@(np.asarray(tr_w)+p);return T
 
-def source(first,end,W=WA,pelvis=P0,betas=0.,drift=None):
+def source(first,end,W=WA,pelvis=P0,betas=0.,drift=None,walk=None):
     """One continuous camera-space body motion; each take sees it in its own world W and with its own pelvis."""
     n=end-first;i=np.arange(first,end,dtype=np.float64)
-    root=np.column_stack([STEP*i,.1+0*i,4+.002*i])  # camera-space pelvis position, shared by every take
+    root=np.column_stack([STEP*i,.1+0*i,4+.002*i]) if walk is None else walk(i)  # camera-space pelvis position, shared by every take
     incam=dict(global_orient=np.column_stack([.3+.002*i,.1+.001*i,-.05+0*i]),body_pose=np.tile(np.linspace(-.3,.3,63),(n,1))+.001*i[:,None],
         transl=root-pelvis,betas=np.full((n,10),betas))
     world=rigid_params(incam,np.linalg.inv(W),pelvis,pelvis)
@@ -134,12 +134,91 @@ class AssembleTest(unittest.TestCase):
     def test_rejects_mismatched_gap(self):
         a,b=source(0,100),source(110,200)
         with self.assertRaises(ValueError):assemble([a,b],[dict(first=100,end=111,method='smooth')])
+
+PD=np.array([-.03,.28,.04]);WD=WA@rigid((0.,1.1,0.),(1.5,0.,-.5))
+WALK=lambda i:np.column_stack([-1+0*i,.1+0*i,3+STEP*i])  # another person walking towards the camera
+def copied(a,b,offset=0,mirror=False,W=WD,walk=WALK,**kw):
+    """A copy gap between a and b whose donor rows are the frames gap.first-1+offset ... gap.end+offset of another person."""
+    d=source(a['end']-1+offset,b['first']+1+offset,W=W,pelvis=PD,walk=walk,**kw)
+    return dict(gap(a,b),method='copy',mirror=mirror,offset=offset,donor=dict(pelvis=d['pelvis'],params=d['params'],incam=d['incam'],logits=d['logits']))
+def pose(g,value):
+    for p in(g['donor']['params']['initial'],g['donor']['incam']):p['body_pose']=np.broadcast_to(value,p['body_pose'].shape).copy()
+    return g
+def digest(out):
+    import hashlib
+    h=hashlib.sha256();bytes_=lambda name,v:(h.update(name.encode()),h.update(np.ascontiguousarray(v).tobytes()))
+    for kind in sorted(out['params']):
+        for k in sorted(out['params'][kind]):bytes_(f'{kind}.{k}',np.asarray(out['params'][kind][k],np.float64))
+    for k in sorted(out['incam']):bytes_(k,np.asarray(out['incam'][k],np.float64))
+    for k in('logits','boxes','mask','observed'):bytes_(k,out[k])
+    return h.hexdigest()
+
+class CopyAssembleTest(unittest.TestCase):
+    def setUp(self):self.a,self.b=source(0,100),source(120,200,W=WB,pelvis=PB)
+    def join(self,**kw):return assemble([self.a,self.b],[copied(self.a,self.b,**kw)])
+    def test_copy_gap_shapes_and_mask(self):
+        from mocap.gap_fill import COPIED
+        out=self.join()
+        self.assertTrue((out['mask'][100:120]==COPIED).all());self.assertTrue((out['mask'][:100]==0).all() and (out['mask'][120:]==0).all())
+        for x in(out['params']['initial']['transl'],out['params']['initial']['body_pose'],out['incam']['transl'],out['incam']['betas'],out['logits'],out['boxes']):self.assertEqual(len(x),200)
+        np.testing.assert_allclose(out['boxes'][105],self.a['boxes'][99]+(self.b['boxes'][0]-self.a['boxes'][99])*6/21)  # boxes stay linear
+    def test_copy_gap_is_continuous_in_world_and_camera(self):
+        out=self.join()
+        for x in(out['params']['initial']['transl'],out['incam']['transl']):
+            mean=np.linalg.norm(np.diff(x,axis=0),axis=1).mean()
+            for at in(100,120):self.assertLess(np.linalg.norm(x[at]-x[at-1]),2*mean,at)
+    def test_copy_of_the_same_motion_is_exact(self):
+        # The donor is the person's own camera-space motion seen in another world: the gap is the truth.
+        a,b=self.a,self.b;out=assemble([a,b],[copied(a,b,walk=None)]);truth=source(0,200)
+        np.testing.assert_allclose(out['incam']['transl'][100:120],truth['incam']['transl'][100:120],atol=1e-9)
+        # Orientations are exact outside copy_fill's blend of 5 frames towards each neighbour.
+        np.testing.assert_allclose(rot(out['incam']['global_orient'][105:115]),rot(truth['incam']['global_orient'][105:115]),atol=1e-9)
+        np.testing.assert_allclose(out['params']['initial']['transl'][100:120],truth['params']['initial']['transl'][100:120],atol=1e-9)
+    def test_copy_gap_uses_donor_pose(self):
+        for s in(self.a,self.b):s['params']['initial']['body_pose'][:]=0;s['incam']['body_pose'][:]=0
+        g=pose(copied(self.a,self.b),.6);out=assemble([self.a,self.b],[g])
+        np.testing.assert_allclose(out['params']['initial']['body_pose'][110],.6);np.testing.assert_allclose(out['incam']['body_pose'][110],.6)
+    def test_copy_gap_offset_picks_donor_frames(self):
+        g=copied(self.a,self.b,offset=-30);out=assemble([self.a,self.b],[g])
+        np.testing.assert_array_equal(out['logits'][100:120],g['donor']['logits'][1:-1])
+        np.testing.assert_allclose(out['logits'][100:120],source(70,90)['logits'])
+    def test_copy_gap_mirror(self):
+        from mocap.gap_fill import mirror_logits
+        lift=np.zeros((21,3));lift[15]=(0.,0.,-.8)  # body_pose joint 15 is the left shoulder, 16 the right
+        g=pose(copied(self.a,self.b,mirror=True),lift.reshape(-1));out=assemble([self.a,self.b],[g])
+        mid=out['params']['initial']['body_pose'][110].reshape(21,3)
+        np.testing.assert_allclose(mid[16],(0.,0.,.8),atol=1e-12);np.testing.assert_allclose(mid[15],0.,atol=1e-12)
+        np.testing.assert_array_equal(out['logits'][100:120],mirror_logits(g['donor']['logits'][1:-1]))
+        plain=assemble([self.a,self.b],[pose(copied(self.a,self.b),lift.reshape(-1))])['params']['initial']['body_pose'][110].reshape(21,3)
+        np.testing.assert_allclose(plain[15],(0.,0.,-.8),atol=1e-12)
+    def test_copy_gap_donor_world_is_irrelevant(self):
+        for mirror in(False,True):
+            one=self.join(mirror=mirror,W=WA@rigid((0.,1.1,0.),(1.5,0.,-.5)))
+            two=self.join(mirror=mirror,W=WA@rigid((0.,-2.3,0.),(-.7,.4,2.)))
+            for kind in('params','incam'):
+                part=lambda o:o['params']['initial'] if kind=='params' else o['incam']
+                for k,v in part(one).items():np.testing.assert_allclose(part(two)[k],v,atol=1e-9,err_msg=f'{mirror} {kind} {k}')
+    def test_copy_gap_rejects_short_donor(self):
+        g=copied(self.a,self.b);g['donor']['logits']=g['donor']['logits'][1:]
+        with self.assertRaises(ValueError):assemble([self.a,self.b],[g])
+    def test_smooth_gap_unchanged_by_this_task(self):
+        # Digest of the output of the step-1 assemble (commit afdb9dd) for this exact input.
+        a=source(0,50,drift=(.08,0.,-.05));b=source(60,100,W=WT,pelvis=PB);c=source(115,150,W=WC)
+        for s in(a,b,c):s['params']['footmr_initial']={**s['params']['initial'],'body_pose':s['params']['initial']['body_pose']+.01}
+        self.assertEqual(digest(assemble([a,b,c],[gap(a,b),gap(b,c)])),'141c2ff1c82c1ac77cea42dfb3048f2ce5b525271e25ecf08a9be5fc66c419e2')
+    def test_mixed_chain_keeps_smooth_gap(self):
+        a,b,c=source(0,50),source(60,100,W=WB,pelvis=PB),source(130,170,W=WC)
+        smooth=assemble([a,b,c],[gap(a,b),gap(b,c)]);mixed=assemble([a,b,c],[gap(a,b),copied(b,c)])
+        self.assertEqual(list(mixed['mask'][50:60])+list(mixed['mask'][100:130]),[1]*10+[2]*30)
+        for k,v in smooth['params']['initial'].items():
+            np.testing.assert_array_equal(mixed['params']['initial'][k][:100],v[:100]);np.testing.assert_array_equal(mixed['params']['initial'][k][130:],v[130:])
 import contextlib,importlib.util,io,json,subprocess,tempfile
 from pathlib import Path
 from unittest import mock
 from mocap import paths,people_store as ps,take_join
 FFMPEG=paths.ROOT/'tools/bin/ffmpeg.exe'
 TAKE=lambda a,b:f'p1/takes/{a:09d}_{b:09d}_scene_v1'
+DONOR='p2/takes/000000000_000000220_scene_v1'
 
 def stamp(p):s=Path(p).stat();return [s.st_size,s.st_mtime_ns]
 
@@ -159,8 +238,9 @@ class WriteTest(unittest.TestCase):
         (root/'project.json').write_text(json.dumps(dict(frames=220,fps=30,start=0.,end=220/30,width=64,height=48,pipeline=dict(model=self.MODEL),exmr_options=dict(static_camera=True),stages={})),encoding='utf-8')
         if self.MODEL=='exmr':np.save(root/'exmr_camera.npy',np.tile(np.eye(3,dtype=np.float32),(220,1,1)))
         K=np.array([[80,0,32],[0,80,24],[0,0,1]],np.float32);takes=[]
-        for (a,b),W in(((0,100),WA),((110,200),WB)):
-            d=root/TAKE(a,b);d.mkdir(parents=True);s=source(a,b,W=W,pelvis=self.pelvis);n=b-a
+        for (a,b),W,walk in(((0,100),WA,None),((110,200),WB,None),((0,220),WD,WALK)):
+            d=root/(TAKE(a,b) if walk is None else DONOR);d.mkdir(parents=True);s=source(a,b,W=W,pelvis=self.pelvis,walk=walk);n=b-a
+            if walk is not None:self.donor=s
             if self.MODEL=='exmr':(d/'exmr_camera_sources.json').write_text(json.dumps(dict(root='../../..',root_stat=stamp(root/'exmr_camera.npy'),
                 first=a,reference_rotation=np.eye(3).tolist(),first_rotation=np.eye(3).tolist())),encoding='utf-8')
             np.savez_compressed(d/'tracking.npz',boxes=s['boxes'].astype(np.float32),observed=s['observed'],K=K)
@@ -171,10 +251,11 @@ class WriteTest(unittest.TestCase):
             torch.save(dict(smpl_params_global=t(foot),source='initial'),d/'footmr_initial.pt')
             (d/'footmr_initial_sources.json').write_text(json.dumps({k:stamp(d/k) for k in('footmr_initial.pt','hmr4d_results.pt','tracking.npz')}),encoding='utf-8')
             (d/'project.json').write_text(json.dumps(dict(frames=n,fps=30,start=a/30,end=b/30,timeline=dict(start=a/30,step=1/30,frames=n),
-                people_root='../../..',person_id=1,person_preview=False,person_frames=[a,b],pipeline=dict(model=self.MODEL,result='initial'),stages=dict(gvhmr='done'))),encoding='utf-8')
-            takes.append(dict(project=TAKE(a,b),first=a,end=b))
-        self.person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes,gap_fill={'100_110':{'method':'smooth'}})
-        ps.save_people(root,dict(version=ps.VERSION,input=ps.media_receipt(root),people=[self.person]))
+                people_root='../../..',person_id=1 if walk is None else 2,person_preview=False,person_frames=[a,b],pipeline=dict(model=self.MODEL,result='initial'),stages=dict(gvhmr='done'))),encoding='utf-8')
+            takes.append(dict(project=TAKE(a,b) if walk is None else DONOR,first=a,end=b))
+        self.person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes[:2],gap_fill={'100_110':{'method':'smooth'}})
+        other=dict(id=2,name='Anna',color='#3366aa',preview='p2',takes=takes[2:])
+        ps.save_people(root,dict(version=ps.VERSION,input=ps.media_receipt(root),people=[self.person,other]))
         self.before={p:stamp(p) for p in root.rglob('*') if p.is_file()}
     def snapshot(self):return {p:p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
     def join(self,result='initial'):
@@ -222,7 +303,7 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(person['gap_fill'],self.person['gap_fill'])
         self.assertTrue(ps.join_current(self.root,person,join));self.assertTrue(result_is_current(J,'initial'))
         fill=json.loads((J/'fill.json').read_text(encoding='utf-8'));self.assertEqual((fill['kind'],fill['kinds']),('initial',['initial']))
-        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='smooth',params={})])
+        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='smooth',params={})]);self.assertEqual(fill['donors'],[])
         manifest=json.loads((J/'project.json').read_text(encoding='utf-8'))
         self.assertEqual((manifest['frames'],manifest['person_frames'],manifest['stages'],manifest['joined'],manifest['start']),(200,[0,200],{},True,0.))
         self.assertEqual(manifest['timeline']['frames'],200);self.assertAlmostEqual(manifest['end'],200/30)
@@ -272,6 +353,41 @@ class WriteTest(unittest.TestCase):
         read=lambda d:json.loads((d/'exmr_camera_sources.json').read_text(encoding='utf-8'))
         self.assertEqual(read(J),read(self.root/TAKE(0,100)))
         self.assertIn('exmr_camera_sources.json',camera_sources(J));self.assertFalse((J/'exmr_receipt.json').exists())
+    def choose(self,**choice):
+        state=ps.load_people(self.root);state['people'][0]['gap_fill']={'100_110':{'method':'copy','person':2,'mirror':False,'offset':5,**choice}}
+        ps.save_people(self.root,state)
+    def owned(self,relative):return {p:(p.read_bytes(),stamp(p)) for p in (self.root/relative).rglob('*') if p.is_file()}
+    def test_copy_join_records_donors(self):
+        import torch
+        J,D=self.root/'p1/takes/000000000_000000200_fill_v1',self.root/DONOR
+        self.choose();donor,sources=self.owned('p2'),self.owned(TAKE(0,100))|self.owned(TAKE(110,200))
+        code,events=self.join();self.assertEqual(code,0,events);self.assertIs(events[-1]['cached'],False)
+        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'))
+        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='copy',params=dict(person=2,mirror=False,offset=5))])
+        self.assertEqual(fill['donors'],[dict(person=2,project=DONOR,first=0,end=220,files={'hmr4d_results.pt':stamp(D/'hmr4d_results.pt')})])
+        person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+        self.assertEqual(list(np.load(J/'fill_mask.npy')[95:115]),[0]*5+[2]*10+[0]*5)
+        logits=torch.load(J/'hmr4d_results.pt',weights_only=False)['net_outputs']['static_conf_logits'][0].double().numpy()
+        np.testing.assert_allclose(logits[100:110],self.donor['logits'][105:115],atol=1e-5)  # gap frame f copies donor frame f+offset
+        self.assertIs(self.join()[1][-1]['cached'],True)
+        self.choose(mirror=True);self.assertIs(self.join()[1][-1]['cached'],False)
+        self.assertEqual(json.loads((J/'fill.json').read_text(encoding='utf-8'))['gaps'][0]['params'],dict(person=2,mirror=True,offset=5))
+        self.assertEqual(self.join('footmr_initial')[0],0)
+        self.assertEqual(json.loads((J/'fill.json').read_text(encoding='utf-8'))['donors'][0]['files'].keys(),{'hmr4d_results.pt','footmr_initial.pt'})
+        self.assertEqual(self.owned('p2'),donor);self.assertEqual(self.owned(TAKE(0,100))|self.owned(TAKE(110,200)),sources)  # never written
+        self.assertEqual(self.join()[0],0);person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+        (D/'hmr4d_results.pt').write_bytes((D/'hmr4d_results.pt').read_bytes())  # a re-reconstructed donor
+        self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
+        self.assertIs(self.join()[1][-1]['cached'],False)
+        person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_copy_refusals_write_nothing(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        self.choose();(self.root/DONOR/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')
+        before=self.snapshot();code,events=self.join()
+        self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message="Anna's take is not ready to be copied from. Reconstruct and prepare it first.")]))
+        self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before);self.assertFalse(J.exists())
+        self.choose(offset=200);before=self.snapshot();code,events=self.join()  # the donor no longer covers the range
+        self.assertEqual((code,events[0]['message']),(1,'No hidden range is selected for filling.'));self.assertEqual(self.snapshot(),before)
 class ExmrWriteTest(WriteTest):MODEL='exmr'
 def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
 def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))
