@@ -70,12 +70,18 @@
   it; pressing Fill saved the pending Offset first and then asked for the fill.
   An earlier revision of this step was also checked in the main window on the
   test project; that check was not repeated on the final code.
+- Ran the `correct` and `export` worker stages with `corrected_initial` on
+  person 1's joined take with the copied frames: both exited 0. Inside the
+  copied frames the correction moved the root horizontally by 4.0 cm on average
+  and 10.5 cm at most, against 0.6 cm and 2.0 cm on the captured frames; the
+  copied contact timings come from a person who stands still while the copied
+  path is being adjusted.
 - The copied motion was not looked at: no visual check in the viewport, of a
   render or in exported files. The numbers above are measurements only.
 - Not run: a fill with Copy from person started from the GUI (the worker was
   started from the command line); the panel in a shown window; interactive use
-  by a person; Apply Correction (`correct`) and export (`export`, FBX/BVH,
-  retargeting) of a take with copied frames; Mirror on the final code; a scene
+  by a person; Apply Correction started from the GUI, FBX export and
+  retargeting of a take with copied frames; Mirror on the final code; a scene
   where the other person is visible during the hidden range (Offset 0), a real
   group-dance clip, a clip with a real occluder; any ExMR project; a FootMR
   result; copying fingers (GVHMR results have none); import of exported files
