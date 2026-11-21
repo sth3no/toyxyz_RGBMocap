@@ -64,17 +64,16 @@ def _seam(part, row, pelvis):
 
 def _copy(a, b, g, pelvis):
     n, d = g['end']-g['first'], g['donor'];dp = np.asarray(d['pelvis'], np.float64)
-    rows = lambda p: {k: np.asarray(v, np.float64).reshape(n+2, -1) for k, v in p.items()}
-    own, cam = {kind: rows(p) for kind, p in d['params'].items()}, rows(d['incam'])
-    # The donor's row 0 is moved onto the camera pairing of the last joined frame before the gap, upright as at a seam.
-    W0, W1 = _seam(a, -1, pelvis), _seam(b, 0, pelvis);dg = own['initial']
-    Td = upright(np.linalg.inv(W0)@pair(dg['global_orient'][0], cam['global_orient'][0], dg['transl'][0], cam['transl'][0], dp), dg['transl'][0]+dp)
-    at = lambda p, sign: dict(p, transl=p['transl']+sign*pelvis)  # copy_fill and mirror_params work on pelvis positions
-    params = {}
+    at = lambda p, v, sign: dict(p, transl=p['transl']+sign*v)  # copy_fill and mirror_params work on pelvis positions
+    params, residual = {}, {}
     for kind, p in a['params'].items():
-        donor = at(rigid_params(own[kind], Td, dp, pelvis), 1)
+        # The donor stays in its own world: copy_fill uses only its heading changes, its steps and its heights above its own floor.
+        donor = at({k: np.asarray(v, np.float64).reshape(n+2, -1) for k, v in d['params'][kind].items()}, dp, 1)
         if g['mirror']:donor = mirror_params(donor)
-        params[kind] = at(copy_fill(at(p, 1), at(b['params'][kind], 1), donor, [k for k in p if k != 'transl']), -1)
+        stats, keys = {}, [k for k in p if k != 'transl']
+        params[kind] = at(copy_fill(at(p, pelvis, 1), at(b['params'][kind], pelvis, 1), donor, keys, g.get('height_scale', 1.), stats), pelvis, -1)
+        residual[kind] = stats['residual']
+    W0, W1 = _seam(a, -1, pelvis), _seam(b, 0, pelvis)
     # Camera space: the copied world motion seen through a camera pairing that moves from one seam to the other.
     s = np.arange(1, n+1)/(n+1);turn = Slerp([0., 1.], Rotation.from_matrix([W0[:3, :3], W1[:3, :3]]))(s);G = params['initial']
     # A camera-space pose key that the world result lacks is interpolated.
@@ -83,7 +82,7 @@ def _copy(a, b, g, pelvis):
     incam.update(global_orient=(turn*Rotation.from_rotvec(G['global_orient'])).as_rotvec(),
                  transl=turn.apply(G['transl']+pelvis)+W0[:3, 3]+(W1[:3, 3]-W0[:3, 3])*s[:, None]-pelvis)
     logits = np.asarray(d['logits'], np.float64)[1:-1]
-    return dict(params=params, incam=incam, logits=mirror_logits(logits) if g['mirror'] else logits, mask=COPIED)
+    return dict(params=params, incam=incam, logits=mirror_logits(logits) if g['mirror'] else logits, mask=COPIED, residual=residual)
 
 
 FILLS = {'smooth': _smooth, 'copy': _copy}
@@ -97,7 +96,7 @@ def assemble(sources, gaps):
         if g['method'] not in FILLS:raise ValueError(f"Unsupported fill method: {g['method']}")
         if g['method'] == 'copy':
             d, n = g['donor'], g['end']-g['first']+2
-            if not set(first['params']) <= set(d['params']) or len(d['logits']) != n or len(d['incam']['transl']) != n or \
+            if not set(first['params']) <= set(d['params']) or len(d['logits']) != n or \
                     any(len(d['params'][k]['transl']) != n for k in first['params']):raise ValueError('Donor arrays do not match the hidden range')
     for s in sources:
         n = s['end']-s['first']
@@ -132,7 +131,8 @@ def assemble(sources, gaps):
     mask = np.zeros(total, np.uint8); observed = np.zeros(total, bool)
     for s in sources:observed[s['first']-base:s['end']-base] = np.asarray(s['observed'], bool)
     for g, f in zip(gaps, fills):mask[g['first']-base:g['end']-base] = f['mask']
-    return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed)
+    # The horizontal path residual in metres per result kind of each copied gap; None for other methods.
+    return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed, residuals=[f.get('residual') for f in fills])
 
 
 class Refused(ValueError):
@@ -141,6 +141,8 @@ class Refused(ValueError):
 
 UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this version; select one of them.'
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
+DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
+COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
 
 
 def emit(kind, **data):
@@ -208,14 +210,16 @@ def _check(root, ident, result):
             g = dict(first=a['end'], end=b['first']);method, params = hidden_ranges.choice_params(choices[hidden_ranges.gap_key(g)])
             gaps[-1].append(dict(g, method=method, params=params))
             if method != 'copy':continue
-            donor = next(p for p in people if p['id'] == params['person'])
+            donor = next((p for p in people if p['id'] == params['person']), None)
+            if donor is None:raise Refused('Choose a person to copy from.')
             take = gaps[-1][-1]['take'] = hidden_ranges.donor_take(donor['takes'], g, params['offset'])
+            name = gaps[-1][-1]['name'] = donor.get('name') or 'Person '+str(donor['id'])
             try:
                 folder = safe_child(root, take['project']);manifest = json.loads((folder/'project.json').read_text(encoding='utf-8'))
                 ready = manifest.get('frames') == take['end']-take['first'] and {manifest.get('fps')} == rates and \
                     all((folder/n).is_file() for n in names[1:]) and all(result_is_current(folder, k) for k in kinds)
             except (OSError, ValueError):ready = False
-            if not ready:raise Refused(f"{donor.get('name') or 'Person '+str(donor['id'])}'s take is not ready to be copied from. Reconstruct and prepare it first.")
+            if not ready:raise Refused(DONOR_NOT_READY.format(name))
     return model, person, chains, gaps, kinds, names, body
 
 
@@ -225,6 +229,16 @@ def _pipeline(model, result):
 
 
 def _record(g):return dict(first=g['first'], end=g['end'], method=g['method'], params=g['params'])
+
+
+def _cm(metres):return round(float(metres)*100, 1)
+
+
+def _report(gaps, residuals):
+    """Console lines telling how much each copied path had to be bent; `residuals` are in cm."""
+    for g, r in zip(gaps, residuals):
+        if g['method'] == 'copy' and type(r) in (int, float):
+            emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
 
 
 def _donors(gaps, files):
@@ -239,8 +253,7 @@ def _donors(gaps, files):
 def _donor_rows(take, g):
     """The n+2 donor rows of a copy gap: scene frames gap.first-1+offset ... gap.end+offset."""
     lo = g['first']-1+g['params']['offset']-take['first'];cut = lambda v: v[lo:lo+g['end']-g['first']+2]
-    return dict(pelvis=take['pelvis'], params={k: {n: cut(v) for n, v in p.items()} for k, p in take['params'].items()},
-                incam={n: cut(v) for n, v in take['incam'].items()}, logits=cut(take['logits']))
+    return dict(pelvis=take['pelvis'], params={k: {n: cut(v) for n, v in p.items()} for k, p in take['params'].items()}, logits=cut(take['logits']))
 
 
 def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
@@ -251,9 +264,12 @@ def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
     for join in person.get('joins') or []:
         if join['project'] != folder.relative_to(root).as_posix() or join.get('sources') != [t['project'] for t in chain]:continue
         fill = join_fill(root, person, join)
-        if fill is None or fill.get('kinds') != kinds or fill['gaps'] != [_record(g) for g in gaps] or (fill.get('donors') or []) != donors:return None
-        try:written = json.loads((folder/'project.json').read_text(encoding='utf-8')).get('pipeline')
+        if fill is None:return None
+        recorded = [{k: v for k, v in x.items() if k != 'residual_cm'} for x in fill['gaps']]  # A report, not an input.
+        if fill.get('kinds') != kinds or recorded != [_record(g) for g in gaps] or (fill.get('donors') or []) != donors:return None
+        try:written = json.loads((folder/'project.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):return None
+        written = written.get('pipeline') if isinstance(written, dict) else None
         return folder if written == pipeline and all(result_is_current(folder, k) for k in kinds) else None
     return None
 
@@ -271,8 +287,8 @@ def _load(root, take, kinds, names, pelvis):
     for kind in kinds:
         record = torch.load(folder/RESULTS[kind][0], map_location='cpu', weights_only=False)
         params[kind] = numpy(record[RESULTS[kind][1]])
-        if kind == 'initial':
-            incam, model = numpy(record['smpl_params_incam']), record.get('source_model')
+        if kind == 'initial':  # A donor's camera-space motion is not used.
+            incam, model = numpy(record['smpl_params_incam']) if 'tracking.npz' in names else None, record.get('source_model')
             logits = record['net_outputs']['static_conf_logits'][0].double().numpy()
         del record
     if {n: _stamp(folder/n) for n in names} != files:raise Refused(f'Take {folder.name} changed while it was read; try again.')
@@ -339,7 +355,7 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     atomic_json(target/'project.json', state)
     atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
-        gaps=[_record(g) for g in gaps], donors=donors))
+        gaps=[_record(g) if r is None else dict(_record(g), residual_cm=_cm(r[base])) for g, r in zip(gaps, joined['residuals'])], donors=donors))
     pending.unlink()
     join = dict(project=target.relative_to(root).as_posix(), first=first, end=end, sources=[s['project'] for s in sources])
     state = load_people(root)  # The editor may have saved other fields meanwhile.
@@ -359,24 +375,45 @@ def run(root, ident, result, projects):
     with np.load(body, allow_pickle=False) as data:
         regressor = data['J_regressor'][0];template = regressor@data['v_template']
         shapes = np.einsum('v,vci->ci', regressor, data['shapedirs'][..., :10])
+        body22 = data['J_regressor'][:22];rest = body22@data['v_template'];rest_shapes = np.einsum('jv,vci->jci', body22, data['shapedirs'][..., :10])
     pelvis = lambda betas: template+shapes@np.asarray(betas, np.float64)[:10]
+    def leg(take):  # rest pelvis height above the lowest rest joint
+        y = (rest+rest_shapes@np.asarray(take['params']['initial']['betas'][0], np.float64)[:10])[:, 1];return y[0]-y.min()
+    def height_scale(first, donor):
+        try:a, b = leg(first), leg(donor)
+        except (KeyError, IndexError, ValueError):return 1.
+        return float(a/b) if np.isfinite(a) and np.isfinite(b) and a > 1e-6 and b > 1e-6 else 1.
     from .people_store import safe_child
-    plans, loaded = [], {}
-    def donor(take):
-        if take['project'] not in loaded:loaded[take['project']] = _load(root, take, kinds, names[1:], pelvis)
+    plans, loaded, base = [], {}, base_result(result)
+    def donor(g):
+        take = g['take']
+        if take['project'] not in loaded:
+            try:
+                d, n = _load(root, take, kinds, names[1:], pelvis), take['end']-take['first']
+                if len(d['logits']) != n or any(len(v) != n for p in d['params'].values() for v in p.values()):raise ValueError('short donor arrays')
+            except Exception:raise Refused(DONOR_NOT_READY.format(g['name'])) from None
+            loaded[take['project']] = d
         return loaded[take['project']]
     for chain, chain_gaps in zip(chains, gaps):
         # Filling again with unchanged inputs keeps the joined take, its correction and its previews.
         stamps = lambda t: {n: _stamp(safe_child(root, t['project'])/n) for n in names[1:]}
-        kept = _unchanged(root, person, chain, chain_gaps, _donors(chain_gaps, stamps), kinds, pipeline)
-        if kept is not None:plans.append((kept, None, None, None));continue
+        try:kept = _unchanged(root, person, chain, chain_gaps, _donors(chain_gaps, stamps), kinds, pipeline)
+        except OSError:kept = None  # A donor file is gone; reading it below refuses with the donor's name.
+        if kept is not None:plans.append((kept, chain_gaps, None, None));continue
         sources = [_load(root, t, kinds, names, pelvis) for t in chain]
-        records = [dict(g, **{k: g['params'][k] for k in ('mirror', 'offset')}, donor=_donor_rows(donor(g['take']), g)) if g['method'] == 'copy' else g
-                   for g in chain_gaps]
-        plans.append((sources, chain_gaps, _donors(chain_gaps, lambda t: donor(t)['files']), assemble(sources, records)))
+        records = [dict(g, **{k: g['params'][k] for k in ('mirror', 'offset')}, donor=_donor_rows(donor(g), g), height_scale=height_scale(sources[0], donor(g)))
+                   if g['method'] == 'copy' else g for g in chain_gaps]
+        plans.append((sources, chain_gaps, _donors(chain_gaps, lambda t: loaded[t['project']]['files']), assemble(sources, records)))
     for i, (sources, chain_gaps, donors, joined) in enumerate(plans):
         emit('progress', stage=STAGE, current=i, total=len(plans), message=f'Filling hidden ranges: joined take {i+1} of {len(plans)}')
-        projects.append(str(sources if joined is None else _write(root, ident, sources, chain_gaps, donors, joined, kinds, base_result(result), pipeline)))
+        if joined is None:
+            projects.append(str(sources))
+            try:residuals = [g.get('residual_cm') for g in json.loads((sources/'fill.json').read_text(encoding='utf-8'))['gaps']]
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = []
+        else:
+            projects.append(str(_write(root, ident, sources, chain_gaps, donors, joined, kinds, base, pipeline)))
+            residuals = [None if r is None else _cm(r[base]) for r in joined['residuals']]
+        _report(chain_gaps, residuals)
     return all(joined is None for *_, joined in plans)
 
 

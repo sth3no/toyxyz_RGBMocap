@@ -140,10 +140,12 @@ WALK=lambda i:np.column_stack([-1+0*i,.1+0*i,3+STEP*i])  # another person walkin
 def copied(a,b,offset=0,mirror=False,W=WD,walk=WALK,**kw):
     """A copy gap between a and b whose donor rows are the frames gap.first-1+offset ... gap.end+offset of another person."""
     d=source(a['end']-1+offset,b['first']+1+offset,W=W,pelvis=PD,walk=walk,**kw)
-    return dict(gap(a,b),method='copy',mirror=mirror,offset=offset,donor=dict(pelvis=d['pelvis'],params=d['params'],incam=d['incam'],logits=d['logits']))
+    return dict(gap(a,b),method='copy',mirror=mirror,offset=offset,donor=dict(pelvis=d['pelvis'],params=d['params'],logits=d['logits']))  # no camera-space donor
 def pose(g,value):
-    for p in(g['donor']['params']['initial'],g['donor']['incam']):p['body_pose']=np.broadcast_to(value,p['body_pose'].shape).copy()
-    return g
+    p=g['donor']['params']['initial'];p['body_pose']=np.broadcast_to(value,p['body_pose'].shape).copy();return g
+def level(g,a):
+    # The synthetic worlds are tilted against the walk, so put the donor's floor at the hidden person's height.
+    p=g['donor']['params']['initial'];p['transl'][:,1]+=(a['params']['initial']['transl'][-1]+P0)[1]-(p['transl'][0]+g['donor']['pelvis'])[1];return g
 def digest(out):
     import hashlib
     h=hashlib.sha256();bytes_=lambda name,v:(h.update(name.encode()),h.update(np.ascontiguousarray(v).tobytes()))
@@ -163,7 +165,7 @@ class CopyAssembleTest(unittest.TestCase):
         for x in(out['params']['initial']['transl'],out['params']['initial']['body_pose'],out['incam']['transl'],out['incam']['betas'],out['logits'],out['boxes']):self.assertEqual(len(x),200)
         np.testing.assert_allclose(out['boxes'][105],self.a['boxes'][99]+(self.b['boxes'][0]-self.a['boxes'][99])*6/21)  # boxes stay linear
     def test_copy_gap_is_continuous_in_world_and_camera(self):
-        out=self.join()
+        out=assemble([self.a,self.b],[level(copied(self.a,self.b),self.a)])
         for x in(out['params']['initial']['transl'],out['incam']['transl']):
             mean=np.linalg.norm(np.diff(x,axis=0),axis=1).mean()
             for at in(100,120):self.assertLess(np.linalg.norm(x[at]-x[at-1]),2*mean,at)
@@ -171,20 +173,25 @@ class CopyAssembleTest(unittest.TestCase):
         # The donor is the person's own camera-space motion seen in another world: the gap is the truth.
         a,b=self.a,self.b;out=assemble([a,b],[copied(a,b,walk=None)]);truth=source(0,200)
         np.testing.assert_allclose(out['incam']['transl'][100:120],truth['incam']['transl'][100:120],atol=1e-9)
-        # Orientations are exact outside copy_fill's blend of 5 frames towards each neighbour.
-        np.testing.assert_allclose(rot(out['incam']['global_orient'][105:115]),rot(truth['incam']['global_orient'][105:115]),atol=1e-9)
+        # The boundary differences are zero, so the blends change nothing: every gap frame is the truth.
+        for part in('incam','params'):
+            o,t=(out[part],truth[part]) if part=='incam' else (out[part]['initial'],truth[part]['initial'])
+            np.testing.assert_allclose(rot(o['global_orient'][100:120]),rot(t['global_orient'][100:120]),atol=1e-9)
+            np.testing.assert_allclose(o['body_pose'][100:120],t['body_pose'][100:120],atol=1e-9)
         np.testing.assert_allclose(out['params']['initial']['transl'][100:120],truth['params']['initial']['transl'][100:120],atol=1e-9)
+        self.assertLess(out['residuals'][0]['initial'],1e-9)
     def test_copy_gap_uses_donor_pose(self):
         for s in(self.a,self.b):s['params']['initial']['body_pose'][:]=0;s['incam']['body_pose'][:]=0
-        g=pose(copied(self.a,self.b),.6);out=assemble([self.a,self.b],[g])
-        np.testing.assert_allclose(out['params']['initial']['body_pose'][110],.6);np.testing.assert_allclose(out['incam']['body_pose'][110],.6)
+        g=pose(copied(self.a,self.b),.1);out=assemble([self.a,self.b],[g])   # 9.9 deg per joint: 5 blend frames at each end
+        np.testing.assert_allclose(out['params']['initial']['body_pose'][105:115],.1,atol=1e-12);np.testing.assert_allclose(out['incam']['body_pose'][105:115],.1,atol=1e-12)
     def test_copy_gap_offset_picks_donor_frames(self):
         g=copied(self.a,self.b,offset=-30);out=assemble([self.a,self.b],[g])
         np.testing.assert_array_equal(out['logits'][100:120],g['donor']['logits'][1:-1])
         np.testing.assert_allclose(out['logits'][100:120],source(70,90)['logits'])
     def test_copy_gap_mirror(self):
         from mocap.gap_fill import mirror_logits
-        lift=np.zeros((21,3));lift[15]=(0.,0.,-.8)  # body_pose joint 15 is the left shoulder, 16 the right
+        for s in(self.a,self.b):s['params']['initial']['body_pose'][:]=0
+        lift=np.zeros((21,3));lift[15]=(0.,0.,-.8)  # body_pose joint 15 is the left shoulder, 16 the right; 45.8 deg: 8 blend frames
         g=pose(copied(self.a,self.b,mirror=True),lift.reshape(-1));out=assemble([self.a,self.b],[g])
         mid=out['params']['initial']['body_pose'][110].reshape(21,3)
         np.testing.assert_allclose(mid[16],(0.,0.,.8),atol=1e-12);np.testing.assert_allclose(mid[15],0.,atol=1e-12)
@@ -194,10 +201,26 @@ class CopyAssembleTest(unittest.TestCase):
     def test_copy_gap_donor_world_is_irrelevant(self):
         for mirror in(False,True):
             one=self.join(mirror=mirror,W=WA@rigid((0.,1.1,0.),(1.5,0.,-.5)))
-            two=self.join(mirror=mirror,W=WA@rigid((0.,-2.3,0.),(-.7,.4,2.)))
+            two=self.join(mirror=mirror,W=WA@rigid((0.,-2.3,0.),(-.7,0.,2.)))   # another heading and position on the same floor
             for kind in('params','incam'):
                 part=lambda o:o['params']['initial'] if kind=='params' else o['incam']
                 for k,v in part(one).items():np.testing.assert_allclose(part(two)[k],v,atol=1e-9,err_msg=f'{mirror} {kind} {k}')
+    def test_copy_height_follows_the_donors_floor(self):
+        # Heights are measured from each world's floor: a donor standing 0.3 higher stays 0.3 higher between the blends.
+        one=self.join();two=self.join(W=WD@rigid(t=(0.,-.3,0.)))
+        d=(two['params']['initial']['transl']-one['params']['initial']['transl'])[100:120]
+        np.testing.assert_allclose(d[5:15,1],.3,atol=1e-9);np.testing.assert_allclose(d[:,[0,2]],0,atol=1e-9)
+        g=copied(self.a,self.b);g['height_scale']=.5;half=assemble([self.a,self.b],[g])['params']['initial']['transl'][100:120]+P0
+        donor=g['donor']['params']['initial']['transl']+PD
+        np.testing.assert_allclose(half[5:15,1],.5*donor[6:16,1],atol=1e-9)
+        np.testing.assert_allclose(half[:,[0,2]],one['params']['initial']['transl'][100:120,[0,2]]+P0[[0,2]],atol=1e-9)
+    def test_copy_residual_is_reported(self):
+        from mocap.gap_fill import copy_fill
+        out=self.join();g=copied(self.a,self.b);J=out['params']['initial'];st={}
+        rows=lambda a,b:{k:J[k][a:b]+(P0 if k=='transl' else 0) for k in('global_orient','body_pose','transl')}   # neighbours in the joined world
+        copy_fill(rows(98,100),rows(120,122),dict(g['donor']['params']['initial'],transl=g['donor']['params']['initial']['transl']+PD),['global_orient','body_pose'],stats=st)
+        self.assertAlmostEqual(out['residuals'][0]['initial'],st['residual'],places=12);self.assertGreater(st['residual'],.01)
+        self.assertEqual(assemble([self.a,self.b],[gap(self.a,self.b)])['residuals'],[None])
     def test_copy_gap_rejects_short_donor(self):
         g=copied(self.a,self.b);g['donor']['logits']=g['donor']['logits'][1:]
         with self.assertRaises(ValueError):assemble([self.a,self.b],[g])
@@ -362,8 +385,12 @@ class WriteTest(unittest.TestCase):
         J,D=self.root/'p1/takes/000000000_000000200_fill_v1',self.root/DONOR
         self.choose();donor,sources=self.owned('p2'),self.owned(TAKE(0,100))|self.owned(TAKE(110,200))
         code,events=self.join();self.assertEqual(code,0,events);self.assertIs(events[-1]['cached'],False)
-        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'))
-        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='copy',params=dict(person=2,mirror=False,offset=5))])
+        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'));r=fill['gaps'][0]['residual_cm']
+        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='copy',params=dict(person=2,mirror=False,offset=5),residual_cm=r)])
+        self.assertIs(type(r),float);self.assertGreater(r,0)   # beside params, never inside: currency compares params
+        info=dict(type='info',stage='take_join',message=f'Frames 101–110 copied from Anna: the path was adjusted by {r:.1f} cm ({r/11:.2f} cm per frame) to meet the captured motion.')
+        self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
+        code,events=self.join();self.assertIs(events[-1]['cached'],True);self.assertEqual(events[1],info)   # reported again from fill.json
         self.assertEqual(fill['donors'],[dict(person=2,project=DONOR,first=0,end=220,files={'hmr4d_results.pt':stamp(D/'hmr4d_results.pt')})])
         person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
         self.assertEqual(list(np.load(J/'fill_mask.npy')[95:115]),[0]*5+[2]*10+[0]*5)
@@ -380,6 +407,19 @@ class WriteTest(unittest.TestCase):
         self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
         self.assertIs(self.join()[1][-1]['cached'],False)
         person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_copy_from_unreadable_or_short_donor_is_refused(self):
+        import torch
+        D=self.root/DONOR/'hmr4d_results.pt';self.choose();good=D.read_bytes()
+        record=torch.load(D,weights_only=False);record['smpl_params_global']={k:v[:200] for k,v in record['smpl_params_global'].items()}
+        for write in(lambda:torch.save(record,D),lambda:D.write_bytes(b'not a result')):   # shorter than its manifest; unreadable
+            write();before=self.snapshot();code,events=self.join()
+            self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message="Anna's take is not ready to be copied from. Reconstruct and prepare it first.")]))
+            self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before)
+        D.write_bytes(good);self.assertEqual(self.join()[0],0)
+    def test_joined_manifest_that_is_not_an_object_is_rewritten(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        self.assertEqual(self.join()[0],0);(J/'project.json').write_text('[1]',encoding='utf-8')
+        code,events=self.join();self.assertEqual(code,0,self.stderr.getvalue());self.assertIs(events[-1]['cached'],False)
     def test_copy_refusals_write_nothing(self):
         J=self.root/'p1/takes/000000000_000000200_fill_v1'
         self.choose();(self.root/DONOR/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')
