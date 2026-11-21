@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox
 from .hidden_ranges import OFFSET_LIMIT
-from .hidden_ranges_state import can_fill, editable, gap_rows
+from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
 
 MANUAL_NOTE = 'Manual contact-lock edits on the source takes are not carried into the joined take.'
 
@@ -20,17 +20,18 @@ class HiddenRangesPanel(QWidget):
         self.reason = QLabel();self.reason.setObjectName('muted');self.reason.setWordWrap(True)
         self.fill = QPushButton('Fill hidden ranges')
         self.fill.setToolTip('Join the takes around the selected hidden ranges into one new take. The source takes are kept.')
-        self.fill.clicked.connect(self.fill_requested)
+        self.fill.clicked.connect(self._fill_clicked)
         self.manual = QLabel(MANUAL_NOTE);self.manual.setObjectName('muted');self.manual.setWordWrap(True);self.manual.hide()
         for widget in (self.reason, self.fill, self.manual):layout.addWidget(widget)
-        self._widgets = [];self.hide()
+        self._widgets, self._pending, self._issues, self._shown = [], {}, {}, None;self.hide()
 
     def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None):
         for widget in self._widgets:
             # Children too: a focused spin box would otherwise report editingFinished while it is removed.
             for w in (widget, *widget.findChildren(QWidget)):w.blockSignals(True)
             widget.setParent(None);widget.deleteLater()
-        self._widgets = []
+        self._widgets, self._pending, self._issues = [], {}, {}
+        self._shown = (gaps, choices, disabled_reason, people, ident)
         rows = gap_rows(gaps, choices, fps, people, ident)
         # An unsupported project, camera or result must not record choices.
         enabled = editable(disabled_reason)
@@ -47,8 +48,10 @@ class HiddenRangesPanel(QWidget):
                 row['key'], combo.itemData(index), row['person'], row['mirror'], row['offset']))
             widgets = [label, combo]
             if row['method'] == 'copy':widgets.append(self._copy_controls(row, enabled))
-            if row['issue']:
-                issue = QLabel(row['issue']);issue.setObjectName('muted');issue.setWordWrap(True);widgets.append(issue)
+            if row['issue'] or row['method'] == 'copy':  # A copy row's issue follows the unsaved offset.
+                issue = QLabel(row['issue'] or '');issue.setObjectName('muted');issue.setWordWrap(True)
+                if not row['issue']:issue.hide()
+                widgets.append(issue);self._issues[row['key']] = issue
             for widget in widgets:self.rows.addWidget(widget);self._widgets.append(widget)
         self.fill.setEnabled(can_fill(rows, disabled_reason))
         self.reason.setText(disabled_reason or '');self.reason.setVisible(bool(disabled_reason))
@@ -72,8 +75,26 @@ class HiddenRangesPanel(QWidget):
         for widget in (person, mirror, offset):widget.setEnabled(enabled)
         emit = lambda *_: self.choice_changed.emit(row['key'], 'copy', person.currentData(), mirror.isChecked(), offset.value())
         person.currentIndexChanged.connect(emit);mirror.toggled.connect(emit)
-        # Saving rewrites people.json and reloads the scene, so the offset is committed once editing ends.
+        # Saving rewrites people.json and reloads the scene, so the offset is committed once editing ends;
+        # meanwhile the row's issue and the Fill button follow the value being edited.
         offset.editingFinished.connect(lambda: offset.value() != row['offset'] and emit())
+        offset.valueChanged.connect(lambda value: self._edit(row, (person.currentData(), mirror.isChecked(), value)))
         return box
+
+    def _edit(self, row, choice):
+        if choice[2] == row['offset']:self._pending.pop(row['key'], None)
+        else:self._pending[row['key']] = choice
+        gaps, choices, reason, people, ident = self._shown
+        issues, ok = pending_state(gaps, choices, self._pending, reason, people, ident)
+        for key, label in self._issues.items():label.setText(issues.get(key) or '');label.setVisible(bool(issues.get(key)))
+        self.fill.setEnabled(ok)
+
+    def _fill_clicked(self):
+        # An offset still being edited is saved first, so the worker never reads a stale one.
+        pending = dict(self._pending)
+        for key, (person, mirror, offset) in pending.items():self.choice_changed.emit(key, 'copy', person, mirror, offset)
+        saved = self._shown[1] if self._shown else {}
+        if all(isinstance(saved.get(k), dict) and saved[k].get('offset') == c[2] for k, c in pending.items()) and self.fill.isEnabled():
+            self.fill_requested.emit()
 
     def set_manual_note(self, shown):self.manual.setVisible(bool(shown))

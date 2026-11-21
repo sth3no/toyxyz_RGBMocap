@@ -5,6 +5,7 @@ from .hidden_ranges import METHODS, OFFSET_LIMIT, donor_take, gap_key, gap_label
 
 SUPPORTED = ('initial', 'footmr_initial')
 NOT_READY = 'Reconstruct and prepare both neighbouring takes first.'
+DONOR_NOT_READY = "{}'s take must be reconstructed and prepared before it can be copied from."
 
 
 def disabled_reason(model, static_camera, kind, ready):
@@ -12,13 +13,13 @@ def disabled_reason(model, static_camera, kind, ready):
     if model not in ('gvhmr', 'exmr'):return 'Hidden ranges are available for GVHMR and ExMR in this version.'
     if model == 'exmr' and not static_camera:return 'Hidden ranges need a fixed camera in this version.'
     if kind.removeprefix('corrected_') not in SUPPORTED:return 'Hidden ranges support the initial and FootMR results in this version.'
-    if not ready():return NOT_READY
-    return None
+    ready = ready()  # True, False, or the reason naming a donor whose take is not ready
+    return None if ready is True else ready if isinstance(ready, str) else NOT_READY
 
 
 def editable(reason):
     """Choices stay editable only while the project, camera and result are supported."""
-    return reason is None or reason == NOT_READY
+    return reason is None or reason == NOT_READY or reason.endswith(DONOR_NOT_READY.format(''))
 
 
 def _people(people):return [p for p in people if isinstance(p, dict)] if isinstance(people, list) else []
@@ -49,22 +50,35 @@ def gap_rows(gaps, choices, fps, people=None, ident=None):
     return rows
 
 
-def fill_sources(gaps, choices, people=None, ident=None):
-    """The takes the worker would read: both neighbours of every gap that will be filled, and the donor take of a copy."""
+def _sources(gaps, choices, people, ident):
+    """{project: (take, donor name or None)} of the takes the worker would read."""
     choices = choices if isinstance(choices, dict) else {};people = _people(people);out = {}
     for g in gaps:
         method, person, _, offset, issue = _shown(choices.get(gap_key(g)), g, people, ident)
         if method == 'none' or issue:continue
-        out.update({t['project']: t for t in (g['before'], g['after'])})
-        if method == 'copy':
-            takes = next(p for p in people if p.get('id') == person).get('takes')
-            take = donor_take(takes, g, offset);out[take['project']] = take
-    return list(out.values())
+        for t in (g['before'], g['after']):out[t['project']] = (t, None)
+        donor = next((p for p in people if p.get('id') == person), None) if method == 'copy' else None
+        take = donor_take(donor.get('takes'), g, offset) if donor else None
+        if take is not None:out.setdefault(take['project'], (take, str(donor.get('name') or f'Person {person}')))
+    return out
+
+
+def fill_sources(gaps, choices, people=None, ident=None):
+    """The takes the worker would read: both neighbours of every gap that will be filled, and the donor take of a copy."""
+    return [t for t, _ in _sources(gaps, choices, people, ident).values()]
 
 
 def can_fill(rows, reason):
     chosen = [r for r in rows if r['method'] != 'none']
     return reason is None and bool(chosen) and not any(r['issue'] for r in chosen)
+
+
+def pending_state(gaps, choices, pending, reason, people=None, ident=None):
+    """({key: issue}, can fill) with unsaved copy edits {key: (person, mirror, offset)} applied; nothing is saved."""
+    choices = {k: v for k, v in choices.items()} if isinstance(choices, dict) else {}
+    for key, (person, mirror, offset) in pending.items():choose(choices, key, 'copy', person, mirror, offset)
+    rows = gap_rows(gaps, choices, 30, people, ident)
+    return {r['key']: r['issue'] for r in rows}, can_fill(rows, reason)
 
 
 def choose(choices, key, method, person=None, mirror=False, offset=0):
@@ -109,18 +123,23 @@ def panel_state(root, found, choices, model, kind, people=None, ident=None):
     from .motion_tools import base_result, selected_export
     from .people_store import safe_child
     base = base_result(kind)
-    try:sources = [safe_child(root, t['project']) for t in fill_sources(found, choices, people, ident)]
+    try:sources = [(safe_child(root, t['project']), name) for t, name in _sources(found, choices, people, ident).values()]
     except (ValueError, KeyError, TypeError):return 'Saved take paths could not be verified. Run Find person again.', False
     def any_source(test):
-        try:return any(test(project) for project in sources)
+        try:return any(test(project) for project, _ in sources)
         except (OSError, ValueError, KeyError, TypeError):return None
+    def ready():
+        try:waiting = [name for project, name in sources if selected_export(project, base) is None]
+        except (OSError, ValueError, KeyError, TypeError):return False
+        donor = next((name for name in waiting if name is not None), None)
+        return DONOR_NOT_READY.format(donor) if donor is not None else not waiting
     static = False
     if model == 'exmr':
         from .exmr_options import saved
         try:static = saved(root)['static_camera']
         except (OSError, ValueError, KeyError):pass
     # Readiness uses the base motion: a corrected join gets its own correction after joining.
-    reason = disabled_reason(model, static, kind, lambda: any_source(lambda p: selected_export(p, base) is None) is False)
+    reason = disabled_reason(model, static, kind, ready)
     return reason, bool(any_source(lambda p: contact_state(p, base).get('manual')))
 
 

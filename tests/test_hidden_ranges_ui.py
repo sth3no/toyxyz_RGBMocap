@@ -1,4 +1,4 @@
-import tempfile,unittest
+import json,tempfile,unittest
 from pathlib import Path
 import numpy as np
 from mocap import hidden_ranges as h
@@ -53,7 +53,7 @@ class PanelDecisionTest(unittest.TestCase):
         choices={}
         ui.choose(choices,'100_120','smooth');self.assertEqual(choices,{'100_120':{'method':'smooth'}})
         ui.choose(choices,'100_120','none');self.assertEqual(choices,{})
-        ui.choose(choices,'100_120','none');self.assertEqual(choices,{})
+        ui.choose(choices,'100_120','none');self.assertEqual(choices,{})   # again: removing a choice that is not there is fine
         self.assertRaises(ValueError,ui.choose,choices,'100_120','x');self.assertEqual(choices,{})
     def test_choose_copy(self):
         choices={}
@@ -109,6 +109,31 @@ class CopyRowsTest(unittest.TestCase):
         self.assertEqual(ui.fill_sources(g,{'100_120':COPY(offset=200)},PEOPLE,1),[])
         self.assertEqual(ui.fill_sources(g,{'100_120':COPY()}),[])
         self.assertEqual([t['first'] for t in ui.fill_sources(g,{'100_120':{'method':'smooth'}},PEOPLE,1)],[0,120])
+
+class PendingAndReadinessTest(unittest.TestCase):
+    def test_pending_offset_is_checked_without_saving(self):
+        g=h.gaps(TAKES);choices={'100_120':COPY(offset=200)};keep=json.dumps(choices)
+        self.assertEqual(ui.pending_state(g,choices,{},None,PEOPLE,1),({'100_120':'Ben has no captured motion covering this range with this offset.','200_260':None},False))
+        self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1),({'100_120':None,'200_260':None},True))
+        self.assertEqual(json.dumps(choices),keep)                                   # nothing saved
+        self.assertFalse(ui.pending_state(g,choices,{'100_120':(2,False,0)},'reason',PEOPLE,1)[1])
+        both={'100_120':COPY(),'200_260':COPY()}
+        self.assertEqual(ui.pending_state(g,both,{'200_260':(2,False,100)},None,PEOPLE,1),
+                         ({'100_120':None,'200_260':'Ben has no captured motion covering this range with this offset.'},False))
+        self.assertEqual(ui.pending_state(g,both,{'200_260':(None,False,0)},None,PEOPLE,1)[0]['200_260'],'Choose a person to copy from.')
+    def test_donor_take_not_ready(self):
+        from unittest import mock
+        root=Path(tempfile.gettempdir())/'scene';g=h.gaps(TAKES);donor=PEOPLE[1]['takes'][0]['project']
+        def run(waiting):
+            with mock.patch('mocap.motion_tools.selected_export',lambda p,kind:None if any(p==root/w for w in waiting) else p):
+                return ui.panel_state(root,g,{'100_120':COPY()},'gvhmr','initial',PEOPLE,1)[0]
+        self.assertIsNone(run([]))
+        self.assertEqual(run([TAKES[0]['project']]),'Reconstruct and prepare both neighbouring takes first.')
+        self.assertEqual(run([donor]),"Ben's take must be reconstructed and prepared before it can be copied from.")
+        self.assertEqual(run([donor,TAKES[1]['project']]),"Ben's take must be reconstructed and prepared before it can be copied from.")
+        self.assertTrue(ui.editable(run([donor])))                                  # the donor or offset can still be changed
+        self.assertEqual(ui.disabled_reason('gvhmr',False,'initial',lambda:'X'),'X')
+        self.assertEqual(ui.fill_sources(g,{'100_120':COPY(person=9)},PEOPLE,1),[])  # an unknown donor does not raise
 
 class MaskTest(unittest.TestCase):
     def test_runs(self):
