@@ -883,7 +883,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         if self.people_state:
             from .people_store import safe_child,active_takes
             projects += [safe_child(self.people_root,take['project']) for person in self.people_state['people']
-                if person.get('checked') for take in active_takes(self.people_root,person)]
+                if person.get('checked') for take in active_takes(self.people_root,person,self.active_result)]
         jobs=[]
         for project in dict.fromkeys(projects):
             from .flow_placement import needs_update
@@ -2275,6 +2275,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                     from .scene_export import context
                     row['scene']=context(self.people_root,project)
                 rows.append(row)
+            self.log_filled_exports(files)
         except (OSError,ValueError,KeyError) as error:
             self.status.setText('Cannot export shared scene: '+str(error));return
         destinations = list(dict.fromkeys(target for _, _, _, target in files))
@@ -2288,7 +2289,6 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         else:
             staging = [target.with_name('.'+target.name+'.rgbmocap-'+request.stem+'.partial') for target in destinations]
         self._fbx_export_cleanup = (request, staging)
-        self.log_filled_exports(files)
         self.start_jobs([(stage,['--project',str(self.project),'--output',str(request)])])
 
     def cleanup_fbx_export(self):

@@ -172,7 +172,7 @@ class CharacterWorkspace:
         result=[]
         for p in people:
             takes=[]
-            for t in active_takes(self.people_root,p) if self.people_state else p.get('takes',[]):
+            for t in active_takes(self.people_root,p,self.active_result) if self.people_state else p.get('takes',[]):
                 path=safe_child(self.people_root,t['project']) if self.people_state else Path(t['project'])
                 metadata=path/(RECEIPT if is_project(path) else self.active_result+'_mixamo.json')
                 if not metadata.is_file() or not result_is_current(path,self.active_result):continue

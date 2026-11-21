@@ -71,12 +71,12 @@ def paired_camera(world_rotation,cam_rotation,world_translation,cam_translation,
     return validate_transform(result)
 
 
-def take_projects(root,state,joins=True):
+def take_projects(root,state,kind=None):
     rows=[]
     for person in state['people']:
         takes=person.get('takes',[])
         # A current joined take follows its sources; the scene draws the later entry of an overlap.
-        if joins and person.get('joins'):takes=takes+[t for t in active_takes(root,person) if t.get('join')]
+        if person.get('joins'):takes=takes+[t for t in active_takes(root,person,kind) if t.get('join')]
         for take in takes:
             project=safe_child(root,take['project'])
             if (project/'hmr4d_results.pt').is_file():rows.append((person['id'],project))
@@ -87,7 +87,7 @@ def take_projects(root,state,joins=True):
 def prepare_cameras(root):
     root=Path(root).resolve();state=load_people(root)
     if not state:raise ValueError('No people group')
-    rows=take_projects(root,state);fixed=take_projects(root,state,joins=False)
+    rows=take_projects(root,state)
     manifest=json.loads((root/'project.json').read_text(encoding='utf-8'))
     if manifest.get('pipeline',{}).get('model')=='prompthmr':
         from .prompthmr_scene import prepare_cameras as prepare_phmr
@@ -97,7 +97,7 @@ def prepare_cameras(root):
         return prepare_mamma(root)
     if manifest.get('pipeline',{}).get('model')=='flowhmr':
         from .flow_scene import prepare_cameras as prepare_flow
-        return prepare_flow(root,fixed)
+        return prepare_flow(root,rows)
     missing=[project for _,project in rows if read_camera(project) is None]
     if missing:
         import psutil
@@ -162,6 +162,8 @@ def prepare_cameras(root):
     anchor_path=root/'people_scene.json'
     previous=json.loads(anchor_path.read_text(encoding='utf-8')) if anchor_path.exists() else {}
     # The anchor is never a joined take, so adding or removing a join keeps the shared reference.
+    joined={safe_child(root,j['project']) for p in state['people'] for j in p.get('joins') or []}
+    fixed=[row for row in rows if row[1] not in joined]
     anchor=next(((ident,p) for ident,p in fixed if p.relative_to(root).as_posix()==previous.get('anchor')),None)
     if anchor is None and fixed:anchor=min(fixed,key=lambda row:(row[0],str(row[1])))
     if anchor:

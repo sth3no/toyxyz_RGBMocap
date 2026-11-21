@@ -16,11 +16,11 @@ def build(root):
         takes.append(dict(project=S(a,b),first=a,end=b))
     j=root/J;j.mkdir(parents=True);(j/'hmr4d_results.pt').write_bytes(b'')
     (j/'project.json').write_text(json.dumps(dict(people_root='../../..')),encoding='utf-8')
-    fill=dict(version=1,person=1,kind='refined',first=0,end=200,gaps=[dict(first=100,end=120,method='smooth',params={})],
+    fill=dict(version=1,person=1,kind='initial',first=0,end=200,gaps=[dict(first=100,end=120,method='smooth',params={})],
         sources=[dict(project=t['project'],first=t['first'],end=t['end'],
             files={n:stamp(root/t['project']/n) for n in('tracking.npz','hmr4d_results.pt')}) for t in takes])
     (j/'fill.json').write_text(json.dumps(fill),encoding='utf-8')
-    person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes,joins=[dict(project=J,first=0,end=200,sources=[t['project'] for t in takes])])
+    person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes,gap_fill={'100_120':{'method':'smooth'}},joins=[dict(project=J,first=0,end=200,sources=[t['project'] for t in takes])])
     state=dict(version=ps.VERSION,input=ps.media_receipt(root),people=[person])
     ps.save_people(root,state)
     return root,state,person
@@ -55,9 +55,31 @@ class TakeJoinsTest(unittest.TestCase):
         p=dict(self.person);del p['joins'];p['takes']=list(reversed(p['takes']))
         self.assertEqual(ps.active_takes(self.root,p),p['takes'])
         p['joins']=[];self.assertEqual(ps.active_takes(self.root,p),p['takes'])
-    def test_join_anchor(self):
-        self.assertEqual(ps.join_anchor(self.state,J),S(0,100))
-        self.assertEqual(ps.join_anchor(self.state,S(120,200)),S(120,200))
+    def write_fill(self,**changes):
+        f=self.root/J/'fill.json';d=json.loads(f.read_text(encoding='utf-8'));d.update(changes);f.write_text(json.dumps(d),encoding='utf-8')
+    def test_filled_range_no_longer_hidden_makes_join_stale(self):
+        self.person['takes'].insert(1,dict(project='p1/takes/new',first=100,end=110))
+        self.assertFalse(ps.join_current(self.root,self.person,self.person['joins'][0]))
+        self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+    def test_do_not_fill_deactivates_and_smooth_reactivates(self):
+        del self.person['gap_fill']
+        self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+        self.person['gap_fill']={'100_120':{'method':'copy'}};self.assertFalse(ps.join_current(self.root,self.person,self.person['joins'][0]))
+        self.person['gap_fill']={'100_120':{'method':'smooth'}}
+        self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person)],[J])
+        self.assertTrue((self.root/J/'fill.json').is_file())  # nothing was deleted
+    def test_join_replaces_sources_only_for_kinds_it_provides(self):
+        sources=self.person['takes']
+        for kind in('initial','corrected_initial'):self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person,kind)],[J],kind)
+        for kind in('footmr_initial','refined','handflow_initial','corrected_footmr_initial'):self.assertEqual(ps.active_takes(self.root,self.person,kind),sources,kind)
+        self.write_fill(kind='footmr_initial',kinds=['initial','footmr_initial'])
+        for kind in('initial','footmr_initial','corrected_footmr_initial'):self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person,kind)],[J],kind)
+        self.assertEqual(ps.active_takes(self.root,self.person,'footmr_refined'),sources)
+    def test_legacy_fill_without_kinds_provides_its_kind(self):
+        self.write_fill(kind='footmr_initial')
+        self.assertEqual(ps.join_kinds(json.loads((self.root/J/'fill.json').read_text(encoding='utf-8'))),['footmr_initial'])
+        self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person,'footmr_initial')],[J])
+        self.assertEqual(ps.active_takes(self.root,self.person,'initial'),self.person['takes'])
     def test_owned_projects(self):
         self.assertEqual(ps.owned_projects(self.person),[S(0,100),S(120,200),J])
     def test_load_people_checks_join_paths(self):
@@ -67,6 +89,8 @@ class TakeJoinsTest(unittest.TestCase):
         with self.assertRaises(ValueError):ps.load_people(self.root)
     def test_joined_project_current(self):
         self.assertTrue(ps.joined_project_current(self.root/J))
+        self.assertTrue(ps.joined_project_current(self.root/J,'corrected_initial'))
+        self.assertFalse(ps.joined_project_current(self.root/J,'footmr_initial'))
         self.assertIsNone(ps.joined_project_current(self.root/S(0,100)))
         (self.root/S(120,200)/'tracking.npz').write_bytes(b'changed content!')
         self.assertFalse(ps.joined_project_current(self.root/J))
@@ -83,8 +107,9 @@ class TakeJoinsTest(unittest.TestCase):
         j['sources']=[S(0,100),S(120,200)];j['end']=199;self.assertFalse(ps.join_current(self.root,self.person,j))
     def test_load_people_rejects_non_list_joins(self):
         self.person['joins']=None;ps.save_people(self.root,self.state);ps.load_people(self.root)
-        self.person['joins']='x';ps.save_people(self.root,self.state)
-        with self.assertRaises(ValueError):ps.load_people(self.root)
+        for bad in('x',['x'],[{'project':5}],[{}]):
+            self.person['joins']=bad;ps.save_people(self.root,self.state)
+            with self.assertRaisesRegex(ValueError,'Invalid person list'):ps.load_people(self.root)
     def test_empty_fingerprints_are_stale(self):
         f=self.root/J/'fill.json';d=json.loads(f.read_text(encoding='utf-8'));d['sources'][0]['files']={}
         f.write_text(json.dumps(d),encoding='utf-8')
@@ -98,33 +123,20 @@ class TakeJoinsTest(unittest.TestCase):
         from mocap.scene_camera import take_projects
         root=self.root.resolve()
         self.assertEqual(self.rel(take_projects(root,self.state)),[(1,S(0,100)),(1,S(120,200)),(1,J)])
-        self.assertEqual(self.rel(take_projects(root,self.state,joins=False)),[(1,S(0,100)),(1,S(120,200))])
+        self.assertEqual(self.rel(take_projects(root,self.state,'corrected_initial')),[(1,S(0,100)),(1,S(120,200)),(1,J)])
+        self.assertEqual(self.rel(take_projects(root,self.state,'footmr_initial')),[(1,S(0,100)),(1,S(120,200))])
     def test_take_projects_skips_stale_join(self):
         from mocap.scene_camera import take_projects
         (self.root/S(120,200)/'hmr4d_results.pt').write_bytes(b'reconstructed again')
         self.assertEqual(self.rel(take_projects(self.root.resolve(),self.state)),[(1,S(0,100)),(1,S(120,200))])
-    def test_scene_take_rows_use_joined_take(self):
-        from mocap.scene_export import scene_take_rows
-        rows=scene_take_rows(self.state,[1],root=self.root)
-        self.assertEqual([t['project'] for _,t in rows],[J])
-        self.assertEqual([t['project'] for _,t in scene_take_rows(self.state,[1],[J],root=self.root)],[J])
-        self.assertEqual([t['project'] for _,t in scene_take_rows(self.state,[1])],[S(0,100),S(120,200)])
-    def test_scene_take_rows_without_joins_unchanged(self):
-        from mocap.scene_export import scene_take_rows
-        del self.person['joins']
-        want=[(self.person,t) for t in self.person['takes']]
-        self.assertEqual(scene_take_rows(self.state,[1],root=self.root),want)
-        self.assertEqual(scene_take_rows(self.state,[1]),want)
-        self.assertEqual(scene_take_rows(self.state,[1],[S(120,200)],root=self.root),want[1:])
     def test_stale_joined_take_reports_fill(self):
         from mocap.take_selection import diagnose_take
         (self.root/S(0,100)/'tracking.npz').write_bytes(b'changed tracking')
         issue=diagnose_take(self.root/J,'initial')
         self.assertEqual((issue.status,issue.reason,issue.action),('Fill hidden ranges',
-            'A source take changed after this take was joined.','Click Fill hidden ranges again.'))
+            'The source takes, hidden range choices or motion result differ from this joined take.','Click Fill hidden ranges again.'))
         self.assertNotEqual(diagnose_take(self.root/S(0,100),'initial').status,'Fill hidden ranges')
-    def test_floor_inputs_ignore_joins(self):
-        from mocap import scene_floor
+    def floor_scene(self):
         from mocap.scene_camera import stamp
         from mocap.paths import MODELS
         model=MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz';model=stamp(model) if model.exists() else [1,2]
@@ -134,8 +146,18 @@ class TakeJoinsTest(unittest.TestCase):
                 model=model,world_to_camera=[[1,0,0,m],[0,1,0,0],[0,0,1,0],[0,0,0,1]])),encoding='utf-8')
         (self.root/'people_scene.json').write_text(json.dumps(dict(anchor=S(0,100),input=ps.media_receipt(self.root),
             sources={'hmr4d_results.pt':stamp(self.root/S(0,100)/'hmr4d_results.pt')},world_to_camera=[[1,0,0,1],[0,1,0,0],[0,0,1,0],[0,0,0,1]])),encoding='utf-8')
-        joined=scene_floor.inputs(self.root)
-        self.assertEqual([a['project'] for a in joined['actors']],[S(0,100),S(120,200)])
-        del self.person['joins'];ps.save_people(self.root,self.state)
-        self.assertEqual(scene_floor.inputs(self.root),joined)
+        return model
+    def test_floor_inputs_without_joins_unchanged(self):
+        from mocap import scene_floor
+        from mocap.scene_camera import stamp
+        model=self.floor_scene();del self.person['joins'];del self.person['gap_fill'];ps.save_people(self.root,self.state)
+        row=lambda rel,m:dict(person=1,project=rel,source=stamp(self.root/rel/'hmr4d_results.pt'),world_to_camera=[[1,0,0,m],[0,1,0,0],[0,0,1,0],[0,0,0,1]])
+        self.assertEqual(scene_floor.inputs(self.root),dict(version=scene_floor.VERSION,input=ps.media_receipt(self.root),model=model,
+            reference=[[1,0,0,1],[0,1,0,0],[0,0,1,0],[0,0,0,1]],actors=[row(S(0,100),1),row(S(120,200),2)]))
+    def test_floor_inputs_list_current_join_after_takes(self):
+        from mocap import scene_floor
+        self.floor_scene()
+        self.assertEqual([a['project'] for a in scene_floor.inputs(self.root)['actors']],[S(0,100),S(120,200),J])
+        self.person['gap_fill']={};ps.save_people(self.root,self.state)  # Do not fill: the join is not current
+        self.assertEqual([a['project'] for a in scene_floor.inputs(self.root)['actors']],[S(0,100),S(120,200)])
 if __name__=='__main__':unittest.main()

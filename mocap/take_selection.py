@@ -96,8 +96,8 @@ def diagnose_take(project, kind, pending_contacts=False):
                          'Select the take and click Reconstruct 3D.')
 
     from .people_store import joined_project_current
-    if joined_project_current(project) is False:
-        return TakeIssue('Fill hidden ranges', 'A source take changed after this take was joined.',
+    if joined_project_current(project, kind) is False:
+        return TakeIssue('Fill hidden ranges', 'The source takes, hidden range choices or motion result differ from this joined take.',
                          'Click Fill hidden ranges again.')
     if any((project/name).is_file() for name in ('flowhmr_pending.json','exmr_pending.json')):
         return TakeIssue('Reconstruct 3D', 'A previous 3D reconstruction did not finish.',

@@ -4,6 +4,7 @@ import colorsys
 import json
 import secrets
 from pathlib import Path
+from . import hidden_ranges
 from .storage import atomic_json
 
 VERSION = 1
@@ -73,7 +74,7 @@ def load_people(root):
         for take in person.get('takes', []):
             safe_child(root, take['project'])
         joins = person.get('joins') or []
-        if not isinstance(joins, list):
+        if not isinstance(joins, list) or not all(isinstance(j, dict) and isinstance(j.get('project'), str) for j in joins):
             raise ValueError('Invalid person list')
         for join in joins:
             safe_child(root, join['project'])
@@ -122,41 +123,60 @@ def visible_runs(indices, fps, first, end, max_gap_seconds=.5):
     return runs
 
 
-def join_current(root, person, join):
-    """A joined take is used only while every source file still has the stamp it was built from."""
+def join_fill(root, person, join):
+    """fill.json while the join is current: unchanged source files, and each filled range still a hidden range with the same method chosen."""
     try:
         sources, first, end = join['sources'], join['first'], join['end']
         if not (isinstance(join['project'], str) and isinstance(sources, list) and sources and all(isinstance(x, str) for x in sources)
                 and type(first) is int and type(end) is int):
-            return False
+            return None
         folder = safe_child(root, join['project'])
         if (folder / 'fill_pending.json').exists():
-            return False
+            return None
         fill = read_people_json(folder / 'fill.json')
         if fill.get('version') != 1 or [x['project'] for x in fill['sources']] != sources or (fill['first'], fill['end']) != (first, end):
-            return False
+            return None
         takes = {t['project']: (t['first'], t['end']) for t in person.get('takes', [])}
         for source in fill['sources']:
             if takes.get(source['project']) != (source['first'], source['end']):
-                return False
+                return None
             if not source['files']:
-                return False
+                return None
             base = safe_child(root, source['project'])
             for name, stamp in source['files'].items():
                 stat = (base / name).stat()
                 if [stat.st_size, stat.st_mtime_ns] != list(stamp):
-                    return False
-        return True
+                    return None
+        found = {hidden_ranges.gap_key(g) for g in hidden_ranges.gaps(person.get('takes', []))}
+        choices = person.get('gap_fill') or {}
+        for gap in fill['gaps']:
+            key = hidden_ranges.gap_key(gap)
+            if key not in found or (choices.get(key) or {}).get('method') != gap['method']:
+                return None
+        return fill
     except Exception:
-        return False
+        return None
 
 
-def active_takes(root, person):
+def join_current(root, person, join):
+    return join_fill(root, person, join) is not None
+
+
+def join_kinds(fill):
+    """Base results a joined take provides; a fill.json without `kinds` provides only its `kind`."""
+    kinds = fill.get('kinds')
+    return kinds if isinstance(kinds, list) else [fill['kind']]
+
+
+def active_takes(root, person, kind=None):
+    """Takes in use; with `kind`, a current join replaces its sources only for a result it provides."""
     takes = person.get('takes', [])
     joins = person.get('joins')
+    base = None if kind is None else kind.removeprefix('corrected_')
     current, owned = [], set()
     for j in joins if isinstance(joins, list) else []:
-        if join_current(root, person, j) and owned.isdisjoint(j['sources']):
+        fill = join_fill(root, person, j)
+        if fill is not None and (base is None or base in join_kinds(fill)) and owned.isdisjoint(j['sources']):
             current.append(j)
             owned.update(j['sources'])
     if not current:
@@ -166,20 +186,12 @@ def active_takes(root, person):
     return sorted(out, key=lambda t: t['first'])
 
 
-def join_anchor(state, relative):
-    for person in state.get('people', []):
-        for join in person.get('joins') or []:
-            if join.get('project') == relative and join.get('sources'):
-                return join['sources'][0]
-    return relative
-
-
 def owned_projects(person):
     return [t['project'] for t in person.get('takes', [])] + [j['project'] for j in person.get('joins') or []]
 
 
-def joined_project_current(project):
-    """None for an ordinary take folder, else whether its joined take is still current."""
+def joined_project_current(project, kind=None):
+    """None for an ordinary take folder, else whether its joined take is in use (for `kind`, if given)."""
     project = Path(project).resolve()
     if not (project / 'fill.json').is_file():
         return None
@@ -189,7 +201,7 @@ def joined_project_current(project):
         for person in state['people']:
             for join in person.get('joins') or []:
                 if safe_child(root, join['project']) == project:
-                    return join_current(root, person, join)
+                    return any(t['project'] == join['project'] for t in active_takes(root, person, kind))
     except Exception:
         pass
     return False

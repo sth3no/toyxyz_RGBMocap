@@ -182,7 +182,7 @@ class SceneDataLoader(QThread):
             raise ValueError('MAMMA publication is incomplete; finish reconstruction before opening this scene.')
         state=load_people(root)
         if state is None:raise ValueError('People group unavailable')
-        projects=take_projects(root,state)
+        projects=take_projects(root,state,kind)
         if not projects:return PeopleScene(root,dict(floor=0.))
         from .scene_floor import read_config,current_resolution
         from .paths import MODELS

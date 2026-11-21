@@ -1,7 +1,8 @@
-import unittest
+import tempfile,unittest
+from pathlib import Path
 import numpy as np
 from mocap import hidden_ranges as h
-from mocap import hidden_ranges_ui as ui
+from mocap import hidden_ranges_state as ui
 T=lambda a,b:dict(project=f'p/takes/{a:09d}_{b:09d}_scene_v1',first=a,end=b)
 TAKES=[T(0,100),T(120,200),T(260,300)]
 
@@ -38,6 +39,14 @@ class PanelDecisionTest(unittest.TestCase):
         self.assertTrue(ui.can_fill(rows,None));self.assertFalse(ui.can_fill(rows,'reason'))
         self.assertFalse(ui.can_fill(ui.gap_rows(h.gaps(TAKES),{},30),None))
         self.assertFalse(ui.can_fill(ui.gap_rows(h.gaps(TAKES),{'200_260':{'method':'smooth'}},30),None))
+    def test_unsupported_project_locks_choices(self):
+        for reason in(ui.disabled_reason('flowhmr',False,'initial',lambda:True),ui.disabled_reason('exmr',False,'initial',lambda:True),
+                      ui.disabled_reason('gvhmr',False,'refined',lambda:True)):self.assertFalse(ui.editable(reason),reason)
+        self.assertTrue(ui.editable(None));self.assertTrue(ui.editable(ui.disabled_reason('gvhmr',False,'initial',lambda:False)))
+    def test_malformed_take_path_does_not_raise(self):
+        bad=[dict(g,before=dict(g['before'],project='../../outside')) for g in h.gaps(TAKES)]
+        reason,manual=ui.panel_state(Path(tempfile.gettempdir())/'scene',bad,{'100_120':{'method':'smooth'}},'gvhmr','initial')
+        self.assertFalse(ui.editable(reason));self.assertFalse(manual)
     def test_choose(self):
         choices={}
         ui.choose(choices,'100_120','smooth');self.assertEqual(choices,{'100_120':{'method':'smooth'}})

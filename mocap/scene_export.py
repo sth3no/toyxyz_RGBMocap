@@ -3,20 +3,19 @@ import json
 from pathlib import Path
 import numpy as np
 from .scene_camera import VERSION,read_camera,validate_transform
-from .people_store import root_for,load_people,safe_child,media_receipt,active_takes,owned_projects
+from .people_store import root_for,load_people,safe_child,media_receipt,owned_projects
 from .result_artifacts import file_stat
 
 
-def scene_take_rows(people, person_ids, take_paths=None, root=None):
+def scene_take_rows(people, person_ids, take_paths=None):
     """Resolve exact saved take IDs, preserving the scene's person/take order."""
     if (not isinstance(person_ids,list) or not 1<=len(person_ids)<=8
             or any(type(ident) is not int for ident in person_ids) or len(set(person_ids))!=len(person_ids)):
         raise ValueError('Select at least one person for the scene export.')
     selected=[person for person in people['people'] if person['id'] in person_ids]
-    takes=lambda person:person['takes'] if root is None else active_takes(root,person)
-    if len(selected)!=len(person_ids) or any(not takes(person) for person in selected):
+    if len(selected)!=len(person_ids) or any(not person['takes'] for person in selected):
         raise ValueError('The selected people or their saved takes changed.')
-    rows=[(person,take) for person in selected for take in takes(person)]
+    rows=[(person,take) for person in selected for take in person['takes']]
     if take_paths is None:
         return rows
     if (not isinstance(take_paths,list) or not 1<=len(take_paths)<=4096

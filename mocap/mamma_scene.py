@@ -8,7 +8,7 @@ from .scene_camera import read_camera,VERSION,take_projects
 
 def prepare_cameras(root):
     root=Path(root);state=load_people(root)
-    rows=take_projects(root,state,joins=False)
+    rows=take_projects(root,state)
     if not rows:raise ValueError('MAMMA shared scene has no source takes.')
     for _,project in rows:
         if read_camera(project) is None:raise ValueError('MAMMA calibrated camera/body receipt changed. Prepare its source result again.')

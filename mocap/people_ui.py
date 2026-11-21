@@ -206,12 +206,13 @@ class PeopleWorkspace:
         skipped=[]
         bases=result_sources(base_result(kind))
         for person in self.people_state['people']:
-            for number,take in enumerate(active_takes(self.people_root,person),1):
+            takes=person.get('takes',[])
+            for take in active_takes(self.people_root,person,kind):
                 project=safe_child(self.people_root,take['project'])
                 available=all((project/RESULTS[base][0]).is_file() and result_is_current(project,base) for base in bases)
                 if not available:
                     if person.get('checked'):
-                        skipped.append(f"{person['name']}, Take {number}")
+                        skipped.append(f"{person['name']}, "+('Filled take' if take.get('join') else f'Take {takes.index(take)+1}'))
                     continue
                 jobs.extend((stage,['--project',str(project),'--result',kind]) for stage in ('correct','export'))
         for name in skipped:
@@ -286,7 +287,7 @@ class PeopleWorkspace:
         column.addWidget(self.people_list,1)
         self.person_takes = QComboBox()
         self.person_takes.setAccessibleName('Visible motion interval')
-        self.person_takes.setToolTip(tooltip_text('Choose a visible section of this person\'s motion. Separate takes avoid filling gaps while the person is out of view; use Hidden ranges below to join them on request.'))
+        self.person_takes.setToolTip(tooltip_text('Choose a visible section of this person\'s motion. Separate takes avoid filling gaps while the person is out of view.'))
         self.person_takes.currentIndexChanged.connect(self.person_take_selected)
         self.person_takes.hide()
         column.addWidget(self.person_takes)
@@ -392,10 +393,8 @@ class PeopleWorkspace:
         self.people_root,self.people_state = root,state
         self.sync_shared_floor_controls()
         if self._scene_key is not None and self._scene_key[0]!=str(root):self.clear_people_scene()
-        from .hidden_ranges_ui import fill_runs,read_mask
-        # Read once per load; only a joined take has a mask.
-        joined=any(safe_child(root,j['project'])==Path(project).resolve() for p in state['people'] for j in p.get('joins') or [])
-        self.slider.fill_runs=fill_runs(read_mask(Path(project))) if joined else ()
+        from .hidden_ranges_state import project_fill_runs
+        self.slider.fill_runs=project_fill_runs(root,state,project)
         ident = manifest.get('person_id',state.get('active',state['people'][0]['id']))
         self.active_person_id = ident
         self._people_syncing = True
@@ -535,20 +534,26 @@ class PeopleWorkspace:
         from .hidden_ranges import gaps
         found=gaps(person.get('takes',[])) if person else []
         if not found:self.hidden_ranges.hide();return
-        from .hidden_ranges_ui import panel_state
+        from .hidden_ranges_state import panel_state
         choices=person.get('gap_fill') or {}
         reason,manual=panel_state(self.people_root,found,choices,self.model_choice.currentData(),self.active_result)
         self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason)
         self.hidden_ranges.set_manual_note(manual)
 
     def gap_choice_changed(self,key,method):
-        from .hidden_ranges_ui import choose
-        person=self.current_person()
-        if self.people_state is None or person is None:return
+        from copy import deepcopy
+        from .hidden_ranges_state import choose
+        if self.people_state is None or self.current_person() is None:return
+        state=deepcopy(self.people_state);person=next(p for p in state['people'] if p['id']==self.active_person_id)
         choose(person.setdefault('gap_fill',{}),key,method)
         if not person['gap_fill']:del person['gap_fill']
-        save_people(self.people_root,self.people_state)
-        self.refresh_hidden_ranges(person)
+        try:save_people(self.people_root,state)
+        except (ValueError,OSError) as error:
+            self.status.setText('Cannot save the hidden range choice: '+str(error))
+            self.refresh_hidden_ranges(self.current_person());return
+        self.people_state=state
+        # A choice can switch a joined take on or off, so the takes in use change.
+        self.populate_person_takes();self.request_people_scene(force=True);self.update_readiness()
 
     def fill_hidden_ranges(self):
         person=self.current_person()
@@ -561,7 +566,7 @@ class PeopleWorkspace:
 
     def log_filled_exports(self,files):
         if not self.people_state:return
-        from .hidden_ranges_ui import export_lines
+        from .hidden_ranges_state import export_lines
         for line in export_lines(self.people_root,self.people_state,files):self.log.append(line)
 
     def person_checked(self,item):
@@ -597,7 +602,7 @@ class PeopleWorkspace:
         self.people_state['active']=ident
         save_people(self.people_root,self.people_state)
         if path is None:
-            takes=active_takes(self.people_root,person)
+            takes=active_takes(self.people_root,person,self.active_result)
             relative=takes[-1]['project'] if takes else person['preview']
             path=safe_child(self.people_root,relative)
         if self.project!=path:
@@ -845,6 +850,10 @@ class PeopleWorkspace:
             self.people_state=load_people(root)
             path=self._people_return_project;self._people_return_project=None
             self.activate_person(ident,path)
+            if self.people_state and self.project:
+                # A fill of the loaded take rewrites its mask without loading it again.
+                from .hidden_ranges_state import project_fill_runs
+                self.slider.fill_runs=project_fill_runs(root,self.people_state,self.project);self.slider.update()
 
     @read_only_checks
     def take_choices(self, people=None, paths=None, validate_scene=False):
@@ -860,7 +869,7 @@ class PeopleWorkspace:
         for person in people:
             takes,joins=person.get('takes',[]),person.get('joins') or []
             # Source and joined takes are numbered separately; only a joined take in use is usable.
-            usable={t['project'] for t in active_takes(self.people_root,person) if t.get('join')} if joins else set()
+            usable={t['project'] for t in active_takes(self.people_root,person,kind) if t.get('join')} if joins else set()
             for joined,number,total,take in [(False,n,len(takes),t) for n,t in enumerate(takes,1)]+[(True,n,len(joins),t) for n,t in enumerate(joins,1)]:
                 project=safe_child(self.people_root,take['project'])
                 if paths is not None and project not in paths:
@@ -902,7 +911,7 @@ class PeopleWorkspace:
             choices=self.take_choices(people,validate_scene=True)
             # By default a current joined take replaces its sources; a stale one never hides them.
             if choices:
-                active={safe_child(self.people_root,t['project']) for p in people for t in active_takes(self.people_root,p)}
+                active={safe_child(self.people_root,t['project']) for p in people for t in active_takes(self.people_root,p,self.active_result)}
                 choices=[choice for choice in choices if choice.project in active]
         else:
             paths=set(paths)
