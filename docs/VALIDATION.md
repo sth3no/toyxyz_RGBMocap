@@ -1,5 +1,57 @@
 # Source package validation
 
+## Hidden ranges: Copy from person (2026-11-21)
+
+- Windows 11 Pro, NVIDIA GeForce RTX 5060 Ti (16 GB), 31 GB RAM, shared runtime
+  Python 3.10.22 with torch 2.7.1+cu128. Ran the `unittest` files below on the
+  final code with `runtime\python.exe -B -m unittest discover -s tests -p "<file>"`:
+
+| File | Result |
+| --- | --- |
+| `test_hidden_ranges.py` | 14 tests passed |
+| `test_gap_fill.py` | 20 tests passed |
+| `test_take_joins.py` | 32 tests passed |
+| `test_take_join.py` | 44 tests passed, 1 skipped (ExMR-only case in the GVHMR class) |
+| `test_hidden_ranges_ui.py` | 21 tests passed |
+| `test_take_labels.py` | 4 tests passed |
+| whole `tests/` folder | 161 tests, 2 skipped; the only error is the import of `test_local_choices.py`, which needs PySide6 (absent from the shared runtime) and fails the same way on `main` |
+
+- No file that is hashed into a cache identity was changed; only files created
+  for this feature and `people_store.py`, `people_ui.py` and `take_selection.py`,
+  which are in no identity list, were edited.
+- Test project: the same as for Smooth join (GVHMR sample `tennis.mp4`, 30 fps,
+  313 frames, every pixel black on frames 100-119 and 200-224; two people, each
+  with takes 0-100, 120-200 and 225-313). The black frames hide both people at
+  once, so the copy used a time offset: person 1's two ranges were filled from
+  person 2 with Offset -30 (frames 69-90 and 169-195 of person 2).
+- Ran `take_join_boot.py --person-id 1 --result initial` with **Mirror** on and
+  then off: exit 0 both times, 45 frames marked copied, 268 captured. Pelvis
+  step per frame, Mirror off: world median 1.51 cm, at the seams 99-100,
+  119-120, 199-200 and 224-225 1.52, 1.53, 1.50, 1.57 cm; camera space median
+  1.43 cm, seams 1.46, 1.47, 1.28, 1.38 cm. Mirror on: world 1.53, 1.51, 1.50,
+  1.57 cm; camera space 1.47, 1.45, 1.29, 1.37 cm.
+- The source segments stay upright: largest tilt against their own world
+  2.6e-6 deg (float32 storage). The new join was reported current; person 2's
+  own smooth join stayed current; all 112 files of person 2 were unchanged in
+  size and modification time. A third run with unchanged settings wrote nothing
+  (`cached: true`).
+- With `QT_QPA_PLATFORM=offscreen`, the main window constructed on this project
+  (not shown). Person 1's rows showed Copy from person, Person 2, `-30 f`, no
+  message and **Fill hidden ranges** enabled. Setting Offset to 0 through the
+  spin box showed `Person 2 has no captured motion covering this range with this
+  offset.` and disabled it; -30 cleared that. Person 2 showed two Smooth join
+  rows. `people.json` was restored byte for byte. Fill was not pressed.
+- The copied motion was not looked at: no visual check in the viewport or in
+  exported files. The numbers above are pelvis steps and tilt only.
+- Not run: a fill with Copy from person started from the GUI (the worker was
+  started from the command line); the panel in a shown window; interactive use
+  by a person; the `export` and `correct` stages, FBX/BVH export or retargeting
+  of a take with copied frames; a scene where the other person is visible during
+  the hidden range (Offset 0), a real group-dance clip, a clip with a real
+  occluder; any ExMR project; a FootMR result; copying fingers (GVHMR results
+  have none); import of exported files into other software; a clean
+  installation.
+
 ## Hidden ranges and Smooth join (2026-11-21)
 
 - Windows 11 Pro, NVIDIA GeForce RTX 5060 Ti (16 GB), 31 GB RAM, shared runtime

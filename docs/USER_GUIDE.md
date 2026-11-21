@@ -920,7 +920,7 @@ an estimate and can leave residual sliding or penetration.
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
-| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default) or **Smooth join**. **Fill hidden ranges** writes one joined take. |
+| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation) or **Copy from person** (another person's motion). **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -944,22 +944,43 @@ A hidden range is the gap between two consecutive takes of the same person, for
 example while the person is covered by an object. By default nothing is filled:
 the gap stays empty and each take is used as before.
 
-To fill a gap, choose **Smooth join** for that range in **Hidden ranges**, then
-click **Fill hidden ranges**. **Smooth join** is plain interpolation between the
-last frame before the gap and the first frame after it, with no model. It is
-available only for gaps of up to 30 frames.
+To fill a gap, choose a method for that range in **Hidden ranges**, then click
+**Fill hidden ranges**.
+
+**Smooth join** is plain interpolation between the last frame before the gap and
+the first frame after it, with no model. It is available only for gaps of up to
+30 frames.
+
+**Copy from person** fills the range with the motion of another person of the
+same scene. It does not understand choreography; it reuses what the other
+person did, which suits dancers who perform the same moves. It has no length
+limit. Choose the person (**Choose…** until you do). **Mirror** swaps left and
+right, for dancers who mirror each other. **Offset** is a time shift in frames:
+a negative value copies the other person's motion from earlier frames, a
+positive value from later frames. The hidden person keeps their own heading and
+their own start and end positions: the other person's path is turned
+accordingly, and the pose is blended into the captured poses over a few frames
+at both ends. It is unavailable unless that person has one captured take of
+their own covering the range plus one frame on each side at the offset; the row
+then shows `<name> has no captured motion covering this range with this
+offset.` (or `Choose a person to copy from.`) and **Fill hidden ranges** is
+disabled. Joined takes are never used as the source.
 
 The result is one new joined take that covers the takes and the chosen gaps. The
 scene, **Apply Correction**, export and retargeting use it instead of the source
 takes. The source takes are kept unchanged. The take selector shows the joined
 take with the suffix ` · filled`, and export file names end with `_filled`.
 
-Interpolated frames are marked by a thin band on the timeline. Export also
-writes a console line such as `Person 1_filled: 45 of 313 frames are interpolated
-across hidden ranges.`
+Interpolated and copied frames are marked by a thin band on the timeline. Export
+also writes a console line such as `Person 1_filled: 45 of 313 frames are
+interpolated across hidden ranges.` When a take has copied frames the line reads
+`Person 1_filled: 45 of 313 frames are filled across hidden ranges (0
+interpolated, 45 copied from another person).`
 
 A joined take is used only while it is current. If a source take is
-reconstructed again, the joined take is out of date: the selector shows
+reconstructed again, the other person of a copy is reconstructed again, or the
+person, **Mirror** or **Offset** of a copy is changed, the joined take is out of
+date: the selector shows
 **Fill hidden ranges** as its status and the source takes are used again. Click
 **Fill hidden ranges** to write a new joined take. Choosing **Do not fill**
 again also returns to the separate takes; the joined take is kept.
