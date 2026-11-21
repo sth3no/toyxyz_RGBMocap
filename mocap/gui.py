@@ -40,6 +40,7 @@ STAGES['save_blend_scene']='Save MAMMA Blender Scene'
 STAGES["footmr"] = "Refine Ankles / FootMR"
 STAGES["handflow"] = "Infer Fingers / HandFlow"
 STAGES['correct'] = 'Motion Correction'
+STAGES['take_join'] = 'Fill Hidden Ranges'
 from .workspace_ui import build_workspace
 from .theme import set_appearance_style, theme_color, themed_colors, ui_px
 from .people_ui import PeopleWorkspace
