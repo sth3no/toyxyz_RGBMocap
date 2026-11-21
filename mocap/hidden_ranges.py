@@ -18,14 +18,15 @@ def method_issue(method,gap):
 
 def chains(takes,choices):
     out=[];cur=[]
-    for t in sorted(takes,key=lambda t:(t['first'],t['end'])):
-        if cur and t['first']>cur[-1]['end']:
-            g=dict(before=cur[-1],after=t,first=cur[-1]['end'],end=t['first'])
-            m=(choices.get(gap_key(g)) or {}).get('method','none')
-            if m!='none' and method_issue(m,g) is None:cur.append(t);continue
-        if len(cur)>1:out.append(cur)
-        cur=[t]
-    if len(cur)>1:out.append(cur)
+    for g in gaps(takes):
+        m=(choices.get(gap_key(g)) or {}).get('method','none')
+        if m!='none' and method_issue(m,g) is None:
+            if not cur or cur[-1] is not g['before']:
+                if cur:out.append(cur)
+                cur=[g['before']]
+            cur.append(g['after'])
+        elif cur:out.append(cur);cur=[]
+    if cur:out.append(cur)
     return out
 
 def gap_label(gap,fps):return f"Frames {gap['first']+1}–{gap['end']} ({(gap['end']-gap['first'])/fps:.1f} s)"

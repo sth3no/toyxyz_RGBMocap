@@ -23,3 +23,13 @@ class HiddenRangesTest(unittest.TestCase):
         self.assertEqual(h.chains([T(0,100),T(140,200)],{'100_140':{'method':'smooth'}}),[])
     def test_label(self):
         self.assertEqual(h.gap_label(dict(first=240,end=360),30),'Frames 241–360 (4.0 s)')
+    def test_chain_ignores_nested_take(self):
+        takes=[T(0,100),T(120,300),T(150,200),T(310,400)]
+        choices={'100_120':{'method':'smooth'},'300_310':{'method':'smooth'}}
+        self.assertEqual([[t['first'] for t in c] for c in h.chains(takes,choices)],[[0,120,310]])
+    def test_method_issue_none_and_unknown(self):
+        self.assertIsNone(h.method_issue('none',dict(first=0,end=999)))
+        with self.assertRaises(ValueError):h.method_issue('bogus',dict(first=0,end=1))
+    def test_gaps_unsorted_with_nested_take(self):
+        g=h.gaps([T(250,300),T(50,100),T(0,200)])
+        self.assertEqual([(x['first'],x['end'],x['before']['first']) for x in g],[(200,250,0)])
