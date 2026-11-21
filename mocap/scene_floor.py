@@ -4,7 +4,7 @@ Settings/receipts stay lightweight. Torch and the body model are worker-only.
 """
 from pathlib import Path
 import hashlib,json,math
-from .people_store import load_people,read_people_json,root_for,safe_child,media_receipt
+from .people_store import load_people,read_people_json,root_for,safe_child,media_receipt,join_anchor
 from .storage import atomic_json
 from .validation_snapshot import snapshot_value
 
@@ -75,7 +75,8 @@ def inputs(root):
     model=MODELS/('body_models/smplh/neutral/model.npz' if flow else 'body_models/smplx/SMPLX_NEUTRAL.npz')
     model_stamp=stamp(model) if model.exists() and not mamma else None
     rows=[]
-    for ident,project in take_projects(root,state):
+    # Joined takes stay out of the floor identity, so a join never invalidates other people's corrections.
+    for ident,project in take_projects(root,state,joins=False):
         camera=read_people_json(project/'scene_camera.json')
         source=stamp(project/'hmr4d_results.pt')
         if camera['sources']['hmr4d_results.pt']!=source:raise ValueError('Actor camera is out of date')
@@ -184,6 +185,8 @@ def binding(project,manifest,body):
     record=resolve(root,body)
     import numpy as np
     relative=Path(project).resolve().relative_to(root).as_posix()
+    # A joined take starts on its first source's frame, so it shares that source's scene camera.
+    relative=join_anchor(load_people(root),relative)
     row=next(row for row in record['inputs']['actors'] if row['project']==relative)
     transform=np.linalg.inv(np.asarray(record['inputs']['reference']))@np.asarray(row['world_to_camera'])
     return dict(signature=record['signature'],floor=record['floor'],coordinate_frame='shared_world',

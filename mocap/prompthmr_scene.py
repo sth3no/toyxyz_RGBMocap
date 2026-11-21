@@ -6,7 +6,7 @@ from .scene_camera import read_camera,VERSION,take_projects
 
 
 def prepare_cameras(root):
-    root=Path(root);rows=take_projects(root,load_people(root))
+    root=Path(root);rows=take_projects(root,load_people(root),joins=False)
     if not rows:raise ValueError('PromptHMR shared scene has no actors.')
     for _,project in rows:
         if read_camera(project) is None:raise ValueError('PromptHMR source or body changed. Reconstruct or prepare the selected source again.')

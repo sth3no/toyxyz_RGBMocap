@@ -881,9 +881,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         from .mixamo_data import current
         projects=[self.project]
         if self.people_state:
-            from .people_store import safe_child
+            from .people_store import safe_child,active_takes
             projects += [safe_child(self.people_root,take['project']) for person in self.people_state['people']
-                if person.get('checked') for take in person.get('takes',[])]
+                if person.get('checked') for take in active_takes(self.people_root,person)]
         jobs=[]
         for project in dict.fromkeys(projects):
             from .flow_placement import needs_update
@@ -2265,9 +2265,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                     row[key]=getattr(self,'_source_export_options',{}).get(key,False) and getattr(self,'_source_export_options',{}).get('format','fbx') in ('fbx','bvh')
                 row['origin_group']=str(Path(project).resolve())
                 if self.people_state:
-                    from .people_store import safe_child
+                    from .people_store import safe_child,owned_projects
                     for person in self.people_state['people']:
-                        if any(safe_child(self.people_root,t['project'])==Path(project).resolve() for t in person.get('takes',[])):
+                        if any(safe_child(self.people_root,t)==Path(project).resolve() for t in owned_projects(person)):
                             row['origin_group']='person:'+str(person['id']);break
                 for key,default in (('animate_camera',True),('background_refine',False),('camera_translation_scale',1.)):
                     row[key]=getattr(self,'_source_export_options',{}).get(key,default)

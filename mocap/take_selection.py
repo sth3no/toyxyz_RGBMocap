@@ -18,6 +18,7 @@ class TakeChoice:
     project: Path
     source: Path | None
     issue: 'TakeIssue | None'
+    joined: bool = False
 
     @property
     def status(self):
@@ -90,6 +91,10 @@ def diagnose_take(project, kind, pending_contacts=False):
         return TakeIssue('Reconstruct 3D', 'The saved SOMA motion is missing, incomplete, or out of date.',
                          'Select the take and click Reconstruct 3D.')
 
+    from .people_store import joined_project_current
+    if joined_project_current(project) is False:
+        return TakeIssue('Fill hidden ranges', 'A source take changed after this take was joined.',
+                         'Click Fill hidden ranges again.')
     if any((project/name).is_file() for name in ('flowhmr_pending.json','exmr_pending.json')):
         return TakeIssue('Reconstruct 3D', 'A previous 3D reconstruction did not finish.',
                          'Select the take and click Reconstruct 3D.')

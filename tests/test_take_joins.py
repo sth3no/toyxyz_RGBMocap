@@ -14,7 +14,7 @@ def build(root):
         d=root/S(a,b);d.mkdir(parents=True)
         (d/'tracking.npz').write_bytes(b'track%d'%a);(d/'hmr4d_results.pt').write_bytes(b'result%d'%a)
         takes.append(dict(project=S(a,b),first=a,end=b))
-    j=root/J;j.mkdir(parents=True)
+    j=root/J;j.mkdir(parents=True);(j/'hmr4d_results.pt').write_bytes(b'')
     (j/'project.json').write_text(json.dumps(dict(people_root='../../..')),encoding='utf-8')
     fill=dict(version=1,person=1,kind='refined',first=0,end=200,gaps=[dict(first=100,end=120,method='smooth',params={})],
         sources=[dict(project=t['project'],first=t['first'],end=t['end'],
@@ -93,4 +93,49 @@ class TakeJoinsTest(unittest.TestCase):
         j=self.person['joins'][0];k=dict(j,project='p1/takes/other');self.person['joins']=[j,k]
         (self.root/'p1/takes/other').mkdir();(self.root/'p1/takes/other/fill.json').write_text((self.root/J/'fill.json').read_text(encoding='utf-8'),encoding='utf-8')
         self.assertEqual([t['project'] for t in ps.active_takes(self.root,self.person)],[J])
+    def rel(self,rows):return [(i,p.relative_to(self.root.resolve()).as_posix()) for i,p in rows]
+    def test_take_projects_appends_current_joins(self):
+        from mocap.scene_camera import take_projects
+        root=self.root.resolve()
+        self.assertEqual(self.rel(take_projects(root,self.state)),[(1,S(0,100)),(1,S(120,200)),(1,J)])
+        self.assertEqual(self.rel(take_projects(root,self.state,joins=False)),[(1,S(0,100)),(1,S(120,200))])
+    def test_take_projects_skips_stale_join(self):
+        from mocap.scene_camera import take_projects
+        (self.root/S(120,200)/'hmr4d_results.pt').write_bytes(b'reconstructed again')
+        self.assertEqual(self.rel(take_projects(self.root.resolve(),self.state)),[(1,S(0,100)),(1,S(120,200))])
+    def test_scene_take_rows_use_joined_take(self):
+        from mocap.scene_export import scene_take_rows
+        rows=scene_take_rows(self.state,[1],root=self.root)
+        self.assertEqual([t['project'] for _,t in rows],[J])
+        self.assertEqual([t['project'] for _,t in scene_take_rows(self.state,[1],[J],root=self.root)],[J])
+        self.assertEqual([t['project'] for _,t in scene_take_rows(self.state,[1])],[S(0,100),S(120,200)])
+    def test_scene_take_rows_without_joins_unchanged(self):
+        from mocap.scene_export import scene_take_rows
+        del self.person['joins']
+        want=[(self.person,t) for t in self.person['takes']]
+        self.assertEqual(scene_take_rows(self.state,[1],root=self.root),want)
+        self.assertEqual(scene_take_rows(self.state,[1]),want)
+        self.assertEqual(scene_take_rows(self.state,[1],[S(120,200)],root=self.root),want[1:])
+    def test_stale_joined_take_reports_fill(self):
+        from mocap.take_selection import diagnose_take
+        (self.root/S(0,100)/'tracking.npz').write_bytes(b'changed tracking')
+        issue=diagnose_take(self.root/J,'initial')
+        self.assertEqual((issue.status,issue.reason,issue.action),('Fill hidden ranges',
+            'A source take changed after this take was joined.','Click Fill hidden ranges again.'))
+        self.assertNotEqual(diagnose_take(self.root/S(0,100),'initial').status,'Fill hidden ranges')
+    def test_floor_inputs_ignore_joins(self):
+        from mocap import scene_floor
+        from mocap.scene_camera import stamp
+        from mocap.paths import MODELS
+        model=MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz';model=stamp(model) if model.exists() else [1,2]
+        (self.root/'project.json').write_text(json.dumps(dict(pipeline=dict(model='gvhmr'))),encoding='utf-8')
+        for rel,m in((S(0,100),1),(S(120,200),2),(J,3)):
+            d=self.root/rel;(d/'scene_camera.json').write_text(json.dumps(dict(sources={'hmr4d_results.pt':stamp(d/'hmr4d_results.pt')},
+                model=model,world_to_camera=[[1,0,0,m],[0,1,0,0],[0,0,1,0],[0,0,0,1]])),encoding='utf-8')
+        (self.root/'people_scene.json').write_text(json.dumps(dict(anchor=S(0,100),input=ps.media_receipt(self.root),
+            sources={'hmr4d_results.pt':stamp(self.root/S(0,100)/'hmr4d_results.pt')},world_to_camera=[[1,0,0,1],[0,1,0,0],[0,0,1,0],[0,0,0,1]])),encoding='utf-8')
+        joined=scene_floor.inputs(self.root)
+        self.assertEqual([a['project'] for a in joined['actors']],[S(0,100),S(120,200)])
+        del self.person['joins'];ps.save_people(self.root,self.state)
+        self.assertEqual(scene_floor.inputs(self.root),joined)
 if __name__=='__main__':unittest.main()

@@ -8,7 +8,7 @@ if __name__=='__main__':
     from .runtime_limits import configure_preview_cpu
     configure_preview_cpu()
 import numpy as np
-from .people_store import load_people,safe_child,media_receipt
+from .people_store import load_people,safe_child,media_receipt,active_takes
 from .storage import atomic_json
 
 VERSION=2
@@ -71,10 +71,13 @@ def paired_camera(world_rotation,cam_rotation,world_translation,cam_translation,
     return validate_transform(result)
 
 
-def take_projects(root,state):
+def take_projects(root,state,joins=True):
     rows=[]
     for person in state['people']:
-        for take in person.get('takes',[]):
+        takes=person.get('takes',[])
+        # A current joined take follows its sources; the scene draws the later entry of an overlap.
+        if joins and person.get('joins'):takes=takes+[t for t in active_takes(root,person) if t.get('join')]
+        for take in takes:
             project=safe_child(root,take['project'])
             if (project/'hmr4d_results.pt').is_file():rows.append((person['id'],project))
     if len(rows)>4096:raise ValueError('Too many motion takes for one scene (maximum 4096). Trim the video.')
@@ -84,7 +87,7 @@ def take_projects(root,state):
 def prepare_cameras(root):
     root=Path(root).resolve();state=load_people(root)
     if not state:raise ValueError('No people group')
-    rows=take_projects(root,state)
+    rows=take_projects(root,state);fixed=take_projects(root,state,joins=False)
     manifest=json.loads((root/'project.json').read_text(encoding='utf-8'))
     if manifest.get('pipeline',{}).get('model')=='prompthmr':
         from .prompthmr_scene import prepare_cameras as prepare_phmr
@@ -94,7 +97,7 @@ def prepare_cameras(root):
         return prepare_mamma(root)
     if manifest.get('pipeline',{}).get('model')=='flowhmr':
         from .flow_scene import prepare_cameras as prepare_flow
-        return prepare_flow(root,rows)
+        return prepare_flow(root,fixed)
     missing=[project for _,project in rows if read_camera(project) is None]
     if missing:
         import psutil
@@ -158,8 +161,9 @@ def prepare_cameras(root):
             del record,world,incam
     anchor_path=root/'people_scene.json'
     previous=json.loads(anchor_path.read_text(encoding='utf-8')) if anchor_path.exists() else {}
-    anchor=next(((ident,p) for ident,p in rows if p.relative_to(root).as_posix()==previous.get('anchor')),None)
-    if anchor is None and rows:anchor=min(rows,key=lambda row:(row[0],str(row[1])))
+    # The anchor is never a joined take, so adding or removing a join keeps the shared reference.
+    anchor=next(((ident,p) for ident,p in fixed if p.relative_to(root).as_posix()==previous.get('anchor')),None)
+    if anchor is None and fixed:anchor=min(fixed,key=lambda row:(row[0],str(row[1])))
     if anchor:
         ident,project=anchor;camera=read_camera(project)
         atomic_json(anchor_path,dict(version=VERSION,input=media_receipt(root),anchor=project.relative_to(root).as_posix(),

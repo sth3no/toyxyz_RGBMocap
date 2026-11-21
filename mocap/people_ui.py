@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QWidget,QFrame,QVBoxLayout,QHBoxLayout,QLabel,QPu
     QListWidget,QListWidgetItem,QColorDialog,QComboBox,QFileDialog,QTabWidget,QCheckBox,
     QStyledItemDelegate,QStyleOptionViewItem,QToolTip,QStyle,QMenu,QInputDialog,QMessageBox)
 
-from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR
+from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,join_current,owned_projects
 
 
 PEOPLE_HELP = (
@@ -204,7 +204,7 @@ class PeopleWorkspace:
         skipped=[]
         bases=result_sources(base_result(kind))
         for person in self.people_state['people']:
-            for number,take in enumerate(person.get('takes',[]),1):
+            for number,take in enumerate(active_takes(self.people_root,person),1):
                 project=safe_child(self.people_root,take['project'])
                 available=all((project/RESULTS[base][0]).is_file() and result_is_current(project,base) for base in bases)
                 if not available:
@@ -509,10 +509,10 @@ class PeopleWorkspace:
         self.person_takes.blockSignals(True)
         try:
             self.person_takes.clear()
-            takes=person.get('takes',[]) if person else []
+            takes=person.get('takes',[])+(person.get('joins') or []) if person else []
             for choice in self.take_choices([person] if person else []):
                 index=self.person_takes.count()
-                self.person_takes.addItem(f'{choice.frames} · {choice.status}',
+                self.person_takes.addItem(f'{choice.frames} · {choice.status}'+(' · filled' if choice.joined else ''),
                                           choice.project.relative_to(self.people_root.resolve()).as_posix())
                 self.person_takes.setItemData(index, choice.label, Qt.ToolTipRole)
                 if choice.project==self.project:self.person_takes.setCurrentIndex(index)
@@ -552,7 +552,7 @@ class PeopleWorkspace:
         self.people_state['active']=ident
         save_people(self.people_root,self.people_state)
         if path is None:
-            takes=person.get('takes',[])
+            takes=active_takes(self.people_root,person)
             relative=takes[-1]['project'] if takes else person['preview']
             path=safe_child(self.people_root,relative)
         if self.project!=path:
@@ -628,7 +628,7 @@ class PeopleWorkspace:
     def export_person_name(self,project):
         if self.people_state:
             for person in self.people_state['people']:
-                paths=[t['project'] for t in person.get('takes',[])]+[person['preview']]
+                paths=owned_projects(person)+[person['preview']]
                 if any(safe_child(self.people_root,path)==Path(project).resolve() for path in paths):return person['name']
         if self._single_actor and Path(project).resolve()==Path(self.project).resolve():return self._single_actor['name']
         return 'Person 1'
@@ -805,15 +805,18 @@ class PeopleWorkspace:
         kind=self.active_result
         edits=self.contact_tracks.get(base_result(kind),{})
         for person in people:
-            takes=person.get('takes',[])
+            takes=person.get('takes',[])+(person.get('joins') or [])
             for number,take in enumerate(takes,1):
                 project=safe_child(self.people_root,take['project'])
                 if paths is not None and project not in paths:
                     continue
+                joined=number>len(person.get('takes',[]))
                 active=project==self.project
                 pending=active and kind.startswith('corrected_') and (self.contact_saving or edits.get('unsaved'))
                 try:
                     source=self.current_export() if active else selected_export(project,kind)
+                    # A stale joined take keeps valid files of its own; it must not look ready.
+                    if joined and not join_current(self.people_root,person,take):source=None
                     issue=diagnose_take(project,kind,pending) if source is None else None
                 except (OSError,ValueError,KeyError,TypeError) as error:
                     from .storage import path_error_message
@@ -830,7 +833,7 @@ class PeopleWorkspace:
                                         'Select the take and click Prepare Preview to rebuild the shared scene.')
                         source=None
                 choices.append(TakeChoice(person['id'],person['name'],number,len(takes),
-                                          take['first'],take['end'],project,source,issue))
+                                          take['first'],take['end'],project,source,issue,joined))
         return choices
 
     def checked_take_exports(self, paths=None):
@@ -843,6 +846,10 @@ class PeopleWorkspace:
                 if not person.get('takes'):
                     problems.append(f"{person['name']}\nReason: This person has no saved takes.\nWhat to do: Run Reconstruct 3D.")
             choices=self.take_choices(people,validate_scene=True)
+            # By default a current joined take replaces its sources; a stale one never hides them.
+            if choices:
+                active={safe_child(self.people_root,t['project']) for p in people for t in active_takes(self.people_root,p)}
+                choices=[choice for choice in choices if choice.project in active]
         else:
             paths=set(paths)
             if not paths:

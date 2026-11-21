@@ -63,7 +63,7 @@ def load_scene(root,kind,cancelled):
     from .preview_data import mapped_array,motion_summary,LoadCancelled
     from .bone_overlay import open_preview
     from .motion_tools import result_is_current
-    state=load_people(root);rows=take_projects(root,state)
+    state=load_people(root);rows=take_projects(root,state,joins=False)
     scene=PeopleScene(root,dict(floor=0.))
     usable=[(i,p) for i,p in rows if artifacts_current(p,kind) and result_is_current(p,kind,ignore_contacts=True)]
     if not usable:return scene

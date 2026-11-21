@@ -164,7 +164,7 @@ class CharacterWorkspace:
     def character_sources(self):
         from .motion_tools import result_is_current
         from .gemx_result import RECEIPT, is_project
-        from .people_store import safe_child
+        from .people_store import safe_child,active_takes
         if self.people_state:
             people=self.people_state['people']
         elif self.project:people=[dict(id=1,name=(self._single_actor or {}).get('name','Person 1'),takes=[dict(project=str(self.project),start=self.source_offset)])]
@@ -172,7 +172,7 @@ class CharacterWorkspace:
         result=[]
         for p in people:
             takes=[]
-            for t in p.get('takes',[]):
+            for t in active_takes(self.people_root,p) if self.people_state else p.get('takes',[]):
                 path=safe_child(self.people_root,t['project']) if self.people_state else Path(t['project'])
                 metadata=path/(RECEIPT if is_project(path) else self.active_result+'_mixamo.json')
                 if not metadata.is_file() or not result_is_current(path,self.active_result):continue

@@ -156,7 +156,7 @@ def ensure_group(project):
     from .scene_camera import take_projects
     from .people_store import load_people
     root=scene_root(project);people=load_people(root) if (root/'people.json').exists() else None
-    rows=take_projects(root,people) if people else [(0,Path(project))]
+    rows=take_projects(root,people,joins=False) if people else [(0,Path(project))]
     changed=[];body=None
     for _,path in rows:
         if not needs_update(path):continue
