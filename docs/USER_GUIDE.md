@@ -1018,14 +1018,15 @@ To join them, right-click the person that should disappear, choose **Continue
 as** and choose the person they really are. The first person leaves the list.
 Their takes and frames now belong to the chosen person, and the gap between the
 takes appears in [Hidden ranges](#hidden-ranges). No motion is changed and no
-file is moved or deleted. The window shows `<name> now continues as <name>`.
+file is moved or deleted. The status line then says `<name> now continues as
+<name>. Right-click <name> and choose Separate again to undo.`, with the names
+of the two people.
 
 What to do next:
 
 - Click **Reconstruct 3D** for the joined person. It now also covers the joined
-  frames. The takes of the first person and the new frames inside the same time
-  range are not merged into one motion: they stay separate takes of one person
-  until you reconstruct that person again.
+  frames. The takes of both people stay separate takes of the one person until
+  you run **Reconstruct 3D** for that person again.
 - Takes of the scene may ask for **Apply Correction** again. This applies to
   every person of the scene, because the floor of the scene is estimated per
   person.
@@ -1038,15 +1039,14 @@ What to do next:
 To undo it, right-click the person that now holds the other one, choose
 **Separate again** and choose the person to bring back. They return to the list
 with their takes and frames. Takes you reconstructed in between stay with the
-person they were made for.
+person they were made for. As after **Continue as**, **Track Face** and **Apply
+Correction** may be needed again, and the hidden ranges are listed anew.
 
-Continue as is refused, and nothing changes, in these cases:
+**Continue as** is refused, and nothing changes, in these cases:
 
 - The two people are both visible in more than half a second of the same
   frames: `<name> and <name> are both visible in <n> frames, so they cannot be
   the same person.`
-- The model is not GVHMR or ExMR: `Continue as is available for GVHMR and ExMR
-  in this version.`
 - The chosen person is not in this scene: `Choose another person of this
   scene.`
 - The person detection data is missing: `The person detection data of this
@@ -1056,12 +1056,12 @@ Continue as is refused, and nothing changes, in these cases:
   person again.` If the record can be read, it is finished automatically when
   you open the scene or try again.
 
-**Separate again** is refused with `Choose a person that was joined into this
-one.` when the chosen person was not joined into this one.
+**Separate again** is refused with the last two messages as well.
 
 Limits of this version:
 
-- GVHMR and ExMR only.
+- GVHMR and ExMR only. For other models, and while a job is running, the menu
+  does not offer **Continue as** or **Separate again**.
 - Running **Find person** again from scratch discards the joins, together with
   the people list.
 
