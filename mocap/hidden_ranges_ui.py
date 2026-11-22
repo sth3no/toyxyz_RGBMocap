@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
     QScrollArea, QFrame, QSizePolicy)
 from .hidden_ranges import OFFSET_LIMIT
+from .theme import ui_px
 from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
 
 MANUAL_NOTE = 'Manual contact-lock edits on the source takes are not carried into the joined take.'
@@ -23,7 +24,7 @@ class RangeRows(QScrollArea):
 
     def sizeHint(self):return QSize(super().sizeHint().width(), self.content_height())
 
-    def minimumSizeHint(self):return QSize(0, min(self.content_height(), 72))
+    def minimumSizeHint(self):return QSize(0, min(self.content_height(), ui_px(72)))
 
     def resizeEvent(self, event):
         super().resizeEvent(event);self.updateGeometry()  # wrapped labels change height with the width

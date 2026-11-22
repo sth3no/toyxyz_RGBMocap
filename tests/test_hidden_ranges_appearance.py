@@ -2,8 +2,9 @@
 import unittest
 
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
+from mocap.hidden_ranges_ui import RangeRows
 from mocap.theme import ui_px
 from mocap.timeline_editor import TimelineSlider
 
@@ -31,6 +32,19 @@ class FillBandTest(unittest.TestCase):
     def test_band_is_darker_on_the_light_theme(self):
         self.assertEqual(len(self.band('light', 100, '#8a4809')[1]), 3)
         self.assertEqual(self.band('light', 100, '#d8a24a')[1], [])
+
+
+class RowsHeightTest(unittest.TestCase):
+    def tearDown(self):
+        APP.setProperty('uiScale', None)
+
+    def test_rows_keep_a_minimum_height_that_grows_with_the_scale(self):
+        for scale in (100, 200):
+            with self.subTest(scale=scale):
+                APP.setProperty('uiScale', scale)
+                area = RangeRows()
+                for _ in range(40):area.rows.addWidget(QLabel('Frames'))
+                self.assertEqual(area.minimumSizeHint().height(), 72 * scale // 100)
 
 
 if __name__ == '__main__':
