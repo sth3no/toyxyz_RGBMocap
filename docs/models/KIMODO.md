@@ -156,13 +156,13 @@ overlay; the app itself imports none of it.
   103 cm. The takes before and after it do not fit together. Check the frames
   next to the range, reconstruct those takes again, or choose Do not fill.`
   means that the generated motion missed a captured pose next to the range by
-  more than 25 cm. The two takes then usually place the person far apart or
-  facing different ways, often because the frames just before or just after
-  the range were reconstructed from a partly covered view. Look at those
-  frames, reconstruct those takes again, or choose **Do not fill** for the
-  range. Nothing is written,
-  and an earlier joined take stays as it was. The generated range is kept in
-  the cache, so filling again with the same takes refuses at once.
+  more than 25 cm: the two takes do not fit together. In the case seen so far
+  they placed the person 8.4 m apart and turned by about 135 degrees across a
+  one-second range, because the take before it ended with frames reconstructed
+  from a partly covered view. Look at those frames, reconstruct those takes
+  again, or choose **Do not fill** for the range. Nothing is written, and an
+  earlier joined take stays as it was. The generated range is kept in the
+  cache, so filling again with the same takes refuses at once.
 - `Automatic fill requires a CUDA GPU.` means the worker could not use an
   NVIDIA GPU. `Not enough free video memory for automatic fill.` means other
   programs hold the memory.

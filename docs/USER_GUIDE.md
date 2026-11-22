@@ -1009,9 +1009,9 @@ with a message such as `Automatic fill could not connect the motion on both
 sides of frames 137–166: the generated motion misses the captured poses next to
 the range by 103 cm. The takes before and after it do not fit together. Check
 the frames next to the range, reconstruct those takes again, or choose Do not
-fill.` This usually means that the frames just before or just after the range
-were reconstructed from a partly covered view, so the two takes place the
-person far apart or facing different ways. Nothing is written and an earlier
+fill.` In the case seen so far, the take before the range ended with frames
+reconstructed from a partly covered view, and the two takes placed the person
+8.4 m apart and turned by about 135 degrees. Nothing is written and an earlier
 joined take stays as it was; filling again with the same takes refuses at once,
 because the generated range is kept.
 
