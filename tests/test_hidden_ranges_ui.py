@@ -162,6 +162,37 @@ class AutoRowsTest(unittest.TestCase):
         self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1),({'100_120':None,'200_260':None},True))
         self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1,SETUP),({'100_120':None,'200_260':SETUP},False))
         self.assertEqual(json.dumps(choices),keep)
+    def test_choose_description(self):
+        choices={}
+        ui.choose(choices,'100_120','auto',seed=7,text='  A person\n waves  with\tthe right hand. ')
+        self.assertEqual(choices['100_120'],{'method':'auto','seed':7,'text':'A person waves with the right hand.'})
+        ui.choose(choices,'100_120','auto',seed=7,text=' \n ');self.assertEqual(choices['100_120'],{'method':'auto','seed':7})   # emptied: removed
+        ui.choose(choices,'100_120','auto',seed=7,text='a'*199+'  b'+'c'*50)        # cut to 200, without the cut's trailing space
+        self.assertEqual(choices['100_120']['text'],'a'*199)
+        ui.choose(choices,'100_120','auto',seed=7,text='x'*300);self.assertEqual(choices['100_120']['text'],'x'*200)
+        self.assertEqual(h.choice_params(choices['100_120']),('auto',{'seed':7,'text':'x'*200}))
+        ui.choose(choices,'100_120','smooth',text='waves');self.assertEqual(choices['100_120'],{'method':'smooth'})   # other methods ignore it
+    def test_description_rows(self):
+        TEXT='Get the text adapters.'
+        r=self.rows({'100_120':dict(AUTO(),text='Waves.')})[0]
+        self.assertEqual((r['text'],r['issue'],r['setup']),('Waves.',None,False))
+        self.assertEqual(self.rows({'100_120':AUTO()})[0]['text'],'')
+        self.assertEqual(self.rows({'100_120':COPY()})[0]['text'],'')
+        rows=lambda choice,auto_issue=None,takes=TAKES,key='100_120':ui.gap_rows(h.gaps(takes),{key:choice},30,PEOPLE,1,auto_issue,TEXT)
+        r=rows(dict(AUTO(),text='Waves.'))[0];self.assertEqual((r['issue'],r['setup']),(TEXT,True))
+        r=rows(AUTO())[0];self.assertEqual((r['issue'],r['setup']),(None,False))                 # no text: no text issue
+        r=rows(dict(AUTO(),text='Waves.'),SETUP)[0];self.assertEqual((r['issue'],r['setup']),(SETUP,True))   # runtime first
+        sentence='Automatic fill is limited to 290 frames; this range has 300.'
+        r=rows(dict(AUTO(),text='Waves.'),SETUP,LONG,'100_400')[0];self.assertEqual((r['issue'],r['setup']),(sentence,False))   # limit first
+        self.assertEqual(self.rows({'100_120':dict(AUTO(),text=7)})[0]['method'],'none')   # malformed
+        self.assertFalse(ui.can_fill(rows(dict(AUTO(),text='Waves.')),None))
+        self.assertTrue(ui.can_fill(rows(AUTO()),None))
+    def test_description_leaves_sources_and_pending_alone(self):
+        g=h.gaps(TAKES);choices={'100_120':COPY(offset=200),'200_260':dict(AUTO(),text='Waves.')};keep=json.dumps(choices)
+        self.assertEqual([t['first'] for t in ui.fill_sources(g,choices,PEOPLE,1)],[120,260])
+        self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1),({'100_120':None,'200_260':None},True))
+        self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1,None,'T'),({'100_120':None,'200_260':'T'},False))
+        self.assertEqual(json.dumps(choices),keep)
     def test_panel_state_reads_the_neighbours(self):
         from unittest import mock
         root=Path(tempfile.gettempdir())/'scene';g=h.gaps(TAKES);read=[]

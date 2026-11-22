@@ -1,13 +1,15 @@
 """Hidden ranges controls under the take selector; the decisions live in hidden_ranges_state."""
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
-    QScrollArea, QFrame, QSizePolicy)
-from .hidden_ranges import OFFSET_LIMIT, SEED_LIMIT, method_issue
+    QLineEdit, QScrollArea, QFrame, QSizePolicy)
+from .hidden_ranges import OFFSET_LIMIT, SEED_LIMIT, TEXT_LIMIT, method_issue
 from .theme import ui_px
-from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
+from .hidden_ranges_state import can_fill, description, editable, gap_rows, pending_state
 
 MANUAL_NOTE = 'Manual contact-lock edits on the source takes are not carried into the joined take.'
 AUTO_TIP = 'Generate the missing motion from the captured poses on both sides. The result is plausible motion, not a reconstruction.'
+TEXT_TIP = ('What the person does in this range, as one short action. Leave empty to let the generator decide. '
+            'Reading a new description takes about 20 seconds.')
 
 
 class RangeRows(QScrollArea):
@@ -32,8 +34,8 @@ class RangeRows(QScrollArea):
 
 
 class HiddenRangesPanel(QWidget):
-    # key, method, donor person id (None until chosen), mirror, offset, seed
-    choice_changed = Signal(str, str, object, bool, int, int)
+    # key, method, donor person id (None until chosen), mirror, offset, seed, description ('' when none)
+    choice_changed = Signal(str, str, object, bool, int, int, str)
     fill_requested = Signal()
     setup_requested = Signal()  # open Model Manager to install what Automatic needs
 
@@ -51,12 +53,12 @@ class HiddenRangesPanel(QWidget):
         self.manual = QLabel(MANUAL_NOTE);self.manual.setObjectName('muted');self.manual.setWordWrap(True);self.manual.hide()
         buttons = QHBoxLayout();buttons.setSpacing(6);buttons.addWidget(self.fill, 1);buttons.addWidget(self.setup)
         layout.addWidget(self.reason);layout.addLayout(buttons);layout.addWidget(self.manual)
-        self._widgets, self._pending, self._seeds, self._issues, self._shown, self._rows = [], {}, {}, {}, None, ([], [], False)
+        self._widgets, self._pending, self._autos, self._issues, self._shown, self._rows = [], {}, {}, {}, None, ([], [], False)
         self._later = QTimer(self);self._later.setInterval(30);self._later.timeout.connect(self._rebuild);self.hide()
 
-    def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None, auto_issue=None):
-        self._shown, self._pending = (gaps, choices, disabled_reason, people, ident, auto_issue), {}
-        rows = gap_rows(gaps, choices, fps, people, ident, auto_issue)
+    def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None, auto_issue=None, text_issue=None):
+        self._shown, self._pending = (gaps, choices, disabled_reason, people, ident, auto_issue, text_issue), {}
+        rows = gap_rows(gaps, choices, fps, people, ident, auto_issue, text_issue)
         # An unsupported project, camera or result must not record choices.
         self._rows = (gaps, rows, editable(disabled_reason))
         self.fill.setEnabled(can_fill(rows, disabled_reason))
@@ -75,10 +77,10 @@ class HiddenRangesPanel(QWidget):
         if self._held():return
         self._later.stop()
         for widget in self._widgets:
-            # Children too: a focused spin box would otherwise report editingFinished while it is removed.
+            # Children too: a focused spin box or description would otherwise report editingFinished while it is removed.
             for w in (widget, *widget.findChildren(QWidget)):w.blockSignals(True)
             widget.setParent(None);widget.deleteLater()
-        self._widgets, self._seeds, self._issues = [], {}, {}
+        self._widgets, self._autos, self._issues = [], {}, {}
         gaps, rows, enabled = self._rows
         for gap, row in zip(gaps, rows):
             label, combo = QLabel(row['label']), QComboBox()
@@ -93,7 +95,7 @@ class HiddenRangesPanel(QWidget):
             combo.setCurrentIndex(combo.findData(row['method']))
             combo.setEnabled(enabled)
             combo.currentIndexChanged.connect(lambda index, row=row, combo=combo: self.choice_changed.emit(
-                row['key'], combo.itemData(index), row['person'], row['mirror'], row['offset'], row['seed']))
+                row['key'], combo.itemData(index), row['person'], row['mirror'], row['offset'], row['seed'], ''))
             widgets = [label, combo]
             if row['method'] == 'copy':widgets.append(self._copy_controls(row, enabled))
             if row['method'] == 'auto':widgets.append(self._auto_controls(row, enabled))
@@ -122,7 +124,7 @@ class HiddenRangesPanel(QWidget):
         line = QHBoxLayout();line.setSpacing(6);line.addWidget(QLabel('Offset'));line.addWidget(offset, 1)
         layout.addWidget(person);layout.addWidget(mirror);layout.addLayout(line)
         for widget in (person, mirror, offset):widget.setEnabled(enabled)
-        emit = lambda *_: self.choice_changed.emit(row['key'], 'copy', person.currentData(), mirror.isChecked(), offset.value(), 0)
+        emit = lambda *_: self.choice_changed.emit(row['key'], 'copy', person.currentData(), mirror.isChecked(), offset.value(), 0, '')
         person.currentIndexChanged.connect(emit);mirror.toggled.connect(emit)
         # Saving rewrites people.json and reloads the scene, so the offset is committed once editing ends;
         # meanwhile the row's issue and the Fill button follow the value being edited.
@@ -131,33 +133,41 @@ class HiddenRangesPanel(QWidget):
         return box
 
     def _auto_controls(self, row, enabled):
-        box = QWidget();line = QHBoxLayout(box);line.setContentsMargins(12, 0, 0, 0);line.setSpacing(6)
+        box = QWidget();layout = QVBoxLayout(box);layout.setContentsMargins(12, 0, 0, 0);layout.setSpacing(2)
         seed = QSpinBox();seed.setRange(0, SEED_LIMIT);seed.setValue(row['seed']);seed.setEnabled(enabled)
         seed.setAccessibleName('Variation, '+row['label']);seed.setToolTip('Another number gives another motion for this range.')
-        line.addWidget(QLabel('Variation'));line.addWidget(seed, 1)
-        # Committed like Offset: saving rewrites people.json and reloads the scene.
-        seed.editingFinished.connect(lambda: seed.value() != row['seed'] and self.choice_changed.emit(row['key'], 'auto', None, False, 0, seed.value()))
-        self._seeds[row['key']] = (seed, row['seed'])
+        line = QHBoxLayout();line.setSpacing(6);line.addWidget(QLabel('Variation'));line.addWidget(seed, 1)
+        text = QLineEdit(row['text']);text.setMaxLength(TEXT_LIMIT);text.setEnabled(enabled)
+        text.setAccessibleName('Description, '+row['label']);text.setToolTip(TEXT_TIP)
+        text.setPlaceholderText('Optional, in English: A person waves with the right hand.')
+        layout.addLayout(line);layout.addWidget(QLabel('Description'));layout.addWidget(text)
+        # Committed like Offset: saving rewrites people.json and reloads the scene. Each save carries both values.
+        commit = lambda: (seed.value(), description(text.text())) != (row['seed'], row['text']) and self.choice_changed.emit(
+            row['key'], 'auto', None, False, 0, seed.value(), description(text.text()))
+        seed.editingFinished.connect(commit);text.editingFinished.connect(commit)
+        self._autos[row['key']] = (seed, text, row['seed'], row['text'])
         return box
 
     def _edit(self, row, choice):
         if choice[2] == row['offset']:self._pending.pop(row['key'], None)
         else:self._pending[row['key']] = choice
-        gaps, choices, reason, people, ident, auto_issue = self._shown
-        issues, ok = pending_state(gaps, choices, self._pending, reason, people, ident, auto_issue)
+        gaps, choices, reason, people, ident, auto_issue, text_issue = self._shown
+        issues, ok = pending_state(gaps, choices, self._pending, reason, people, ident, auto_issue, text_issue)
         for key, label in self._issues.items():label.setText(issues.get(key) or '');label.setVisible(bool(issues.get(key)))
         self.fill.setEnabled(ok);self.area.updateGeometry()
 
     def _fill_clicked(self):
-        # An offset or variation still being edited is saved first, so the worker never reads a stale one.
-        # Both are read before any is saved: saving shows the rows again.
+        # An offset, variation or description still being edited is saved first, so the worker never reads a stale one.
+        # All are read before any is saved: saving shows the rows again.
         pending = dict(self._pending)
-        seeds = {key: spin.value() for key, (spin, saved) in self._seeds.items() if spin.value() != saved}
-        for key, (person, mirror, offset) in pending.items():self.choice_changed.emit(key, 'copy', person, mirror, offset, 0)
-        for key, seed in seeds.items():self.choice_changed.emit(key, 'auto', None, False, 0, seed)
+        autos = {key: (spin.value(), description(field.text())) for key, (spin, field, seed, text) in self._autos.items()
+                 if (spin.value(), description(field.text())) != (seed, text)}
+        for key, (person, mirror, offset) in pending.items():self.choice_changed.emit(key, 'copy', person, mirror, offset, 0, '')
+        for key, (seed, text) in autos.items():self.choice_changed.emit(key, 'auto', None, False, 0, seed, text)
         saved = self._shown[1] if self._shown else {}
         if (all(isinstance(saved.get(k), dict) and saved[k].get('offset') == c[2] for k, c in pending.items())
-                and all(isinstance(saved.get(k), dict) and saved[k].get('seed') == s for k, s in seeds.items()) and self.fill.isEnabled()):
+                and all(isinstance(saved.get(k), dict) and (saved[k].get('seed'), saved[k].get('text', '')) == a for k, a in autos.items())
+                and self.fill.isEnabled()):
             self.fill_requested.emit()
 
     def set_manual_note(self, shown):self.manual.setVisible(bool(shown))

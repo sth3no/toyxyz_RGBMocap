@@ -112,7 +112,7 @@ class AutomaticChoiceTest(unittest.TestCase):
         panel.show_gaps(*panel._shown[:1],{},30,*panel._shown[2:]);self.assertTrue(panel.setup.isHidden())  # hidden again once nothing needs it
     def test_choosing_automatic(self):
         panel=self.panel({});self.combo(panel).setCurrentIndex(3)
-        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,0)])
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,0,'')])
         self.assertIsNone(self.variation(panel))
     def test_variation(self):
         panel=self.panel({'100_120':{'method':'auto','seed':3}})
@@ -123,31 +123,82 @@ class AutomaticChoiceTest(unittest.TestCase):
         self.assertEqual(spin.toolTip(),'Another number gives another motion for this range.')
         spin.editingFinished.emit();self.assertEqual(self.emitted,[])               # an unchanged value is not saved
         spin.setValue(7);self.assertEqual(self.emitted,[])                           # nor is a value still being edited
-        spin.editingFinished.emit();self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7)])
+        spin.editingFinished.emit();self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,'')])
     def test_fill_saves_the_variation_first(self):
         panel=self.panel({'100_120':{'method':'auto','seed':3}})
         saved=lambda *a:panel.show_gaps(*panel._shown[:1],{'100_120':{'method':'auto','seed':a[5]}},30,*panel._shown[2:])
         panel.choice_changed.connect(saved)                                          # what the People panel does after saving
         self.variation(panel).setValue(7);panel.fill.click()
-        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7),'fill'])
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,''),'fill'])
         self.emitted.clear();panel.fill.click();self.assertEqual(self.emitted,['fill'])
     def test_fill_waits_when_the_variation_was_not_saved(self):
         panel=self.panel({'100_120':{'method':'auto','seed':3}})
         self.variation(panel).setValue(7);panel.fill.click()
-        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7)])
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,'')])
     def test_saved_automatic_with_an_issue(self):
         panel=self.panel({'100_120':{'method':'auto','seed':3}},'x')
         self.assertEqual(self.combo(panel).currentData(),'auto');self.assertFalse(panel.fill.isEnabled())
         self.assertIn('x',[w.text() for w in panel._widgets if hasattr(w,'text')])
         self.assertFalse(panel.setup.isHidden())
+    def description(self,panel):
+        from PySide6.QtWidgets import QLineEdit
+        return next((f for f in panel.findChildren(QLineEdit) if f.accessibleName().startswith('Description')),None)
+    def test_description_field(self):
+        for choices in ({},{'100_120':{'method':'smooth'}},{'100_120':dict(method='copy',person=2,mirror=False,offset=-30)}):
+            self.assertIsNone(self.description(self.panel(choices)),choices)          # only Automatic rows have it
+        panel=self.panel({'100_120':{'method':'auto','seed':3,'text':'Waves.'}});field=self.description(panel)
+        self.assertEqual((field.text(),field.maxLength(),field.accessibleName()),('Waves.',200,'Description, Frames 101–120 (0.7 s)'))
+        self.assertEqual(field.placeholderText(),'Optional, in English: A person waves with the right hand.')
+        self.assertEqual(field.toolTip(),'What the person does in this range, as one short action. Leave empty to let the generator decide. '
+                                         'Reading a new description takes about 20 seconds.')
+        self.assertIn('Description',[w.text() for w in panel.findChildren(QLabel)])
+    def test_description_is_saved_once_editing_ends(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}});field=self.description(panel)
+        field.editingFinished.emit();self.assertEqual(self.emitted,[])              # unchanged
+        field.setText('  A person   waves. ');self.assertEqual(self.emitted,[])        # still being edited
+        field.editingFinished.emit();self.assertEqual(self.emitted,[('100_120','auto',None,False,0,3,'A person waves.')])
+        panel=self.panel({'100_120':{'method':'auto','seed':3,'text':'Waves.'}});field=self.description(panel)
+        field.setText(' Waves. ');field.editingFinished.emit();self.assertEqual(self.emitted,[])   # the same once normalised
+        field.setText('');field.editingFinished.emit();self.assertEqual(self.emitted,[('100_120','auto',None,False,0,3,'')])
+    def test_variation_keeps_the_description(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3,'text':'Waves.'}})
+        self.variation(panel).setValue(7);self.variation(panel).editingFinished.emit()
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,'Waves.')])
+    def test_fill_saves_the_description_first(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        def saved(*a):
+            choice={'method':'auto','seed':a[5],**({'text':a[6]} if a[6] else {})}
+            panel.show_gaps(*panel._shown[:1],{'100_120':choice},30,*panel._shown[2:])
+        panel.choice_changed.connect(saved)                                          # what the People panel does after saving
+        self.description(panel).setText('Waves.');self.variation(panel).setValue(7);panel.fill.click()
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,'Waves.'),'fill'])   # one save for both
+        self.emitted.clear();panel.fill.click();self.assertEqual(self.emitted,['fill'])
+    def test_fill_waits_when_the_description_was_not_saved(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        self.description(panel).setText('Waves.');panel.fill.click()
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,3,'Waves.')])
+    def test_description_issue(self):
+        from mocap.hidden_ranges import gaps
+        def panel(choice):
+            p=self.panel({});p.show_gaps(gaps(PEOPLE[0]['takes']),{'100_120':choice},30,None,PEOPLE,1,None,'Get the adapters.');return p
+        p=panel({'method':'auto','seed':3,'text':'Waves.'})
+        self.assertIn('Get the adapters.',[w.text() for w in p._widgets if isinstance(w,QLabel)])
+        self.assertFalse(p.setup.isHidden());self.assertFalse(p.fill.isEnabled())
+        p=panel({'method':'auto','seed':3})
+        self.assertNotIn('Get the adapters.',[w.text() for w in p._widgets if isinstance(w,QLabel)])
+        self.assertTrue(p.setup.isHidden());self.assertTrue(p.fill.isEnabled())
+    def test_a_removed_field_saves_nothing(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}});field=self.description(panel)
+        field.setText('Waves.');panel.show_gaps(*panel._shown[:1],{'100_120':{'method':'auto','seed':3}},30,*panel._shown[2:])
+        field.editingFinished.emit();self.assertEqual(self.emitted,[])
     def test_copy_rows_emit_a_trailing_zero(self):
         panel=self.panel({'100_120':dict(method='copy',person=2,mirror=False,offset=-30)})
         panel.findChild(QCheckBox).setChecked(True)
         offset=next(s for s in panel.findChildren(QSpinBox) if s.accessibleName().startswith('Offset'))
         offset.setValue(-20);offset.editingFinished.emit()
-        self.assertEqual(self.emitted,[('100_120','copy',2,True,-30,0),('100_120','copy',2,True,-20,0)])
+        self.assertEqual(self.emitted,[('100_120','copy',2,True,-30,0,''),('100_120','copy',2,True,-20,0,'')])
         self.emitted.clear();self.combo(panel).setCurrentIndex(1)
-        self.assertEqual(self.emitted,[('100_120','smooth',2,False,-30,0)])
+        self.assertEqual(self.emitted,[('100_120','smooth',2,False,-30,0,'')])
 
 
 @unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
@@ -197,6 +248,28 @@ class ChoiceGlueTest(unittest.TestCase):
         PeopleWorkspace.gap_choice_changed(self.host(self.J),'100_120','auto',None,False,0,7)
         saved=json.loads((self.root/'people.json').read_text(encoding='utf-8'))['people'][0]
         self.assertEqual(saved['gap_fill'],{'100_120':{'method':'auto','seed':7}})
+    def test_automatic_saves_its_description(self):
+        from mocap.people_ui import PeopleWorkspace
+        PeopleWorkspace.gap_choice_changed(self.host(self.J),'100_120','auto',None,False,0,7,' A person  waves. ')
+        saved=json.loads((self.root/'people.json').read_text(encoding='utf-8'))['people'][0]
+        self.assertEqual(saved['gap_fill'],{'100_120':{'method':'auto','seed':7,'text':'A person waves.'}})
+        PeopleWorkspace.gap_choice_changed(self.host(self.J),'100_120','auto',None,False,0,7,'')
+        saved=json.loads((self.root/'people.json').read_text(encoding='utf-8'))['people'][0]
+        self.assertEqual(saved['gap_fill'],{'100_120':{'method':'auto','seed':7}})
+    def test_panel_gets_the_text_issue(self):
+        from unittest import mock
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        from mocap.people_ui import PeopleWorkspace
+        def shown(text_issue):
+            host=self.host(self.J,hidden_ranges=HiddenRangesPanel(),model_choice=SimpleNamespace(currentData=lambda:'gvhmr'))
+            with mock.patch('mocap.kimodo_runtime.issue',lambda:None),mock.patch('mocap.kimodo_runtime.text_issue',text_issue):
+                PeopleWorkspace.refresh_hidden_ranges(host,host.current_person())
+            panel=host.hidden_ranges;self.addCleanup(panel.close)
+            return panel._shown[-1]
+        self.assertEqual(shown(lambda:'Get them.'),'Get them.')
+        self.assertIsNone(shown(lambda:None))
+        def broken():raise OSError('disk')
+        self.assertEqual(shown(broken),'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.')
     def test_panel_gets_the_automatic_issue(self):
         from unittest import mock
         from PySide6.QtCore import Qt
