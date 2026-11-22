@@ -792,7 +792,11 @@ blend: per joint, local rotations compose on the right; the boundary difference
 `D = donor⁻¹ · boundary` is faded out with smoothstep weights (`donor ·
 slerp(I, D, 1 − w)`), so a matching donor is reproduced exactly. The blend
 length at each end is `ceil(largest joint angle of D / 6°)` frames, clamped to
-5–30 and to half the range. Height: the donor's pelvis height above its own
+5–30 and to half the range. The fingers of a HandFlow kind are blended
+differently (`gap_fill.fade_rows`, same lengths and weights): each blended row
+lies on the arc between the captured boundary pose and the donor's row of that
+frame, because a one-frame outlier in a finger track would otherwise be carried
+into the following frames. Height: the donor's pelvis height above its own
 floor (y = 0) times `leg_hidden / leg_donor` (rest pelvis height above the
 lowest rest joint, from `SMPLX_NEUTRAL.npz`; 1.0 when unavailable), with the
 height difference at each end faded out over the same blend frames. Contact
