@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import types
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ from . import soma_convert as sc
 STAGE = 'take_join'
 VERSION, CONTEXT, MAX_FRAMES, MAX_SIDE, FPS, STEPS, SEEDS = 1, 5, 290, 45, 30., 100, 1000
 MODEL_KEY = 'kimodo-soma-rp-v1.2'
+SMOOTH, SMOOTH_MIN = 30, 5  # frames next to the range the smooth root is read from; fewest frames Kimodo's smoother handles
 SIDES = dict(orient=3, pose=63, pelvis=3)
 CONTACTS = [0, 1, 3, 4]  # Kimodo's 77-joint channels [L heel, L toe, L toe end, R heel, R toe, R toe end] -> [L heel, L toe, R heel, R toe]
 HIPS = sc.SOMA30.index('RightLeg'), sc.SOMA30.index('LeftLeg')
@@ -50,15 +52,18 @@ def _check(request):
 def plan(request, smooth=None):
     """What Kimodo is asked for: the known SOMA frames of a window c0 + n + c1 around the hidden range.
 
-    `smooth` maps a side's SOMA Hips path (F,3) to Kimodo's smooth root (Kimodo's `get_smooth_root_pos`); without it, or
-    for a side of fewer than 3 frames, the raw Hips path is used. Each side's floor is read under that side's given
+    `smooth` maps a side's SOMA Hips path (F,3) to Kimodo's smooth root (Kimodo's `get_smooth_root_pos`), given the 30
+    frames next to the range; without it, or for a side of fewer than 5 frames, the raw Hips path is used. Each side's floor is read under that side's given
     frames alone and joined by a straight line across the window, so a drifting capture height does not reach Kimodo.
     """
     r = _check(request);n = r['frames'];fit = sc.fit(r['rest'], r['sole']);sides = []
     for side in ('before', 'after'):
         G, J = sc.smplx_fk(r['rest'], r[side+'_orient'], r[side+'_pose'], r[side+'_pelvis']);floor = sc.floor_under(J, fit['toe'])
         local, hips = sc.to_soma(G, r[side+'_pelvis'], fit, floor);K, S = sc.soma_fk(local, hips)
-        root = hips if smooth is None or len(hips) < 3 else np.asarray(smooth(hips), np.float64)
+        # As measured: the smooth root of each side from at most SMOOTH frames next to the range; Kimodo's smoother
+        # needs at least 5 frames (fewer leave its coarse level without an acceleration term).
+        near = hips[-SMOOTH:] if side == 'before' else hips[:SMOOTH]
+        root = near if smooth is None or len(near) < SMOOTH_MIN else np.asarray(smooth(near), np.float64)
         sides.append(dict(J=J, K=K, S=S, root=root, floor=floor))
     b, a = sides;c0, c1 = min(CONTEXT, len(b['J'])), min(CONTEXT, len(a['J']));rows = c0+n+c1
     pick = lambda key: np.concatenate([b[key][len(b[key])-c0:], a[key][:c1]])
@@ -152,7 +157,7 @@ def main(argv, emit):
     try:
         try:
             with np.load(args.request, allow_pickle=False) as z:request = {k: z[k] for k in z.files}
-        except (OSError, ValueError) as error:raise ValueError(f'Could not read the automatic fill request. {error}') from error
+        except (OSError, ValueError, zipfile.BadZipFile) as error:raise ValueError(f'Could not read the automatic fill request. {error}') from error
         _save(_generate(request, _check(request)['seed'], emit), Path(args.response))
     except Exception as error:
         message = str(error) or type(error).__name__

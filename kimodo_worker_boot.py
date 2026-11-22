@@ -14,10 +14,10 @@ def run(arguments):
         from mocap.runtime_registry import activate
         activate(root, 'exmr')
         kimodo_runtime.activate(kimodo_runtime.location())
-    except (OSError, RuntimeError, ValueError) as error:
-        emit('failed', stage='take_join', message=str(error))
+        from mocap.kimodo_fill import main
+    except Exception as error:
+        emit('failed', stage='take_join', message=str(error) or type(error).__name__)
         return 1
-    from mocap.kimodo_fill import main
     return main(arguments, emit)
 
 

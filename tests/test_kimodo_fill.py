@@ -63,9 +63,24 @@ class PlanTest(unittest.TestCase):
     def test_smooth_root_from_each_side(self):
         seen = []
         def smooth(root):seen.append(len(root));return root + [.1, 0, .2]
-        p = kf.plan(walk(before=2), smooth); self.assertEqual(seen, [45])                   # a 2-frame side keeps its raw root
+        p = kf.plan(walk(before=2), smooth); self.assertEqual(seen, [30])          # 30 frames next to the range; a 2-frame side keeps its raw root
         np.testing.assert_allclose(p['smooth_root'][0], 0, atol=1e-12)
         np.testing.assert_allclose(p['smooth_root'][2:] - p['positions'][2:, 0][:, [0, 2]], np.tile([.1, .2], (5, 1)), atol=1e-12)
+
+    def test_smoother_sees_the_frames_next_to_the_range(self):
+        r = walk(); seen = []
+        def smooth(root):seen.append(root.copy());return root
+        p = kf.plan(r, smooth); full = kf.plan(r)
+        self.assertEqual([len(x) for x in seen], [30, 30])
+        np.testing.assert_allclose(seen[0][-5:], full['positions'][:5, 0] + full['origin'], atol=1e-12)    # before: its last 30 frames
+        np.testing.assert_allclose(seen[1][:5], full['positions'][5:, 0] + full['origin'], atol=1e-12)     # after: its first 30 frames
+
+    def test_short_sides_skip_kimodos_smoother(self):
+        def smooth(root):                         # Kimodo's smoother fails ('Factor is exactly singular') below 5 frames
+            if len(root) < 5:raise RuntimeError('Factor is exactly singular')
+            return root
+        for count in (1, 2, 3, 4, 5, 6):
+            p = kf.plan(walk(before=count, after=count), smooth); self.assertEqual(p['context'], (min(5, count),) * 2)
 
     def test_refusals(self):
         for change in (dict(frames=np.int64(291)), dict(fps=np.float64(25.)), dict(seed=np.int64(1000))):
@@ -149,6 +164,18 @@ class WorkerTest(unittest.TestCase):
         path = self.dir / 'none.npz'; p = self.run_worker(self.dir / 'missing.npz', path)
         self.assertEqual(p.returncode, 1); found = events(p.stdout)
         self.assertEqual([e['type'] for e in found], ['failed']); self.assertEqual(found[0]['stage'], 'take_join'); self.assertFalse(path.exists())
+
+    def test_four_frames_before(self):
+        request, path = self.dir / 'short.npz', self.dir / 'short_response.npz'; np.savez(request, **walk(before=4))
+        p = self.run_worker(request, path); self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-3000:])
+        with np.load(path, allow_pickle=False) as z:
+            np.testing.assert_array_equal(z['context'], [4, 5]); self.assertEqual(z['pelvis'].shape, (69, 3)); self.assertTrue(np.isfinite(z['pelvis']).all())
+
+    def test_unreadable_request(self):
+        request, path = self.dir / 'broken.npz', self.dir / 'broken_response.npz'; request.write_bytes(b'not a zip file')
+        p = self.run_worker(request, path); found = events(p.stdout)
+        self.assertEqual(p.returncode, 1); self.assertEqual([e['type'] for e in found], ['failed'])
+        self.assertTrue(found[0]['message'].startswith('Could not read the automatic fill request.'), found[0]['message']); self.assertFalse(path.exists())
 
 
 if __name__ == '__main__':
