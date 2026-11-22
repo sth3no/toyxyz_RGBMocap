@@ -283,13 +283,29 @@ class ControllerTest(HomeCase):
         self.assertEqual(self.t.step.key, 'b')
 
     def test_retry_sends_the_guide_one_step_back_with_its_note(self):
-        self.t.start(demo(steps=dict(b=dict(retry=lambda w, e: w.failure or None))))
-        self.t.next();self.t.tick()
+        self.t.start(demo(steps=dict(a=dict(done=lambda w, e: w.flag), b=dict(retry=lambda w, e: w.failure or None))))
+        self.w.flag = True;self.t.tick();self.w.flag = False  # the guide moved on by itself
         self.assertEqual(self.t.step.key, 'b')
         self.w.failure = 'The job stopped.';self.t.tick()
         self.assertEqual((self.t.step.key, self.t.card.status.text()), ('a', 'The job stopped.'))
         self.w.failure = '';self.t.next()
         self.assertEqual((self.t.step.key, self.t.card.status.text()), ('b', ''))
+
+    def test_a_failure_left_from_before_does_not_trap_a_step_the_user_moved_to(self):
+        self.w.failure = 'The job stopped.'
+        self.t.start(demo(steps=dict(b=dict(retry=lambda w, e: w.failure or None))))
+        self.press('Next');self.t.tick();self.t.tick()
+        self.assertEqual((self.t.step.key, self.t.card.status.text()), ('b', ''))
+        self.press('Next');self.press('Back');self.t.tick()
+        self.assertEqual(self.t.step.key, 'b')
+
+    def test_a_message_that_a_chapter_replaces_counts_as_closed(self):
+        calls = []
+        self.t.message('Welcome', 'Hello', [('Start', print)], closed=lambda: calls.append('closed'))
+        self.t.start(demo())
+        self.assertEqual(calls, ['closed']);self.assertEqual(self.t.card.title.text(), 'First')
+        self.press('×')
+        self.assertEqual(calls, ['closed'])
 
     def test_a_blocked_chapter_shows_its_reason_and_does_not_move(self):
         self.w.block = 'Choose another model.'

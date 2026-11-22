@@ -158,6 +158,13 @@ class FirstRunTest(WindowCase):
         tutorial.first_run(w, True);press(w, '×')
         self.assertIs(tutorial.load_state()['seen'], True);self.assertFalse(w.tutorial.card.isVisible())
 
+    def test_a_chapter_opened_from_the_menu_over_the_welcome_remembers_it(self):
+        w = self.window()
+        tutorial.first_run(w, True);w.tutorial_actions['basics'].trigger()
+        self.assertIs(tutorial.load_state()['seen'], True)
+        w.tutorial.stop();tutorial.first_run(w, True)
+        self.assertFalse(w.tutorial.card.isVisible())
+
     def test_first_run_stays_quiet_when_the_settings_are_unreadable(self):
         self.settings.parent.mkdir(parents=True);self.settings.write_text('{broken', encoding='utf-8')
         w = self.window()
@@ -220,6 +227,10 @@ class HintTest(WindowCase):
         press(w, 'Start')
         self.again(w)
         self.assertEqual(w.tutorial.chapter.key, 'basics')
+
+    def test_a_chapter_opened_from_the_menu_over_the_hint_keeps_it_quiet(self):
+        w = self.hinted();w.tutorial_actions['basics'].trigger();w.tutorial.stop()
+        self.assertFalse(self.again(w))
 
     def test_no_hint_once_the_chapter_was_finished(self):
         tutorial.mark_done('hidden_ranges')

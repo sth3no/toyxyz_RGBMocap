@@ -62,6 +62,11 @@ def video_open(window, events=None):return bool(window.video_readable and window
 def job_started(window):return bool(window.busy)
 
 
+def reconstructing(window, events):
+    """Reconstruct 3D clicked on its step, or a reconstruction that was started before the step came up."""
+    return 'run' in events or bool(window.busy and getattr(window, '_batch_has_motion', False))
+
+
 def people_found(window, events):return 'find' in events and not window.busy and window.people_list.count() > 0
 
 
@@ -99,7 +104,7 @@ BASICS = Chapter('basics', 'From video to export', (
     Step('run', 'Reconstruct 3D',
          'Click Reconstruct 3D to create 3D motion for the checked people in the trimmed range, with the selected model and '
          'settings. Completed steps are reused when they are still valid.',
-         lambda w: [w.run_button], done=lambda w, e: 'run' in e, waiting='Waiting for your click…'),
+         lambda w: [w.run_button], done=reconstructing, waiting='Waiting for your click…'),
     Step('wait', 'While it runs',
          'The bar and the status line show the progress. Console shows details and error messages. '
          'Cancel Job stops the queue; completed results are kept.',

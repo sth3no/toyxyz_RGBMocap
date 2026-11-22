@@ -6,13 +6,13 @@
 **Hidden ranges**, by highlighting controls of the main window and waiting for
 the user's step. The first start offers it.
 
-- Tests run offscreen with the GUI runtime: `tests/test_tutorial.py` (54:
+- Tests run offscreen with the GUI runtime: `tests/test_tutorial.py` (56:
   saved state, placement of the card, overlay, card, controller),
-  `tests/test_tutorial_steps.py` (37: route, wording and the rules that end,
+  `tests/test_tutorial_steps.py` (38: route, wording and the rules that end,
   skip or repeat a step, on a stand-in window with the real Hidden ranges panel
-  and timeline) and `tests/test_tutorial_window.py` (25: the real `MainWindow`:
+  and timeline) and `tests/test_tutorial_window.py` (27: the real `MainWindow`:
   menu, first start, the Hidden ranges offer, appearance change, closing). All
-  116 passed. The whole `tests` folder in one process: 638 tests passed, 66
+  121 passed. The whole `tests` folder in one process: 643 tests passed, 66
   skipped (52 need torch and the bundled ffmpeg, 13 need the Kimodo runtime or
   its files, 1 needs file symlinks), none failed.
 - The real `MainWindow` was built offscreen with the app's font and style, an
@@ -27,6 +27,12 @@ the user's step. The first start offers it.
   first: the card's text was cut when the card had shown something before, the
   close sign was clipped, and the card covered the timeline rows of the
   **Motion Correction** step.
+- A review of the branch found three more defects, each fixed with a test that
+  failed first: a failure or cancellation left from an earlier job sent **Skip
+  step** on **Reconstruct 3D** back to the same step; a chapter opened from the
+  menu while the welcome or the offer was shown did not remember that it had
+  been answered; and **Reconstruct 3D** clicked before its step came up was not
+  counted, so the step waited for a second click.
 - Not run: the tutorial on a real screen, the dim over the OpenGL viewport on a
   real GPU surface (offscreen it is composed in software), a chapter driven by
   a real video with **Find person**, **Reconstruct 3D** and **Fill hidden

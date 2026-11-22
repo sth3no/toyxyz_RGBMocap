@@ -509,8 +509,9 @@ Tutorial** starts it again at any time, one chapter at a time: **From video to
 export** follows the steps below, and **Hidden ranges** shows how gaps between
 two takes of a person are filled (see [Hidden ranges](#hidden-ranges)). The
 first chapter covers ExMR, FlowHMR and GVHMR. When a person's hidden range can
-be filled for the first time, the app offers the second chapter once; **Don't
-show again** turns that offer off.
+be filled, the app offers the second chapter: **Not now** hides the offer until
+the next start, **Don't show again** turns it off, and it stops by itself once
+the chapter has been finished.
 
 For ExMR, FlowHMR and GVHMR:
 

@@ -40,6 +40,7 @@ class Stand(QMainWindow):
         self.export_action = menu.addAction('Export...')
         self.timer = QTimer(self)
         self.video_readable = self.busy = self.failed = self.cancelled = self.models_missing = self._pear_active = False
+        self._batch_has_motion = False
         self.info = self.preview_data = None
         self.loaded = []
 
@@ -113,6 +114,15 @@ class BasicsTest(ChapterCase):
 
     def test_run_step_ends_when_a_reconstruction_started(self):
         self.assertFalse(self.step('run').done(self.w, {'find'}));self.assertTrue(self.step('run').done(self.w, {'run'}))
+
+    def test_run_step_ends_when_a_reconstruction_is_already_running(self):
+        step = self.step('run')
+        self.w.busy = True  # Find person, a download or the stages before the motion
+        self.assertFalse(step.done(self.w, set()))
+        self.w._batch_has_motion = True
+        self.assertTrue(step.done(self.w, set()))
+        self.w.busy = False  # left from the last job
+        self.assertFalse(step.done(self.w, set()))
 
     def test_events_count_a_click_only_when_a_job_started(self):
         events = steps.BASICS.events(self.w)

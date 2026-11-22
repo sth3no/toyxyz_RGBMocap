@@ -155,6 +155,7 @@ class Tutorial(QObject):
     def __init__(self, window):
         super().__init__(window)
         self.window, self.chapter, self.index, self.held, self.note, self.events = window, None, 0, False, '', set()
+        self.auto = False  # the current step was reached because the one before it was done, not by Next or Back
         self.overlay, self.card = TutorialOverlay(window), TutorialCard(window)
         self.overlay.hide();self.card.hide()
         self.card.closed.connect(self._closed)
@@ -204,7 +205,7 @@ class Tutorial(QObject):
 
     def start(self, chapter):
         self.stop()
-        self._message = None
+        if self._message:self._message()  # a welcome or hint replaced by a chapter was answered: its closing is remembered
         self.chapter, self.index = chapter, -1
         for name, (signal, condition) in (self._ask(chapter.events) or {}).items():
             slot = lambda *_, name=name, condition=condition: condition(self.window) and self.events.add(name)
@@ -226,19 +227,19 @@ class Tutorial(QObject):
         if completed:mark_done(key)
         self.finished.emit(key, completed)
 
-    def next(self):
+    def next(self, auto=False):
         if not self.chapter:return
         index = self._beside(1)
         if index is None:self.stop(completed=True)
-        else:self._enter(index)
+        else:self._enter(index, auto=auto)
 
     def back(self):
         if not self.chapter:return
         index = self._beside(-1)
         if index is not None:self._enter(index, held=True)
 
-    def _enter(self, index, held=False, note=''):
-        self.index, self.held, self.note = index, held, note
+    def _enter(self, index, held=False, note='', auto=False):
+        self.index, self.held, self.note, self.auto = index, held, note, auto
         self.events.clear()
         scroll = getattr(self.window, 'settings_scroll', None)
         for target in self._ask(self.step.targets) or []:
@@ -261,13 +262,14 @@ class Tutorial(QObject):
             self.overlay.hide()
             return self._show(self.chapter.title, self.chapter.title, blocked, '', [], None)
         step = self.step
-        retry = self._ask(step.retry, self.events)
+        # Only for a step the guide came to by itself: a failure left from an earlier job must not trap Next or Back.
+        retry = self._ask(step.retry, self.events) if self.auto else None
         if retry:
             index = self._beside(-1)
             if index is not None:return self._enter(index, note=retry)
-        if self._skipped(self.index):return self.next()
+        if self._skipped(self.index):return self.next(auto=self.auto)
         done = bool(self._ask(step.done, self.events, default=False))
-        if done and not self.held:return self.next()
+        if done and not self.held:return self.next(auto=True)
         self._render(step, done)
 
     def _rects(self, step):
