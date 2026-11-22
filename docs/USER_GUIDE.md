@@ -521,7 +521,13 @@ For ExMR, FlowHMR and GVHMR:
 3. Use **Model Manager** to prepare the selected model's files.
 4. For ExMR/FlowHMR/GVHMR with several people, use **Find person** and check
    who to reconstruct. MAMMA/PromptHMR track people during reconstruction.
-5. Click **Reconstruct 3D**. Review the video, mesh and **Bone Overlay** together.
+5. Click **Reconstruct 3D** at the bottom of the right panel; it stays in view
+   while the settings above it scroll. Review the video, mesh and **Bone
+   Overlay** together. A checked person is drawn once they have a result for
+   the selected model and options. The 3D view names who is missing and the
+   button that creates the result, for example `Person 2, frames 121–200: no
+   result for the selected options. Click Reconstruct 3D.` or `Person 3: not
+   reconstructed yet. Click Reconstruct 3D.`
 6. Adjust correction settings or contact timings, then click **Apply Correction**.
 7. **File → Export...** saves the displayed, applied animation.
 

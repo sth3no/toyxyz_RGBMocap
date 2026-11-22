@@ -98,6 +98,7 @@ class MotionView(ViewportBase):
         self.people_mode=False;self.scene_message='Loading shared scene...';self.scene_fit_root=None
         self.single_actor_visible=True
         self.scene_visible=set();self.scene_colors={};self.scene_selected=None
+        self.scene_waiting=[]  # names of checked people that were never reconstructed
         self.scene_time=0.;self.scene_renderers={};self.scene_presented={}
         self.character_workspace=None;self.character_renderers={};self.character_error=None
         self.character_name_points=[]
@@ -796,11 +797,11 @@ class MotionView(ViewportBase):
         elif not actors:
             self._empty_people_notice='No checked person has motion at this time.\nCheck a person or reconstruct the selected result.'
         painter.setPen(QColor(theme_color('#bebebe')))
-        painter.drawText(18, ui_px(53),f'{len(actors)} people visible | Shared camera / world')
-        warnings=self.people_scene.warnings
-        if self.mesh_error or warnings:
+        from .scene_notes import text as scene_text,visible_line
+        painter.drawText(18, ui_px(53),visible_line(len(actors)))
+        text=self.mesh_error or scene_text(self.people_scene.warnings,self.scene_waiting)
+        if text:
             painter.setPen(QColor(theme_color('#e0b06c')))
-            text=self.mesh_error or '; '.join(warnings[:2])
             painter.drawText(self.rect().adjusted(18,80,-95,-80),Qt.AlignTop|Qt.TextWordWrap,text)
 
     def release_live_renderer(self):

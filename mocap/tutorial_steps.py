@@ -80,7 +80,7 @@ def job_stopped(window, events):
 
 PEOPLE = Step('people', 'Find the people',
     'Click Find person, then check the People rows you want to reconstruct. Without it, one person is tracked automatically '
-    'and the identity may switch when people overlap.',
+    'and the identity may switch when people overlap. A checked person appears in the 3D view once reconstructed.',
     lambda w: [w.find_person_button, w.people_list], done=people_found,
     skip=lambda w: not w.find_person_button.isVisible(), waiting='Waiting for Find person…')
 
@@ -102,8 +102,8 @@ BASICS = Chapter('basics', 'From video to export', (
          lambda w: [track_rows(w, 0, 1)]),
     PEOPLE,
     Step('run', 'Reconstruct 3D',
-         'Click Reconstruct 3D to create 3D motion for the checked people in the trimmed range, with the selected model and '
-         'settings. Completed steps are reused when they are still valid.',
+         'Click Reconstruct 3D, at the bottom of the right panel, to create 3D motion for the checked people in the trimmed '
+         'range, with the selected model and settings. Completed steps are reused when they are still valid.',
          lambda w: [w.run_button], done=reconstructing, waiting='Waiting for your click…'),
     Step('wait', 'While it runs',
          'The bar and the status line show the progress. Console shows details and error messages. '
@@ -113,7 +113,8 @@ BASICS = Chapter('basics', 'From video to export', (
          waiting='Waiting for the reconstruction to finish…'),
     Step('review', 'Review the result',
          'Press Space or the play button and compare the video, the mesh and the Bone Overlay, the skeleton used for export. '
-         'In the 3D Viewport, drag to orbit, middle or right drag to pan, wheel to zoom.',
+         'A checked person is drawn only when they have a result for the selected model and options; the 3D view names who '
+         'is missing, and Reconstruct 3D creates what is missing.',
          lambda w: [w.video_view, w.motion_view, w.play_button, w.bone_overlay], done=lambda w, e: w.timer.isActive()),
     Step('correct', 'Motion Correction',
          'Contact correction reduces sliding when feet rest on the floor. Change the settings here or edit the L foot and '

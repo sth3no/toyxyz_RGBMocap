@@ -1,5 +1,41 @@
 # Source package validation
 
+## Reconstruct 3D in view and people the 3D view cannot draw (2026-11-23)
+
+Seen in the real window on a 1080p screen: with four people checked only one
+was drawn, the view said `Person 2: handflow_initial result unavailable` twice,
+said nothing about two people that were never reconstructed, and **Reconstruct
+3D** was below the scrolled settings of the right panel, out of sight.
+
+- **Analyze 2D**, **Reconstruct 3D**, **Prepare Preview** and **Cancel Job**
+  now stand below the scrolling settings instead of inside them.
+- The 3D view names the take and the button: `Person 2, frames 121–200: no
+  result for the selected options. Click Reconstruct 3D.`, or `... no corrected
+  result for the current settings. Click Apply Correction.` when only the
+  correction is missing. Each note is shown once, on its own line, the first
+  three and a count of the rest. Checked people without any take get `Person 3,
+  Person 4: not reconstructed yet. Click Reconstruct 3D.` It also says `1 person
+  visible` instead of `1 people visible`.
+- The tutorial says where **Reconstruct 3D** is and why a checked person may be
+  missing.
+- Tests, offscreen with the GUI runtime: `tests/test_scene_notes.py` (7) for
+  the texts; in `tests/test_tutorial_window.py` the real `MainWindow` at
+  1100×700, where the settings do not fit, keeps **Reconstruct 3D** and **Cancel
+  Job** fully in view at both ends of the scroll, and passes the names of
+  checked people without a take to the viewport. The tutorial modules now hold
+  56, 39 and 30 tests. The whole `tests` folder in one process: 654
+  tests passed, 66 skipped (the same three reasons as below), none failed.
+- Real data: the shared scene of a copy of the project `tennis_two_gaps` (GVHMR,
+  four people found, two of them never reconstructed) was loaded with this
+  branch's code. For the result without fingers it drew Person 1 and Person 2
+  and said `Person 2, frames 121–200: no result for the selected options. Click
+  Reconstruct 3D.` and `Person 3, Person 4: not reconstructed yet. Click
+  Reconstruct 3D.`; for the corrected result it named Person 2's three takes
+  with **Apply Correction**.
+- Not run: the new layout and texts on a real screen. The copy was loaded with
+  the code of this branch, which does not yet draw joined takes with fingers,
+  so the exact case of the screen (HandFlow checked) was not reproduced.
+
 ## In-window tutorial (2026-11-22)
 
 **Help → Tutorial** leads through two chapters, **From video to export** and

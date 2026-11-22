@@ -263,6 +263,8 @@ class PeopleWorkspace:
     def sync_scene_visibility(self):
         self.motion_view.single_actor_visible=self._single_actor is None or self._single_actor.get('checked',True)
         self.motion_view.scene_visible={person['id'] for person in self.checked_people()}
+        from .scene_notes import waiting_people
+        self.motion_view.scene_waiting=waiting_people(self.people_state['people'],self.motion_view.scene_visible) if self.people_state else []
         self.motion_view.scene_colors={p['id']:p['color'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.scene_names={p['id']:p['name'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.actor_name=self._single_actor['name'] if self._single_actor else 'Person 1'

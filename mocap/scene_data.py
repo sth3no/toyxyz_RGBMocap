@@ -214,7 +214,9 @@ class SceneDataLoader(QThread):
                 manifest=json.loads((project/'project.json').read_text(encoding='utf-8'))
                 raw_kind=kind
                 if not result_is_current(project,raw_kind,ignore_contacts=True) or not artifacts_current(project,raw_kind):
-                    if project not in replaced:scene.warnings.append(f'Person {ident}: {raw_kind} result unavailable')
+                    if project not in replaced:
+                        from .scene_notes import missing_result,take_frames
+                        scene.warnings.append(missing_result(ident,raw_kind,result_is_current(project,base_result(raw_kind),ignore_contacts=True),take_frames(project)))
                     continue
                 camera=read_camera(project)
                 if not np.allclose(camera['K'],reference['K'],atol=1e-4):

@@ -86,6 +86,11 @@ class BasicsTest(ChapterCase):
                 targets = step.targets(self.w)
                 self.assertTrue(targets);self.assertTrue(all(isinstance(t, (QWidget, QRect)) for t in targets))
 
+    def test_the_route_says_where_reconstruct_3d_is_and_why_a_checked_person_may_be_missing(self):
+        self.assertIn('at the bottom of the right panel', self.text('run'))
+        self.assertIn('appears in the 3D view once reconstructed', self.text('people'))
+        self.assertIn('Reconstruct 3D creates what is missing', self.text('review'))
+
     def test_models_step_is_skipped_when_nothing_is_missing(self):
         step = self.step('models')
         self.assertTrue(step.skip(self.w));self.assertTrue(step.done(self.w, set()))

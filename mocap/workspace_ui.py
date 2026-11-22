@@ -617,7 +617,8 @@ def build_workspace(w):
     w.cancel_button.setToolTip('Stop the current processing queue. Completed results are kept.')
     w.cancel_button.setEnabled(False)
     w.model_actions.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Maximum)
-    content_layout.addWidget(w.model_actions)
+    # Below the scrolling settings, not inside them: Reconstruct 3D stays in view on a window too short for every setting.
+    side_layout.addWidget(w.model_actions)
     content_layout.addStretch()
     w.settings_scroll=scroll
     w.model_choice.currentIndexChanged.connect(w.select_model)

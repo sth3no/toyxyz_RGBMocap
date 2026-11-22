@@ -52,6 +52,34 @@ def press(window, label):
     next(b for b in window.tutorial.card.findChildren(QPushButton) if b.text() == label).click()
 
 
+class ActionsTest(WindowCase):
+    def test_reconstruct_3d_stays_in_view_however_the_settings_are_scrolled(self):
+        w = self.window();w.resize(1100, 700);APP.processEvents()
+        bar = w.settings_scroll.verticalScrollBar()
+        self.assertGreater(bar.maximum(), 0)  # the settings do not fit: this is the case that hid the button
+        seen = []
+        for value in (0, bar.maximum()):
+            bar.setValue(value);APP.processEvents()
+            for button in (w.run_button, w.cancel_button):
+                self.assertEqual(button.visibleRegion().boundingRect().size(), button.size(), (value, button.text()))
+            seen.append(w.run_button.mapTo(w, QPoint(0, 0)))
+        self.assertEqual(seen[0], seen[1])
+        self.assertFalse(w.settings_scroll.isAncestorOf(w.run_button))
+        self.assertGreater(seen[0].y(), w.settings_scroll.mapTo(w, QPoint(0, 0)).y() + w.settings_scroll.height() - 1)
+
+    def test_checked_people_without_a_take_are_named_to_the_viewport(self):
+        w = self.window()
+        w.people_state = dict(people=[dict(id=1, name='Ann', color='#ffffff', checked=True, takes=[dict(project='p')]),
+                                      dict(id=3, name='Person 3', color='#ffffff', checked=True),
+                                      dict(id=4, name='Bo', color='#ffffff', checked=False)])
+        self.addCleanup(setattr, w, 'people_state', None)
+        w.sync_scene_visibility()
+        self.assertEqual(w.motion_view.scene_waiting, ['Person 3'])
+
+    def test_a_new_viewport_waits_for_nobody(self):
+        self.assertEqual(self.window().motion_view.scene_waiting, [])
+
+
 class MenuTest(WindowCase):
     def test_building_the_window_starts_no_tutorial(self):
         w = self.window()
