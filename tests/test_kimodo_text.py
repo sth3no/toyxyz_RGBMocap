@@ -42,6 +42,44 @@ class NormaliseTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr); self.assertEqual(p.stdout.strip(), '[]')
 
 
+def safetensors_file(path, arrays, metadata=True):
+    """A safetensors file written by hand: header length, JSON header, then the data."""
+    header, data = {'__metadata__': {'format': 'pt'}} if metadata else {}, b''
+    for name, (dtype, array) in arrays.items():
+        raw = np.ascontiguousarray(array).tobytes(); header[name] = dict(dtype=dtype, shape=list(array.shape), data_offsets=[len(data), len(data) + len(raw)]); data += raw
+    text = json.dumps(header).encode(); path.write_bytes(len(text).to_bytes(8, 'little') + text + data); return path
+
+
+class HeaderTest(unittest.TestCase):
+    def setUp(self):
+        self.folder = tempfile.TemporaryDirectory(); self.dir = Path(self.folder.name)
+        self.a = np.arange(12, dtype=np.float32).reshape(3, 4); self.b = np.array([7, 8], np.uint16)
+        self.one = safetensors_file(self.dir / 'one.safetensors', {'x.weight': ('F32', self.a), 'y.weight': ('BF16', self.b)})
+
+    def tearDown(self):self.folder.cleanup()
+
+    def test_name_map_and_read_back(self):
+        two = safetensors_file(self.dir / 'two.safetensors', {'z': ('F32', self.a[:1])}, metadata=False)
+        where = kt.tensors([self.one, two]); self.assertEqual(set(where), {'x.weight', 'y.weight', 'z'})
+        self.assertEqual(where['x.weight'][:3], (self.one, 'F32', (3, 4))); self.assertEqual(where['z'][0], two)
+        with open(self.one, 'rb') as handle:
+            np.testing.assert_array_equal(np.frombuffer(kt.read(handle, where['x.weight'], 'F32'), np.float32).reshape(3, 4), self.a)
+            np.testing.assert_array_equal(np.frombuffer(kt.read(handle, where['y.weight'], 'BF16'), np.uint16), self.b)
+            np.testing.assert_array_equal(np.frombuffer(kt.read(handle, where['x.weight'], 'F32', (1, 2)), np.float32).reshape(2, 4), self.a[1:3])
+
+    def test_refusals(self):
+        where = kt.tensors([self.one])
+        with open(self.one, 'rb') as handle:
+            for args in ((where['x.weight'], 'BF16'), (where['x.weight'], 'F32', (2, 2)), (where['x.weight'][:4] + (40,), 'F32')):
+                with self.assertRaises(RuntimeError) as caught:kt.read(handle, *args)
+                self.assertEqual(str(caught.exception), kt.WRONG_FILES)
+        with self.assertRaises(RuntimeError) as caught:
+            kt.tensors([self.one, safetensors_file(self.dir / 'dup.safetensors', {'y.weight': ('BF16', self.b)})])
+        self.assertEqual(str(caught.exception), kt.WRONG_FILES)
+        broken = self.dir / 'broken.safetensors'; broken.write_bytes((100).to_bytes(8, 'little') + b'{"x":')
+        with self.assertRaises(RuntimeError):kt.tensors([broken])
+
+
 def events(text):
     return [json.loads(line[len('@@MOCAP@@'):]) for line in text.splitlines() if line.startswith('@@MOCAP@@')]
 
@@ -57,8 +95,8 @@ class WorkerTest(unittest.TestCase):
     def tearDownClass(cls):cls.folder.cleanup()
 
     @classmethod
-    def encode(cls, text, name):
-        prompt, out = cls.dir / f'{name}.txt', cls.dir / f'{name}.npy'; prompt.write_text(text, encoding='utf-8')
+    def encode(cls, text, name, encoding='utf-8'):
+        prompt, out = cls.dir / f'{name}.txt', cls.dir / f'{name}.npy'; prompt.write_text(text, encoding=encoding)
         return cls.run_worker(prompt, out), out
 
     @classmethod
@@ -90,7 +128,8 @@ class WorkerTest(unittest.TestCase):
         self.assertGreater(cosine, 0.9999)
 
     def test_non_ascii_and_quotes(self):
-        p, out = self.encode('Osoba "skáče" —\na person\tjumps, says “hi”.', 'czech'); vector = self.check_success(p, out)[0]
+        p, out = self.encode('Osoba "skáče" —\na person\tjumps, says “hi”.', 'czech', 'utf-8-sig')   # with a byte order mark, as Notepad may save
+        vector = self.check_success(p, out)[0]
         self.assertTrue(100 < np.linalg.norm(vector) < 160, np.linalg.norm(vector))
 
     def test_missing_prompt_file(self):
