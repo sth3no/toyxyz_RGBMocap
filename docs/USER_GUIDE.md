@@ -1065,6 +1065,20 @@ reconstructed from a partly covered view, and the two takes placed the person
 joined take stays as it was; filling again with the same takes refuses at once,
 because the generated range is kept.
 
+**Fingers.** Hidden ranges also work when the selected GVHMR result has fingers
+(**HandFlow** on), with **FootMR** on or off. In a filled range **Smooth join**
+turns the fingers smoothly from the last captured finger pose before the range
+to the first one after it. **Copy from person** uses the other person's
+fingers, exchanged left to right with **Mirror**; the body and wrists of the
+joined result are the same with or without fingers. That person must have been
+reconstructed with **HandFlow** too: otherwise the row shows `<name> has no
+finger motion for this result. Reconstruct that person with HandFlow.` and
+**Fill hidden ranges** is disabled. **Automatic (Experimental)** generates no
+fingers; they turn smoothly between the two sides. Both neighbouring takes must
+have the finger result, otherwise `Reconstruct and prepare both neighbouring
+takes first.` applies. A joined take with fingers is a normal take for **Apply
+Correction** and export.
+
 The result is one new joined take that covers the takes and the chosen gaps. The
 scene, **Apply Correction**, export and retargeting use it instead of the source
 takes. The source takes are kept unchanged. The take selector shows the joined
@@ -1096,8 +1110,11 @@ joined take.
 Limits of this version:
 
 - GVHMR, and ExMR with **Static Camera**; a moving camera is not supported.
-- Only `initial` and `footmr_initial` results and their corrected variants.
-  HTD-refined and HandFlow results are not supported.
+- Only results without **HTD Refine** and their corrected variants (**HandFlow**
+  and **FootMR** on or off). With **HTD Refine** on, the panel shows `Hidden
+  ranges do not support HTD Refine results in this version.` and the fill is
+  refused with `Hidden ranges do not support HTD Refine results in this
+  version; switch HTD Refine off.`
 - FlowHMR, PromptHMR, MAMMA and GEM-X projects are not supported. The panel
   shows the reason when it is unavailable.
 - Manual contact-lock edits on the source takes are not carried into the joined
