@@ -37,6 +37,13 @@ def absorbed(person):
         return []
 
 
+def _joined_id(record):
+    try:
+        return record['person']['id']
+    except (TypeError, KeyError):
+        return None
+
+
 def _observation(person):
     return person.get('observation_id', person['id'])
 
@@ -51,8 +58,13 @@ def _ranges(frames):
     return out
 
 
+def _connect(path):
+    """A missing database is an error here: sqlite would create an empty one."""
+    return sqlite3.connect(f'{Path(path).as_uri()}?mode=rw', uri=True)
+
+
 def _frames(path, ident):
-    with closing(sqlite3.connect(path)) as db:
+    with closing(_connect(path)) as db:
         return {r[0] for r in db.execute('SELECT frame FROM observations WHERE person=?', (ident,))}
 
 
@@ -113,18 +125,20 @@ def separate(root, target_id, source_id):
     recover(root)
     state = load_people(root) or dict(people=[])
     a = next((p for p in state['people'] if p['id'] == target_id), None)
-    record = next((r for r in (a or {}).get('absorbed') or [] if r['person']['id'] == source_id), None)
-    if record is None or any(p['id'] == source_id for p in state['people']):
+    ids = [_joined_id(r) for r in (a or {}).get('absorbed') or []]
+    if source_id not in ids or any(p['id'] == source_id for p in state['people']):
         raise Refused('Choose a person that was joined into this one.')
+    _database(root, state)
     state = copy.deepcopy(state)
     a = next(p for p in state['people'] if p['id'] == target_id)
-    record = next(r for r in a['absorbed'] if r['person']['id'] == source_id)
+    record = a['absorbed'][ids.index(source_id)]
     later = a['absorbed'][a['absorbed'].index(record) + 1:]
     for r in later:  # they were taken out of a list without this person, so once it is back their place moves down
-        r['index'] += r['index'] >= record['index']
-    if later:  # the earliest record left must keep A's values from before the first merge
+        if isinstance(r, dict) and type(r.get('index')) is int:
+            r['index'] += r['index'] >= record['index']
+    if later and isinstance(later[0], dict):  # the earliest record left must keep A's values from before the first merge
         later[0]['before'] = record['before']
-    a['absorbed'] = [r for r in a['absorbed'] if r['person']['id'] != source_id]
+    a['absorbed'] = [r for r in a['absorbed'] if r is not record]
     gone = set(record['takes'])
     a['takes'] = [t for t in a.get('takes', []) if t['project'] not in gone]
     if a['absorbed']:  # other joins remain: measure what A has now
@@ -153,7 +167,7 @@ def _run(root, state, move, frames, person_ids, person):
 
 def _relabel(root, pending):
     move = pending['move']
-    with closing(sqlite3.connect(safe_child(root, pending['state']['observations']))) as db, db:
+    with closing(_connect(_database(root, pending['state']))) as db, db:
         for first, end in move['frames']:
             db.execute('UPDATE observations SET person=? WHERE person=? AND frame>=? AND frame<?', (move['to'], move['from'], first, end))
 
@@ -180,7 +194,7 @@ def _write_tracking(root, pending):
         K, count = old['K'].copy(), len(old['boxes'])
     boxes = np.full((count, 4), np.nan, np.float32)
     observed = np.zeros(count, bool)
-    with closing(sqlite3.connect(safe_child(root, pending['state']['observations']))) as db:
+    with closing(_connect(_database(root, pending['state']))) as db:
         for frame, *box in db.execute('SELECT frame,x1,y1,x2,y2 FROM observations WHERE person=? ORDER BY frame', (pending['tracking']['observation'],)):
             if 0 <= frame < count:
                 boxes[frame] = box
@@ -208,9 +222,15 @@ def recover(root):
         pending = json.loads(path.read_text(encoding='utf-8'))
         if pending['version'] != 1:
             raise ValueError
-        pending['state']['observations'], pending['move']['frames'], pending['person_ids'], pending['tracking']['preview']
+        move, tracking = pending['move'], pending['tracking']
+        if not (isinstance(pending['state']['observations'], str) and isinstance(pending['state']['people'], list) and isinstance(pending['person_ids'], dict)
+                and all(type(move[k]) is int for k in ('from', 'to')) and type(tracking['observation']) is int and isinstance(tracking['preview'], str)
+                and all(isinstance(f, list) and len(f) == 2 and all(type(x) is int for x in f) for f in move['frames'])
+                and all(isinstance(k, str) for k in pending['person_ids'])):
+            raise ValueError
     except (OSError, ValueError, KeyError, TypeError):
         raise Refused(UNREADABLE) from None
+    _database(root, pending['state'])  # before any step, so a missing file leaves everything as it was
     for step in (_relabel, _write_person_ids, _write_tracking, _publish):
         step(root, pending)
     path.unlink()

@@ -139,6 +139,28 @@ class PersonMergeTest(unittest.TestCase):
         self.assertEqual(str(c.exception),'The person detection data of this scene is missing. Run Find person again.')
         state=ps.load_people(self.root);del state['observations'];ps.save_people(self.root,state)
         with self.assertRaises(m.Refused):m.continue_as(self.root,3,1,'gvhmr',30)
+    def test_separate_without_database_is_refused(self):
+        root=self.root;m.continue_as(root,3,1,'gvhmr',30);(root/DB).unlink();before=(root/'people.json').read_bytes()
+        with self.assertRaises(m.Refused) as c:m.separate(root,1,3)
+        self.assertEqual(str(c.exception),'The person detection data of this scene is missing. Run Find person again.')
+        self.assertFalse((root/DB).exists());self.assertEqual((root/'people.json').read_bytes(),before);self.assertFalse((root/m.PENDING).exists())
+    def test_recover_without_database_is_refused_and_creates_nothing(self):
+        root=self.root;m.continue_as(root,3,1,'gvhmr',30)
+        with mock.patch.object(m,'_relabel',side_effect=OSError('stopped')),self.assertRaises(OSError):m.separate(root,1,3)
+        (root/DB).unlink();pending=(root/m.PENDING).read_bytes();people=(root/'people.json').read_bytes()
+        for call in(lambda:m.recover(root),lambda:m.continue_as(root,3,1,'gvhmr',30)):
+            with self.assertRaises(m.Refused) as c:call()
+            self.assertEqual(str(c.exception),'The person detection data of this scene is missing. Run Find person again.')
+        self.assertFalse((root/DB).exists());self.assertEqual((root/m.PENDING).read_bytes(),pending);self.assertEqual((root/'people.json').read_bytes(),people)
+    def test_malformed_records_and_pending_shapes_are_refused(self):
+        root=self.root;m.continue_as(root,3,1,'gvhmr',30)
+        state=ps.load_people(root);state['people'][0]['absorbed'].insert(0,'bad');state['people'][0]['absorbed'].insert(0,dict(person=5));ps.save_people(root,state)
+        with self.assertRaises(m.Refused):m.separate(root,1,9)
+        self.assertEqual(m.separate(root,1,3)['people'][2]['id'],3)
+        pending=dict(version=1,state=dict(observations=DB,people=[]),move={'from':1,'to':7,'frames':[[120,136]]},person_ids={},tracking=dict(preview=PREVIEW(1)))
+        (root/m.PENDING).write_text(json.dumps(pending),encoding='utf-8')
+        with self.assertRaises(m.Refused) as c:m.recover(root)
+        self.assertEqual(str(c.exception),'A previous Continue as did not finish and cannot be read. Run Find person again.')
     def test_interrupted_operation_is_finished(self):
         with tempfile.TemporaryDirectory() as tmp:
             ref=build(tmp);m.continue_as(ref,3,1,'gvhmr',30);want=snapshot(ref)
