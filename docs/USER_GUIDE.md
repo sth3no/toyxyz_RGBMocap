@@ -918,7 +918,7 @@ an estimate and can leave residual sliding or penetration.
 | **People checkboxes / selected row** | Checked rows control visibility and ExMR/FlowHMR/GVHMR reconstruction targets. MAMMA/PromptHMR reconstruct their detected/requested people together. The selected row controls timeline and contact editing. |
 | **Character checkboxes / selected row** | Show or hide imported characters independently of source people. Select a character to export it; right-click it for Retarget, Export Character or Remove Character. |
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
-| **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. |
+| **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. Right-click also offers **Continue as** and **Separate again** when the tracker found one human as two people; see [One person found as two](#one-person-found-as-two). |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
 | **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation) or **Copy from person** (another person's motion). **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
@@ -1008,6 +1008,62 @@ Limits of this version:
   shows the reason when it is unavailable.
 - Manual contact-lock edits on the source takes are not carried into the joined
   take; the panel says so.
+
+### One person found as two
+
+After an occlusion the tracker sometimes finds the same human again as a second
+person. The scene then lists them twice, each with only part of the clip.
+
+To join them, right-click the person that should disappear, choose **Continue
+as** and choose the person they really are. The first person leaves the list.
+Their takes and frames now belong to the chosen person, and the gap between the
+takes appears in [Hidden ranges](#hidden-ranges). No motion is changed and no
+file is moved or deleted. The window shows `<name> now continues as <name>`.
+
+What to do next:
+
+- Click **Reconstruct 3D** for the joined person. It now also covers the joined
+  frames. The takes of the first person and the new frames inside the same time
+  range are not merged into one motion: they stay separate takes of one person
+  until you reconstruct that person again.
+- Takes of the scene may ask for **Apply Correction** again. This applies to
+  every person of the scene, because the floor of the scene is estimated per
+  person.
+- Run **Track Face** again for the joined person.
+- A filled take of that person can go out of date when the new takes split its
+  hidden range. The hidden ranges are then listed anew and can be filled again.
+- Hidden-range choices and filled takes that the first person had on their own
+  are set aside. They come back with **Separate again**.
+
+To undo it, right-click the person that now holds the other one, choose
+**Separate again** and choose the person to bring back. They return to the list
+with their takes and frames. Takes you reconstructed in between stay with the
+person they were made for.
+
+Continue as is refused, and nothing changes, in these cases:
+
+- The two people are both visible in more than half a second of the same
+  frames: `<name> and <name> are both visible in <n> frames, so they cannot be
+  the same person.`
+- The model is not GVHMR or ExMR: `Continue as is available for GVHMR and ExMR
+  in this version.`
+- The chosen person is not in this scene: `Choose another person of this
+  scene.`
+- The person detection data is missing: `The person detection data of this
+  scene is missing. Run Find person again.`
+- An earlier Continue as or Separate again did not finish and its record cannot
+  be read: `A previous Continue as did not finish and cannot be read. Run Find
+  person again.` If the record can be read, it is finished automatically when
+  you open the scene or try again.
+
+**Separate again** is refused with `Choose a person that was joined into this
+one.` when the chosen person was not joined into this one.
+
+Limits of this version:
+
+- GVHMR and ExMR only.
+- Running **Find person** again from scratch discards the joins, together with
+  the people list.
 
 ## Stream bones to Blender
 

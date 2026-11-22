@@ -778,6 +778,22 @@ joined-world rows seen through a camera pairing interpolated between the two
 seams. Source and donor takes are never modified. For the user-facing behavior
 and limits see [the user guide](USER_GUIDE.md#hidden-ranges).
 
+Continue as and Separate again (`mocap/person_merge.py`, Qt-free; handlers
+`continue_person_as` and `separate_person` and the right-click menu in
+`mocap/people_ui.py`): person B joins person A of the same scene. A gets B's
+takes and the frames it lacks, and B's whole record is kept under the `absorbed`
+key of A in `people.json` so that Separate again restores it. The change is
+first written whole to `people_merge_pending.json` and then run by `recover()`;
+every step is repeatable, and `recover()` also runs when a scene opens, so a
+crash leaves a file that is finished, never half applied. Rows of
+`observations.sqlite` are re-labelled (`person` only) and nothing else in it
+changes; no row is inserted or deleted. Besides `people.json` and the pending
+file the only other writes are `person_id` in the moved takes' `project.json` and
+the target's preview `tracking.npz` (temporary name, then `os.replace`). Do not
+edit `mocap/person_tracking.py` for this: it is part of the Find person cache
+identity. Only GVHMR and ExMR are accepted. For the user-facing behavior see
+[the user guide](USER_GUIDE.md#one-person-found-as-two).
+
 ## Character retargeting and export
 
 - **File > Import Character...** accepts Mixamo-style FBX, VRM and PMX, and adds the character in rest pose below people. Up to eight characters per project are supported.

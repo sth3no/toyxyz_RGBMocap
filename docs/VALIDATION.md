@@ -1,5 +1,15 @@
 # Source package validation
 
+## Continue as and Separate again (2026-11-22)
+
+- Same machine. Unit tests only, on temporary scene folders made by the tests.
+- `tests/test_person_merge.py` (the join, undo, recovery and refusals on the
+  scene files): 19 tests, OK.
+- `tests/test_person_merge_ui.py` (the People list menu and handlers in the
+  real main window, `QT_QPA_PLATFORM=offscreen`): 13 tests, OK.
+
+Not run: the menu in a shown window; a real project.
+
 ## Hidden ranges in the app window and on a group dance (2026-11-22)
 
 - Same machine. The checks below drove the real main window (`MainWindow`, GUI
