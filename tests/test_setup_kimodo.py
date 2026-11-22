@@ -121,6 +121,10 @@ class FromAppTest(unittest.TestCase):
         self.build.side_effect = self.build_overlay
         self.assertEqual(self.run_setup()[0], 0)
         self.assertEqual(sorted(p.name for p in setup_folder.iterdir()), ['app.lock', 'kimodo-backup-1'])   # only the setup's own leftovers
+        (setup_folder / '.kimodo-ghi').mkdir()
+        with mock.patch('shutil.disk_usage', return_value=mock.Mock(free=1024 ** 3 - 1)):   # removed before the space is measured
+            self.assert_failed('Not enough free disk space to set up automatic fill (1 GiB needed).')
+        self.assertFalse((setup_folder / '.kimodo-ghi').exists())
 
     def test_a_cleanup_error_after_the_swap_does_not_fail_the_install(self):
         self.build.side_effect = self.build_overlay

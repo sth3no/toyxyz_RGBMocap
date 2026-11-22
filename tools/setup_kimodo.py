@@ -187,14 +187,14 @@ def install(emit=None):
         else:
             print('Verified Kimodo runtime retained.', flush=True)
             return existing, False
+    # A stopped or cancelled setup does not unwind; its staging folders are removed before the free space is measured.
+    for left in (ROOT / '.setup').glob('.kimodo-*'):
+        shutil.rmtree(left, ignore_errors=True)
     if shutil.disk_usage(ROOT).free < FREE:
         raise RuntimeError(NO_SPACE)
     if shutil.which('git') is None:
         raise RuntimeError(NO_GIT)
     (ROOT / '.setup').mkdir(exist_ok=True)
-    # A stopped or cancelled setup does not unwind; its staging folders are removed before anything is fetched.
-    for left in (ROOT / '.setup').glob('.kimodo-*'):
-        shutil.rmtree(left, ignore_errors=True)
     # Cleaning the staging folder can fail on a file still held open; after the swap that must not report failure.
     with tempfile.TemporaryDirectory(prefix='.kimodo-', dir=ROOT / '.setup', ignore_cleanup_errors=True) as name:
         overlay = build(Path(name), step)
