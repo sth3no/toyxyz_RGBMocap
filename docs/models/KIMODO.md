@@ -53,12 +53,15 @@ refused and nothing is written; an earlier joined take stays as it was. See
    conversion and that CUDA works. Robot meshes and demo files are left out.
 
 2. Reopen RGB MoCap, select **GVHMR** or **ExMR**, and open **Model Manager**.
-   Click **Auto Download** on the **Kimodo** rows: eight files of
-   `nvidia/Kimodo-SOMA-RP-v1.2` at a pinned revision, **1.13 GB** in total
-   (the model itself is 1.13 GB; the other seven are a few kilobytes). The rows
-   appear on the **GVHMR** and **ExMR** tabs and are checked by SHA-256.
-   **Download All** skips them. **Import...** works on each row for files you
-   downloaded yourself; the default location is `models/kimodo/Kimodo-SOMA-RP-v1.2/`.
+   Kimodo needs eight files of `nvidia/Kimodo-SOMA-RP-v1.2` at a pinned
+   revision, **1.13 GB** in total (the model itself is 1.13 GB; the other seven
+   are a few kilobytes). Their rows are marked **(Optional)** and appear on the
+   **GVHMR** and **ExMR** tabs. **Auto Download on the Kimodo Motion Generation
+   row fetches all eight files**: first the seven small ones that are not ready
+   yet, then the model. The other rows download only their own file. Every file
+   is checked by SHA-256. **Download All** skips them. **Import...** works on
+   each row for files you downloaded yourself; the default location is
+   `models/kimodo/Kimodo-SOMA-RP-v1.2/`.
 
 3. Open a project with hidden ranges and choose **Automatic** for a range.
    Until both parts are in place, **Automatic** is greyed out and its tooltip
@@ -137,8 +140,9 @@ overlay; the app itself imports none of it.
 - If the tooltip of **Automatic** says `Close RGB MoCap and run
   Setup_Kimodo.cmd to prepare automatic fill.`, close the app and run the setup.
   If it says `Get the Kimodo model in Model Manager to use automatic fill.`,
-  download or import the eight rows in Model Manager. A row marked **Missing** after a copy should
-  be imported again.
+  click **Auto Download** on the **Kimodo Motion Generation (Optional)** row in
+  Model Manager, which fetches all eight files, or import them. A row marked
+  **Missing** after a copy should be imported again.
 - `Automatic fill could not connect the motion on both sides of frames
   137–166: the generated motion misses the captured poses next to the range by
   103 cm. The takes before and after it do not fit together. Check the frames

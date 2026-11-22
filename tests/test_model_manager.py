@@ -163,7 +163,9 @@ class KimodoModelTests(unittest.TestCase):
         self.assertEqual(sizes['model.safetensors'], 1133177724)
         self.assertEqual(sum(sizes.values()), 1133209886 - 1519 - 10229 - 13003)
         self.assertEqual(models.BY_KEY['kimodo'].name, 'Kimodo Motion Generation (Optional)')
-        self.assertEqual(models.BY_KEY['kimodo_stats_global_root_std'].name, 'Kimodo Statistics (global root std)')
+        self.assertEqual(models.BY_KEY['kimodo_config'].name, 'Kimodo Configuration (Optional)')
+        self.assertEqual(models.BY_KEY['kimodo_stats_global_root_std'].name, 'Kimodo Statistics (global root std) (Optional)')
+        self.assertTrue(all(models.BY_KEY[key].name.endswith(' (Optional)') for key in KIMODO_KEYS))
 
     def test_all_missing_in_an_empty_models_folder(self):
         with tempfile.TemporaryDirectory() as name, patch.object(models, 'MODELS', Path(name)):
@@ -189,9 +191,56 @@ class KimodoModelTests(unittest.TestCase):
             self.assertFalse(manager.download_all_skips(key))
 
     def test_listed_under_gvhmr_and_exmr_only(self):
+        from mocap.kimodo_runtime import WORKFLOWS
+        self.assertEqual(WORKFLOWS, frozenset(('gvhmr', 'exmr')))
         users = manager.model_consumers(manager.workflow_catalog())
         for key in KIMODO_KEYS:
             self.assertEqual(set(users[key]), {'gvhmr', 'exmr'})
+
+
+class Response:
+    def __init__(self, url, failing):self.url, self.failing, self.headers = url, failing, {}
+    def __enter__(self):return self
+    def __exit__(self, *exc):return False
+    def raise_for_status(self):
+        if self.url in self.failing:
+            import requests
+            raise requests.HTTPError('503 Server Error')
+    def iter_content(self, size):yield b'payload of ' + self.url.encode()
+
+
+class KimodoDownloadTests(unittest.TestCase):
+    """Auto Download on the Kimodo Motion Generation row fetches all eight files; network replaced."""
+    def setUp(self):
+        import dataclasses, hashlib
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        records = {key: dataclasses.replace(models.BY_KEY[key], minimum_bytes=1, expected_sha256=hashlib.sha256(
+            b'payload of ' + models.BY_KEY[key].download_url.encode()).hexdigest()) for key in KIMODO_KEYS}
+        self.urls, self.failing = [], set()
+        def get(url, **kw):self.urls.append(url); return Response(url, self.failing)
+        for target in (patch.object(models, 'MODELS', Path(tmp.name)), patch.dict(models.BY_KEY, records), patch('requests.get', get)):
+            target.start(); self.addCleanup(target.stop)
+        self.url = lambda key: models.BY_KEY[key].download_url
+
+    def test_companions_first_then_the_weights(self):
+        path = models.download('kimodo')
+        self.assertEqual(self.urls, [self.url(key) for key in KIMODO_KEYS[1:]] + [self.url('kimodo')])
+        self.assertEqual(path, models.BY_KEY['kimodo'].path); self.assertEqual(models.missing('kimodo_fill'), [])
+
+    def test_ready_companions_are_skipped(self):
+        models.download('kimodo_config'); models.download('kimodo_stats_body_std'); self.urls.clear()
+        models.download('kimodo')
+        self.assertEqual(self.urls, [self.url(key) for key in KIMODO_KEYS[1:] if key not in ('kimodo_config', 'kimodo_stats_body_std')] + [self.url('kimodo')])
+        self.urls.clear(); models.download('kimodo'); self.assertEqual(self.urls, [])
+
+    def test_a_failed_companion_stops_before_the_weights(self):
+        import requests
+        self.failing.add(self.url('kimodo_stats_global_root_mean'))
+        with self.assertRaises(requests.HTTPError):models.download('kimodo')
+        self.assertNotIn(self.url('kimodo'), self.urls); self.assertFalse(models.ready(models.BY_KEY['kimodo']))
+
+    def test_other_rows_download_alone(self):
+        models.download('kimodo_stats_body_mean'); self.assertEqual(self.urls, [self.url('kimodo_stats_body_mean')])
 
 
 if __name__ == '__main__':

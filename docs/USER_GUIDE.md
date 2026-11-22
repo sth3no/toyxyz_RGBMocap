@@ -984,8 +984,9 @@ to 290 frames. **Variation** is a number from 0 to 999: another number gives
 another motion, and the same number gives the same motion again, because
 generated ranges are kept in the folder `auto_fill` inside the person's preview
 folder. Automatic needs a separate setup: close the app, run `Setup_Kimodo.cmd`,
-then get the eight Kimodo files in **Model Manager** (1.13 GB; **Download All**
-skips them). It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
+then get the eight Kimodo files in **Model Manager** (1.13 GB; their rows are
+marked **(Optional)** and **Download All** skips them). Auto Download on the
+Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
 range takes roughly 10 to 15 seconds on an RTX 5060 Ti, including starting the
 generator. Until setup is complete, **Automatic** is greyed out and its tooltip
 says what is missing. The generated motion does not meet the captured poses

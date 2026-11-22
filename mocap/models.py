@@ -111,13 +111,13 @@ MODELS_LIST.extend([
 KIMODO_REV = '0e3c89024d896064b6851201373f7834784a386b'
 KIMODO_FILES = (
     ('kimodo', 'Kimodo Motion Generation (Optional)', 'model.safetensors', 1133177724, 'fdcef624140a12c0a4840192ce0b75cafb4e73228a893da3864b4a990d3e919e'),
-    ('kimodo_config', 'Kimodo Configuration', 'config.yaml', 675, '82f1e9f44d0df517d8ebde03d2e9396fd0bf372360714757901c1d97a2626599'),
-    ('kimodo_stats_body_mean', 'Kimodo Statistics (body mean)', 'stats/motion/body/mean.npy', 3040, 'd42f35f8bb7ef52fdec66ae29c5cf590bd038f4f1aabd2d560d1d0f78663ed6f'),
-    ('kimodo_stats_body_std', 'Kimodo Statistics (body std)', 'stats/motion/body/std.npy', 3040, '965bbad497726ef4e6c46b519827e2cbcb29f974214b25718d20a725b82279ed'),
-    ('kimodo_stats_global_root_mean', 'Kimodo Statistics (global root mean)', 'stats/motion/global_root/mean.npy', 168, '6c110980f9a0386e57a8c186f8eac7f55dc05bade92f44c4b391450ada598da1'),
-    ('kimodo_stats_global_root_std', 'Kimodo Statistics (global root std)', 'stats/motion/global_root/std.npy', 168, 'fb15aeed7143f5f0754611f0acf5fa5f55d1f6492a49c23e490fc62f7bf11fb0'),
-    ('kimodo_stats_local_root_mean', 'Kimodo Statistics (local root mean)', 'stats/motion/local_root/mean.npy', 160, '4c36e8e33d6d51e6c8206ac796a52b7b3a4da7f0dc49ebdbb4f130178e3e9d31'),
-    ('kimodo_stats_local_root_std', 'Kimodo Statistics (local root std)', 'stats/motion/local_root/std.npy', 160, '5f57b41f51ced7832cffa81702f6e04d8694e16475c184baec6c8be0e98c8dba'),
+    ('kimodo_config', 'Kimodo Configuration (Optional)', 'config.yaml', 675, '82f1e9f44d0df517d8ebde03d2e9396fd0bf372360714757901c1d97a2626599'),
+    ('kimodo_stats_body_mean', 'Kimodo Statistics (body mean) (Optional)', 'stats/motion/body/mean.npy', 3040, 'd42f35f8bb7ef52fdec66ae29c5cf590bd038f4f1aabd2d560d1d0f78663ed6f'),
+    ('kimodo_stats_body_std', 'Kimodo Statistics (body std) (Optional)', 'stats/motion/body/std.npy', 3040, '965bbad497726ef4e6c46b519827e2cbcb29f974214b25718d20a725b82279ed'),
+    ('kimodo_stats_global_root_mean', 'Kimodo Statistics (global root mean) (Optional)', 'stats/motion/global_root/mean.npy', 168, '6c110980f9a0386e57a8c186f8eac7f55dc05bade92f44c4b391450ada598da1'),
+    ('kimodo_stats_global_root_std', 'Kimodo Statistics (global root std) (Optional)', 'stats/motion/global_root/std.npy', 168, 'fb15aeed7143f5f0754611f0acf5fa5f55d1f6492a49c23e490fc62f7bf11fb0'),
+    ('kimodo_stats_local_root_mean', 'Kimodo Statistics (local root mean) (Optional)', 'stats/motion/local_root/mean.npy', 160, '4c36e8e33d6d51e6c8206ac796a52b7b3a4da7f0dc49ebdbb4f130178e3e9d31'),
+    ('kimodo_stats_local_root_std', 'Kimodo Statistics (local root std) (Optional)', 'stats/motion/local_root/std.npy', 160, '5f57b41f51ced7832cffa81702f6e04d8694e16475c184baec6c8be0e98c8dba'),
 )
 MODELS_LIST.extend(
     Model(key, name, 'kimodo/Kimodo-SOMA-RP-v1.2/' + path, 'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2', minimum_bytes=size,
@@ -318,6 +318,10 @@ def download(key: str, progress=None) -> Path:
         # Hugging Face checkpoint metadata uses the same pinned revision. It is
         # not the inference YAML and must not invalidate existing motion caches.
         download('flow_metadata', progress)
+    if key == 'kimodo':
+        # Auto Download on the Kimodo Motion Generation row fetches all eight files: the small ones first, then the weights.
+        for companion, *_ in KIMODO_FILES[1:]:
+            download(companion, progress)
     model = BY_KEY[key]
     if not model.drive_id and not model.download_url:
         raise ValueError("Obtain this model from its official website, then import it.")

@@ -11,6 +11,7 @@ MODEL_FOLDER = 'kimodo'
 MODEL_NAME = 'Kimodo-SOMA-RP-v1.2'
 PARAMETERS = 283281777
 SETUP = 'Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'
+WORKFLOWS = frozenset(('gvhmr', 'exmr'))  # the workflows whose hidden ranges can be filled automatically
 
 
 def location():

@@ -293,8 +293,10 @@ class ModelsDialog(QDialog):
             note = QLabel('SAM 3.1 is optional. Run Setup_SAM31.cmd with RGB MoCap closed before using it.')
             note.setWordWrap(True)
             self.workflow_panel.addWidget(note)
-        if key in SUPPORTED - {'flowhmr'}:
-            note = QLabel('Automatic fill of hidden ranges also needs Setup_Kimodo.cmd.')
+        from .kimodo_runtime import WORKFLOWS
+        if key in WORKFLOWS:
+            note = QLabel('Automatic fill of hidden ranges also needs Setup_Kimodo.cmd. '
+                          'Auto Download on the Kimodo Motion Generation row fetches all eight Kimodo files.')
             note.setWordWrap(True)
             self.workflow_panel.addWidget(note)
 

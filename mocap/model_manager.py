@@ -14,6 +14,7 @@ from .storage import atomic_json
 
 def workflow_catalog():
     from .flow_hamer import MODEL_KEYS
+    from .kimodo_runtime import WORKFLOWS
     from .sam31_runtime import SUPPORTED
 
     catalog = {}
@@ -23,7 +24,7 @@ def workflow_catalog():
             stages = (*stages, key + '_assets')
         if key in SUPPORTED:
             stages = (*stages, 'people', 'sam31_people')
-        if key in SUPPORTED - {'flowhmr'}:
+        if key in WORKFLOWS:
             stages = (*stages, 'kimodo_fill')
         if key == 'pear':
             stages = (*stages, 'pear_align')
