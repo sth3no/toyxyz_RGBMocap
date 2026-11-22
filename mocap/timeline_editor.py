@@ -240,10 +240,10 @@ class TimelineSlider(FootLockEditor,QSlider):
                 left, right = self.clip_edges() if row == 0 else (self.LEFT, self.width() - self.RIGHT)
                 left, right = max(self.LEFT, left), min(self.width() - self.RIGHT, right)
                 p.fillRect(QRectF(left, y + 2, max(0, right - left), row_height - 5), tint)
-            y = 28 + row_height
+            y = self.TRACK_TOP + row_height
             for first_fill, end_fill in self.fill_runs:
                 left, right = max(self.LEFT, self.frame_x(first_fill - .5)), min(self.width() - self.RIGHT, self.frame_x(end_fill - .5))
-                if right > left:p.fillRect(QRectF(left, y, right - left, 3), QColor("#d8a24a"))
+                if right > left:p.fillRect(QRectF(left, y, right - left, ui_px(3)), QColor(theme_color("#d8a24a", "#8a4809")))
             self.paint_contact_tracks(p)
             # Draw the time grid above the translucent tracks. The visible tick
             # count remains bounded by viewport width, independent of duration.
