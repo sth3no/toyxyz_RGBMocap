@@ -460,6 +460,96 @@ class KimodoGroupTests(unittest.TestCase):
         self.assertTrue(models.ready(models.BY_KEY['kimodo_llama']))
         self.assertEqual(sorted(path.name for path in target.iterdir() if path.suffix == '.part'), [])
 
+    def kimodo_copy(self):
+        """A downloaded copy of nvidia/Kimodo-SOMA-RP-v1.2, files at their paths in the repository; returns model.safetensors."""
+        folder = self.folder / 'Kimodo-SOMA-RP-v1.2'
+        for key in KIMODO_KEYS:
+            path = folder / models.BY_KEY[key].relative.removeprefix('kimodo/Kimodo-SOMA-RP-v1.2/')
+            path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content(key))
+        return folder / 'model.safetensors'
+
+    def text_copy(self, supervised='LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised'):
+        """The two adapter repositories downloaded side by side; returns the mntp adapter_model.safetensors."""
+        for key in TEXT_KEYS:
+            model = models.BY_KEY[key]
+            folder = self.folder / (supervised if model.path.parent.name == 'supervised' else 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp')
+            folder.mkdir(parents=True, exist_ok=True); (folder / model.path.name).write_bytes(content(key))
+        return self.folder / 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp' / 'adapter_model.safetensors'
+
+    def test_kimodo_import_takes_all_eight_from_one_pick(self):
+        path = models.import_model_file('kimodo', self.kimodo_copy())
+        self.assertEqual(path, models.BY_KEY['kimodo'].path); self.assertTrue(models.ready(models.BY_KEY['kimodo']))
+        self.assertEqual(models.missing('kimodo_fill'), []); self.assertEqual(self.urls, [])
+
+    def test_text_import_takes_both_adapters_from_one_pick(self):
+        import shutil
+        for supervised in ('LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised', 'supervised'):
+            for folder in (manager.MODELS, self.folder):shutil.rmtree(folder, ignore_errors=True)
+            self.folder.mkdir()
+            path = models.import_model_file('kimodo_text', self.text_copy(supervised))
+            self.assertEqual(path, models.BY_KEY['kimodo_text'].path); self.assertTrue(models.ready(models.BY_KEY['kimodo_text']), supervised)
+            self.assertEqual([model.key for model in models.missing('kimodo_text')], list(LLAMA_KEYS))
+
+    def test_group_import_refuses_another_file(self):
+        self.kimodo_copy(); self.text_copy()
+        for key, picked, sentence in (
+                ('kimodo', self.folder / 'Kimodo-SOMA-RP-v1.2' / 'config.yaml', 'Choose model.safetensors of a downloaded copy of nvidia/Kimodo-SOMA-RP-v1.2.'),
+                ('kimodo_text', self.folder / 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp' / 'config.json',
+                 'Choose adapter_model.safetensors in the folder of McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp.')):
+            with self.assertRaises(ValueError) as caught:models.import_model_file(key, picked)
+            self.assertEqual(str(caught.exception), sentence); self.assertEqual(self.files(), [])
+
+    def test_group_import_names_a_missing_member_where_it_is_expected(self):
+        picked = self.kimodo_copy(); (picked.parent / 'stats/motion/global_root/std.npy').unlink()
+        with self.assertRaises(ValueError) as caught:models.import_model_file('kimodo', picked)
+        self.assertEqual(str(caught.exception), 'stats/motion/global_root/std.npy is missing next to the file you chose.')
+        picked = self.text_copy(); (picked.parent / 'tokenizer.json').unlink()
+        with self.assertRaises(ValueError) as caught:models.import_model_file('kimodo_text', picked)
+        self.assertEqual(str(caught.exception), 'tokenizer.json is missing next to the file you chose.')
+        import shutil; shutil.rmtree(self.folder / 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised'); picked = self.text_copy('elsewhere')
+        with self.assertRaises(ValueError) as caught:models.import_model_file('kimodo_text', picked)
+        self.assertEqual(str(caught.exception), 'adapter_model.safetensors of the supervised adapter is missing: expected in a folder named '
+                         'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised or supervised next to the folder of the file you chose.')
+        self.assertEqual(self.files(), [])
+
+    def test_group_import_with_a_wrong_hash_leaves_nothing_new(self):
+        picked = self.kimodo_copy(); stats = picked.parent / 'stats/motion/body/mean.npy'
+        stats.write_bytes(b'y' * models.BY_KEY['kimodo_stats_body_mean'].minimum_bytes)
+        with self.assertRaises(ValueError) as caught:models.import_model_file('kimodo', picked)
+        self.assertEqual(str(caught.exception), 'stats/motion/body/mean.npy is not the expected Kimodo-SOMA-RP-v1.2 file.')
+        self.assertEqual(self.files(), [])
+        picked = self.text_copy(); supervised = self.folder / 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised' / 'adapter_config.json'
+        supervised.write_bytes(b'y' * models.BY_KEY['kimodo_text_supervised_config'].minimum_bytes)
+        with self.assertRaises(ValueError) as caught:models.import_model_file('kimodo_text', picked)
+        self.assertEqual(str(caught.exception), '../LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised/adapter_config.json is not the expected LLM2Vec adapter file.')
+        self.assertEqual(self.files(), [])
+
+    def test_group_import_skips_ready_members_and_clears_stale_parts(self):
+        import shutil
+        self.install('kimodo'); before = models.BY_KEY['kimodo'].path.stat().st_mtime_ns
+        picked = self.kimodo_copy(); picked.unlink()  # the large file need not be downloaded again
+        picked.write_bytes(b'')                       # only its name is read when it is in place already
+        part = models.BY_KEY['kimodo_config'].path.with_name('config.yaml.import.part'); part.write_bytes(b'left by a stopped import')
+        needed = sum(models.BY_KEY[key].minimum_bytes for key in KIMODO_KEYS[1:]) + 256 * 1024**2
+        with patch.object(shutil, 'disk_usage', return_value=free_space(needed)):
+            models.import_model_file('kimodo', picked)
+        self.assertEqual(models.BY_KEY['kimodo'].path.stat().st_mtime_ns, before); self.assertFalse(part.exists())
+        self.assertTrue(models.ready(models.BY_KEY['kimodo']))
+
+    def test_group_import_refuses_without_disk_space(self):
+        import shutil
+        picked = self.text_copy(); needed = sum(models.BY_KEY[key].minimum_bytes for key in TEXT_KEYS) + 256 * 1024**2
+        with patch.object(shutil, 'disk_usage', return_value=free_space(needed - 1)):
+            with self.assertRaisesRegex(OSError, r'^Not enough free disk space for Kimodo Text Adapters'):
+                models.import_model_file('kimodo_text', picked)
+        self.assertEqual(self.files(), [])
+
+    def test_group_import_instructions_and_filters(self):
+        for key, parts in (('kimodo', ('nvidia/Kimodo-SOMA-RP-v1.2', 'config.yaml', 'stats/motion', 'mean.npy', 'std.npy', 'choose model.safetensors')),
+                           ('kimodo_text', ('LLM2Vec-Meta-Llama-3-8B-Instruct-mntp', 'LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised', 'supervised',
+                                            'tokenizer.json', 'special_tokens_map.json', 'choose adapter_model.safetensors'))):
+            for part in parts:self.assertIn(part, models.MANUAL_INSTRUCTIONS[key], (key, part))
+
     def test_a_complete_group_downloads_nothing_and_needs_no_space(self):
         import shutil
         for key in TEXT_KEYS:self.install(key)
@@ -556,6 +646,18 @@ class KimodoSetupJobTests(unittest.TestCase):
         for stage in ('gvhmr', 'take_join', 'export', 'correct'):
             w, _ = self.window(stage); w.next_job()
             w.refresh_hidden_ranges_after_models.assert_not_called()
+
+    def test_group_rows_pick_their_leader_file(self):
+        from types import SimpleNamespace
+        from PySide6.QtWidgets import QFileDialog
+        from mocap.gui import ModelsDialog
+        host, panel, _ = self.host(); host.models = [models.BY_KEY[key] for key in ('kimodo', 'kimodo_text', 'kimodo_llama')]
+        shown = []
+        with patch.object(QFileDialog, 'getOpenFileName', lambda *a: shown.append(a[3]) or ('C:/x/' + str(len(shown)), '')):
+            for key in ('kimodo', 'kimodo_text', 'kimodo_llama'):ModelsDialog.import_local_model(host, key)
+        self.assertEqual(shown, ['Kimodo model (model.safetensors);;All files (*)', 'Kimodo text adapter (adapter_model.safetensors);;All files (*)',
+                                 'Llama 3 weights (model-0000*-of-00004.safetensors);;All files (*)'])
+        self.assertEqual([job[0][1][:2] for job in self.jobs], [['--model', 'kimodo'], ['--model', 'kimodo_text'], ['--model', 'kimodo_llama']])
 
     def test_install_asks_once_and_starts_the_job(self):
         from PySide6.QtWidgets import QMessageBox

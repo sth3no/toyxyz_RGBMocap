@@ -187,6 +187,18 @@ MANUAL_INSTRUCTIONS['kimodo_llama'] = (
     '3. Open Files and versions and download the four model-0000N-of-00004.safetensors files (N = 1 to 4, about 16 GB) into one folder.\n'
     '4. Return to this row, click Import... and choose any one of the four files. The app imports all four from that folder.\n'
     'The app does not need your account password or access token.')
+MANUAL_INSTRUCTIONS['kimodo'] = (
+    '1. Open nvidia/Kimodo-SOMA-RP-v1.2 on Hugging Face using the Official website link below and review the NVIDIA Open Model License.\n'
+    '2. Open Files and versions and download these eight files into one folder, keeping their folders: model.safetensors, '
+    'config.yaml and, under stats/motion, body, global_root and local_root, each with mean.npy and std.npy.\n'
+    '3. Return to this row, click Import... and choose model.safetensors. The app imports all eight from that folder.')
+MANUAL_INSTRUCTIONS['kimodo_text'] = (
+    '1. Open McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp on Hugging Face using the Official website link below. '
+    'Download adapter_model.safetensors, adapter_config.json, config.json, tokenizer.json, tokenizer_config.json and '
+    'special_tokens_map.json into one folder.\n'
+    '2. Open McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised and download its adapter_model.safetensors and '
+    'adapter_config.json into a folder named LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised (or supervised) next to the first folder.\n'
+    '3. Return to this row, click Import... and choose adapter_model.safetensors in the first folder. The app imports all eight files.')
 
 for _key in ('mano_right','smplh'):
     MANUAL_INSTRUCTIONS[_key] += ('\nIf the MANO website shows 502 Bad Gateway, use the Recommended download link below '
@@ -224,6 +236,13 @@ MANUAL_DETAILS = {
     'kimodo_llama': dict(selection='meta-llama/Meta-Llama-3-8B-Instruct > Files and versions > model-00001-of-00004.safetensors to model-00004-of-00004.safetensors',
         location='All four files in one folder; choose any one of them',
         avoid='The original folder (consolidated.00.pth), Llama 3.1 or other Llama models, or a repository ZIP.'),
+    'kimodo': dict(selection='nvidia/Kimodo-SOMA-RP-v1.2 > Files and versions > model.safetensors, config.yaml and stats/motion',
+        location='One folder with model.safetensors, config.yaml and stats/motion/<body|global_root|local_root>/<mean|std>.npy; choose model.safetensors',
+        avoid='Other Kimodo models (SMPL-X or G1 skeletons) or another revision.'),
+    'kimodo_text': dict(selection='McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp and ...-mntp-supervised > Files and versions',
+        location='The mntp files in one folder and the supervised adapter in a folder named LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised '
+                 'or supervised next to it; choose adapter_model.safetensors of the mntp folder',
+        avoid='Other LLM2Vec adapters (for example ...-mntp-unsup-simcse) or the Llama weights themselves.'),
 }
 for _key, _file in SAM_MANUAL_FILES.items():
     MANUAL_DETAILS[_key] = dict(selection='facebook/sam-3d-body-dinov3 > ' + _file,
@@ -443,8 +462,8 @@ def import_model_file(key: str, source: Path) -> Path:
     if key=='pear_geometry':
         from .pear_models import import_bundle
         return import_bundle(source)
-    if key=='kimodo_llama':
-        return import_llama(Path(source).resolve())
+    if key in GROUPS:
+        return import_group(key, Path(source).resolve())
     model=BY_KEY[key]; source=Path(source).resolve()
     if source.stat().st_size < model.minimum_bytes:
         raise ValueError('The file is too small for '+model.name)
@@ -506,34 +525,66 @@ def require_space(name: str, missing_bytes: int) -> None:
         raise OSError(f'Not enough free disk space for {name} ({math.ceil(needed/1024**3*10)/10} GiB needed).')
 
 
-def import_llama(source: Path) -> Path:
-    """Import the four Llama 3 weight files from the folder that holds the one the user chose."""
-    import os
-    files=[BY_KEY[key] for key in GROUPS['kimodo_llama']]
+# A group row imports every file of its group from the folder of the one file the user picks:
+# leader -> (the file to pick, or None for any member's file; what the files are; the refusal of another file).
+GROUP_IMPORTS = {
+    'kimodo': ('model.safetensors', 'Kimodo-SOMA-RP-v1.2', 'Choose model.safetensors of a downloaded copy of nvidia/Kimodo-SOMA-RP-v1.2.'),
+    'kimodo_text': ('adapter_model.safetensors', 'LLM2Vec adapter',
+                    'Choose adapter_model.safetensors in the folder of McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp.'),
+    'kimodo_llama': (None, 'Llama 3 8B Instruct', 'Choose one of the four model-0000N-of-00004.safetensors files.'),
+}
+SUPERVISED_FOLDERS = ('LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised', 'supervised')  # next to the picked file's folder
+
+
+def group_sources(key: str, source: Path) -> dict:
+    """Member key -> (where its file is expected, that place relative to the picked file, the sentence when it is missing)."""
+    folder, out = source.parent, {}
+    for member in GROUPS[key]:
+        model = BY_KEY[member]; name = model.path.name
+        if key == 'kimodo':  # by its path in the repository
+            label = model.relative.removeprefix('kimodo/Kimodo-SOMA-RP-v1.2/'); where = folder/label
+        elif key == 'kimodo_text' and model.path.parent.name == 'supervised':
+            found = [folder.parent/sub for sub in SUPERVISED_FOLDERS if (folder.parent/sub/name).is_file()]
+            where = (found or [folder.parent/SUPERVISED_FOLDERS[0]])[0]/name; label = f'../{where.parent.name}/{name}'
+            out[member] = (where, label, f'{name} of the supervised adapter is missing: expected in a folder named '
+                                         f'{SUPERVISED_FOLDERS[0]} or supervised next to the folder of the file you chose.')
+            continue
+        else:
+            label = name; where = folder/name
+        out[member] = (where, label, label+' is missing next to the file you chose.')
+    return out
+
+
+def import_group(key: str, source: Path) -> Path:
+    """Import every file of a group from the folder of the one file the user chose; all files are copied and checked
+    before any is published, so a refusal leaves nothing new behind. Files already in place are skipped."""
+    import glob, os
+    pick, what, choose = GROUP_IMPORTS[key]
+    files = [BY_KEY[member] for member in GROUPS[key]]
     # A stopped worker does not unwind, so remove what an earlier import left staged before anything is measured.
-    for stale in files[0].path.parent.glob('model-0000?-of-00004.safetensors.*part'):stale.unlink(missing_ok=True)
-    if source.name not in {model.path.name for model in files}:
-        raise ValueError('Choose one of the four model-0000N-of-00004.safetensors files.')
     for model in files:
-        incoming=source.parent/model.path.name
-        if not incoming.is_file():raise ValueError(model.path.name+' is missing next to the file you chose.')
-        if incoming.stat().st_size!=model.minimum_bytes:
-            raise ValueError(f'{model.path.name} is not complete (expected {model.minimum_bytes} bytes).')
-    pending=[model for model in files if not file_ready(model)]
-    require_space(files[0].name,sum(model.minimum_bytes for model in pending))
-    staged=[]
+        for stale in model.path.parent.glob(glob.escape(model.path.name)+'.*part'):stale.unlink(missing_ok=True)
+    if source.name not in ({pick} if pick else {model.path.name for model in files}):raise ValueError(choose)
+    sources = group_sources(key, source)
+    pending = [model for model in files if not file_ready(model)]
+    for model in pending:
+        incoming, label, missing = sources[model.key]
+        if not incoming.is_file():raise ValueError(missing)
+        if incoming.stat().st_size != model.minimum_bytes:
+            raise ValueError(f'{label} is not complete (expected {model.minimum_bytes} bytes).')
+    require_space(files[0].name, sum(model.minimum_bytes for model in pending))
+    staged = []
     try:
-        # Every file is copied and checked before any is published, so a wrong file leaves nothing new behind.
         for model in pending:
-            model.path.parent.mkdir(parents=True,exist_ok=True)
-            temporary=model.path.with_name(model.path.name+'.import.part');staged.append(temporary)
-            incoming=source.parent/model.path.name
-            if copy_hashed(incoming,temporary,report=True)!=model.expected_sha256:
-                raise ValueError(model.path.name+' is not the expected Llama 3 8B Instruct file.')
-        for model,temporary in zip(pending,staged):
-            os.replace(temporary,model.path)
-            atomic_json(model.path.with_suffix(model.path.suffix+'.receipt.json'),dict(source=str(source.parent/model.path.name),
-                sha256=model.expected_sha256,stat=[model.path.stat().st_size,model.path.stat().st_mtime_ns],manual_import=True))
+            incoming, label, _ = sources[model.key]
+            model.path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = model.path.with_name(model.path.name+'.import.part');staged.append(temporary)
+            if copy_hashed(incoming, temporary, report=True) != model.expected_sha256:
+                raise ValueError(f'{label} is not the expected {what} file.')
+        for model, temporary in zip(pending, staged):
+            os.replace(temporary, model.path)
+            atomic_json(model.path.with_suffix(model.path.suffix+'.receipt.json'), dict(source=str(sources[model.key][0]),
+                sha256=model.expected_sha256, stat=[model.path.stat().st_size, model.path.stat().st_mtime_ns], manual_import=True))
     finally:
         for temporary in staged:temporary.unlink(missing_ok=True)
     return files[0].path

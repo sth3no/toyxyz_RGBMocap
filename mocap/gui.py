@@ -614,6 +614,8 @@ class ModelsDialog(QDialog):
         name, _ = QFileDialog.getOpenFileName(picker_parent or self, 'Import ' + model.name, '',
             ('PEAR assets (assets.zip);;All files (*)' if key=='pear_geometry' else
              'Llama 3 weights (model-0000*-of-00004.safetensors);;All files (*)' if key=='kimodo_llama' else
+             'Kimodo model (model.safetensors);;All files (*)' if key=='kimodo' else
+             'Kimodo text adapter (adapter_model.safetensors);;All files (*)' if key=='kimodo_text' else
              f'Model file ({model.path.name});;All files (*)'))
         if name:
             self.start_model_jobs([('import_model', ['--model', key, '--video', name])])
