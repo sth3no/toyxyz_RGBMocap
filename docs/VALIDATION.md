@@ -2,13 +2,54 @@
 
 ## Continue as and Separate again (2026-11-22)
 
-- Same machine. Unit tests only, on temporary scene folders made by the tests.
-- `tests/test_person_merge.py` (the join, undo, recovery and refusals on the
-  scene files): 19 tests, OK.
-- `tests/test_person_merge_ui.py` (the People list menu and handlers in the
-  real main window, `QT_QPA_PLATFORM=offscreen`): 13 tests, OK.
-
-Not run: the menu in a shown window; a real project.
+- Same machine. Automated tests on temporary scene folders made by the tests,
+  on the final code:
+  - `tests/test_person_merge.py` (the join, undo, recovery, failures and
+    refusals on the scene files): 27 tests, OK.
+  - `tests/test_person_merge_ui.py` (the People list menu on a real
+    `PeopleList` widget and the handlers run on a stand-in for the window,
+    `QT_QPA_PLATFORM=offscreen`): 21 tests, OK. These do not open the main
+    window.
+- Real project, through the real main window run without a screen and driven
+  through its own signals, buttons and handlers; nobody looked at it. The
+  five-dancer project of the section below, where Find person had given the
+  covered dancer two identities: Person 1 (takes 1-120 and 167-353) and
+  Person 7 (a 15-frame fragment, take 122-136, found while she was covered).
+  - The menu of Person 7 offered **Continue as** with the eight other people.
+    Choosing Person 1 removed Person 7 from the list, gave Person 1 the take
+    122-136 and 322 observed frames instead of 307, showed `Person 7 now
+    continues as Person 1. Right-click Person 1 and choose Separate again to
+    undo.` and replaced the hidden range 121-166 by two, `Frames 121-121
+    (0.0 s)` and `Frames 137-166 (1.0 s)`. Person 1's earlier filled take went
+    out of date; her old choice for 121-166 stayed stored and unused.
+  - Smooth join for both new ranges filled with the Fill button in 15 s; the
+    joined take is built from three takes.
+  - Reconstruct 3D of Person 1 afterwards took 76 s and made a new take 1-136,
+    so the re-labelled observation rows are used; the hidden range became
+    137-166 only.
+  - **Separate again** brought Person 7 back at its place in the list and
+    showed `Person 7 is a separate person again.` The observation database
+    (1971 rows), Person 1's preview `tracking.npz` and Person 7's take
+    manifest were then identical to copies taken before the join; Person 1
+    kept the take 1-136 made in between.
+  - The first run showed one defect: right after the join the window kept
+    Person 1's out-of-date filled take open, with another take selected and no
+    motion. It was fixed (the take to show is chosen among takes in use) and
+    the join, fill and Separate again were run again on the final code with
+    the same results and the same three files identical to the copies. That
+    second run started from a different open take, so the exact situation of
+    the defect is covered by a test, not by the second run.
+  - Against the real motion of the dancer (the clip without the cover): the
+    fragment's own motion on frames 122-136 differs by 17.6 cm per joint, the
+    take 1-136 reconstructed after the join by 11.6 cm on those frames, a copy
+    from another dancer by 7.9 cm. **On this clip the fragment is a partly
+    covered view, and joining it does not improve the motion.**
+- After a join, and again after Separate again, every person of the scene
+  reported `corrected_initial result unavailable` until Apply Correction.
+- Not run: the menu in a shown window; a failure injected in the real window
+  (the failure and recovery paths are covered by the tests only); ExMR; Track
+  Face before or after a join; a scene where the second identity is a well
+  seen person returning after an occlusion.
 
 ## Hidden ranges in the app window and on a group dance (2026-11-22)
 
