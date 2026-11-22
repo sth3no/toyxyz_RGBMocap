@@ -454,7 +454,7 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(len(ps.load_people(self.root)['people'][0]['joins']),1)
     def test_refusals_write_nothing(self):
         before=self.snapshot()
-        for result,message in(('refined',take_join.UNSUPPORTED),('handflow_initial',take_join.UNSUPPORTED)):
+        for result,message in(('refined',take_join.UNSUPPORTED),('handflow_refined',take_join.UNSUPPORTED)):
             code,events=self.join(result);self.assertEqual(code,1);self.assertEqual(events,[dict(type='failed',stage='take_join',message=message)])
         self.assertEqual(self.snapshot(),before)  # source takes and people.json byte-identical
         state=ps.load_people(self.root);state['people'][0]['gap_fill']={};ps.save_people(self.root,state);before=self.snapshot()
@@ -719,6 +719,74 @@ class WriteTest(unittest.TestCase):
             self.automatic(text=text);person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]),repr(text))
             with self.generator(calls):code,events=self.join()
             self.assertEqual((code,len(calls)),(0,1));self.assertIs(events[-1]['cached'],True)
+    def fingers(self):
+        """Gives both takes of person 1 a current handflow_initial result, written as mocap.handflow.run writes it; returns the hand rows per take."""
+        import torch
+        from mocap import handflow
+        from mocap.models import BY_KEY,STAGE_REQUIREMENTS
+        from mocap.result_artifacts import file_stat
+        from mocap.storage import atomic_json
+        models={k:file_stat(BY_KEY[k].path) for k in STAGE_REQUIREMENTS['handflow'] if BY_KEY[k].path.is_file()}
+        rng=np.random.default_rng(5);rows={}
+        for (a,b),coverage,warning in(((0,100),[.9,.4],'Right hand detection coverage is low; inspect the finger motion.'),((110,200),[.5,.8],'')):
+            d=self.root/TAKE(a,b);n=b-a;body=torch.load(d/'hmr4d_results.pt',weights_only=False)['smpl_params_global']
+            hands=rows[a]={k:rng.uniform(-.4,.4,(n,45)).astype(np.float32) for k in('left_hand_pose','right_hand_pose')}
+            torch.save({'smpl_params_global':{**body,**{k:torch.from_numpy(v) for k,v in hands.items()}},'source':'initial',
+                        'method':'HandFlow finger-only; body and wrists unchanged'},d/'handflow_initial.pt')
+            atomic_json(d/'handflow_initial_sources.json',{k:file_stat(d/k) for k in('hmr4d_results.pt','handflow_initial.pt','tracking.npz')})
+            atomic_json(d/'handflow_initial_handflow.json',dict(version=handflow.VERSION,output_stat=file_stat(d/'handflow_initial.pt'),code_stat=file_stat(handflow.code_path()),
+                models=models,fps=30.,frames=n,body_and_wrists_unchanged=True,physical_finger_rotations=True,detection_coverage=coverage,prediction_cached=False,warning=warning))
+            self.assertTrue(handflow.result_current(d,'handflow_initial'))
+        return rows
+    def test_handflow_result_is_joined_with_fingers(self):
+        import torch
+        rows=self.fingers();code,events=self.join('handflow_initial');self.assertEqual(code,0,events)
+        record=torch.load(self.root/'p1/takes/000000000_000000200_fill_v1/handflow_initial.pt',weights_only=False)
+        self.assertEqual(set(record),{'smpl_params_global','source','method'});self.assertEqual(record['source'],'initial')
+        for k in('left_hand_pose','right_hand_pose'):
+            v=record['smpl_params_global'][k];self.assertEqual((tuple(v.shape),v.dtype),((200,45),torch.float32),k)
+            np.testing.assert_array_equal(v[:100].numpy(),rows[0][k],k)
+            gap=v[99:111].double().numpy();total=np.linalg.norm(gap[-1]-gap[0])
+            self.assertTrue(all(np.linalg.norm(gap[i+1]-gap[i])<total for i in range(11)),k)
+    def test_joined_handflow_body_equals_the_joined_body(self):
+        import torch
+        self.fingers();self.assertEqual(self.join('handflow_initial')[0],0);J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        hand=torch.load(J/'handflow_initial.pt',weights_only=False)['smpl_params_global'];body=torch.load(J/'hmr4d_results.pt',weights_only=False)['smpl_params_global']
+        self.assertEqual(set(hand)-{'left_hand_pose','right_hand_pose'},set(body))
+        for k,v in body.items():self.assertTrue(torch.equal(hand[k],v),k)
+    def test_joined_handflow_receipt_is_current(self):
+        from mocap import handflow,motion_tools
+        self.fingers();self.assertEqual(self.join('handflow_initial')[0],0);J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        self.assertIs(handflow.result_current(J,'handflow_initial'),True);self.assertIs(motion_tools.result_is_current(J,'handflow_initial'),True)
+        receipt=json.loads((J/'handflow_initial_handflow.json').read_text(encoding='utf-8'))
+        first=json.loads((self.root/TAKE(0,100)/'handflow_initial_handflow.json').read_text(encoding='utf-8'))
+        self.assertIs(receipt['joined'],True);self.assertEqual(receipt['frames'],200);self.assertEqual(receipt['models'],first['models'])
+        self.assertEqual(receipt['detection_coverage'],[.5,.4]);self.assertIs(receipt['body_and_wrists_unchanged'],True)
+        self.assertEqual(receipt['warning'],'Right hand detection coverage is low; inspect the finger motion.')
+        person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_joined_pipeline_names_handflow(self):
+        self.fingers();J=self.root/'p1/takes/000000000_000000200_fill_v1';pipeline=lambda:json.loads((J/'project.json').read_text(encoding='utf-8'))['pipeline']
+        self.assertEqual(self.join('handflow_initial')[0],0);self.assertIs(pipeline()['handflow'],True)
+        self.assertEqual(self.join('initial')[0],0);self.assertIs(pipeline()['handflow'],False)
+    def test_a_second_fill_of_a_handflow_join_writes_nothing(self):
+        self.fingers();self.assertEqual(self.join('handflow_initial')[0],0);J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        before,manifest=self.folder(),stamp(J/'project.json')
+        code,events=self.join('handflow_initial');self.assertEqual(code,0);self.assertIs(events[-1]['cached'],True)
+        self.assertEqual(stamp(J/'project.json'),manifest);self.assertEqual(self.folder(),before)
+    def test_a_source_take_without_current_fingers_is_refused(self):
+        self.fingers();(self.root/TAKE(110,200)/'handflow_initial_handflow.json').unlink();before=self.snapshot()
+        code,events=self.join('handflow_initial');self.assertEqual((code,[e['type'] for e in events]),(1,['failed']))
+        self.assertIn('000000110_000000200_scene_v1',events[0]['message']);self.assertIn('handflow_initial',events[0]['message'])
+        self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before);self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists())
+    def test_refined_results_are_still_refused(self):
+        self.fingers();before=self.snapshot()
+        self.assertEqual(take_join.UNSUPPORTED,'Hidden ranges do not support HTD Refine results in this version; switch HTD Refine off.')
+        for result in('refined','handflow_refined'):
+            self.assertEqual(self.join(result),(1,[dict(type='failed',stage='take_join',message=take_join.UNSUPPORTED)]),result)
+        self.assertEqual(self.snapshot(),before)
+    def test_a_join_written_before_fingers_were_supported_stays_current(self):
+        self.assertEqual(self.join('initial')[0],0);before=self.folder()
+        code,events=self.join('initial');self.assertEqual(code,0);self.assertIs(events[-1]['cached'],True);self.assertEqual(self.folder(),before)
 class ExmrWriteTest(WriteTest):MODEL='exmr'
 def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
 def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))

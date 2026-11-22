@@ -185,7 +185,7 @@ class Refused(ValueError):
     """A deliberate refusal with a message for the user; nothing has been written."""
 
 
-UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this version; select one of them.'
+UNSUPPORTED = 'Hidden ranges do not support HTD Refine results in this version; switch HTD Refine off.'
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
 DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
 COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
@@ -231,7 +231,7 @@ def _check(root, ident, result):
     if model == 'exmr' and not static:raise Refused('Hidden ranges need a fixed camera. Turn on Static camera in the ExMR settings.')
     if result not in RESULTS:raise Refused(f'Unknown motion result: {result}')
     kinds = result_sources(base_result(result))
-    if has_handflow(result) or any(k.endswith('refined') for k in kinds):raise Refused(UNSUPPORTED)
+    if any(k.endswith('refined') for k in kinds):raise Refused(UNSUPPORTED)
     people = state['people'];person = next((p for p in people if p['id'] == ident), None)
     if person is None:raise Refused('Person no longer exists. Run Find person again.')
     choices = person.get('gap_fill') or {}
@@ -239,7 +239,8 @@ def _check(root, ident, result):
     if not chains:raise Refused('No hidden range is selected for filling.')
     body = MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz'
     if not body.is_file():raise Refused('Import SMPLX_NEUTRAL.npz to join takes.')
-    names = list(dict.fromkeys(['tracking.npz', *(RESULTS[k][0] for k in kinds)]))
+    # A finger result's receipt is read too, so it is stamped with the result files.
+    names = list(dict.fromkeys(['tracking.npz', *(RESULTS[k][0] for k in kinds), *(f'{k}_handflow.json' for k in kinds if has_handflow(k))]))
     rates = set()
     for take in (t for chain in chains for t in chain):
         folder = safe_child(root, take['project'])
@@ -278,8 +279,8 @@ def _check(root, ident, result):
 
 
 def _pipeline(model, result):
-    from .motion_tools import body_result
-    return dict(model=model, result=result, htd_refine=False, footmr=body_result(result).startswith('footmr_'), handflow=False)
+    from .motion_tools import body_result, has_handflow
+    return dict(model=model, result=result, htd_refine=False, footmr=body_result(result).startswith('footmr_'), handflow=has_handflow(result))
 
 
 def _record(g):return dict(first=g['first'], end=g['end'], method=g['method'], params=g['params'])
@@ -344,17 +345,20 @@ def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
 
 def _load(root, take, kinds, names, pelvis):
     import torch
-    from .motion_tools import RESULTS
+    from .motion_tools import RESULTS, has_handflow
     from .people_store import safe_child
     folder = safe_child(root, take['project']);files = {n: _stamp(folder/n) for n in names}
     numpy = lambda params: {k: v.detach().cpu().double().numpy() for k, v in params.items()};boxes = observed = K = None
     if 'tracking.npz' in names:  # Not read from a donor take.
         with np.load(folder/'tracking.npz', allow_pickle=False) as tracking:
             boxes, observed, K = tracking['boxes'], tracking['observed'], tracking['K']
-    params = {}
+    params, hand = {}, {}
     for kind in kinds:
         record = torch.load(folder/RESULTS[kind][0], map_location='cpu', weights_only=False)
         params[kind] = numpy(record[RESULTS[kind][1]])
+        if has_handflow(kind):  # A donor's entry is read the same way; only its params are used.
+            hand[kind] = dict(source=record['source'], method=record['method'],
+                              receipt=json.loads((folder/f'{kind}_handflow.json').read_text(encoding='utf-8')))
         if kind == 'initial':  # A donor's camera-space motion is not used.
             incam, model = numpy(record['smpl_params_incam']) if 'tracking.npz' in names else None, record.get('source_model')
             logits = record['net_outputs']['static_conf_logits'][0].double().numpy()
@@ -362,7 +366,7 @@ def _load(root, take, kinds, names, pelvis):
     if {n: _stamp(folder/n) for n in names} != files:raise Refused(f'Take {folder.name} changed while it was read; try again.')
     return dict(first=take['first'], end=take['end'], project=take['project'], folder=folder, files=files, K=K,
                 pelvis=pelvis(params['initial']['betas'][0]),
-                params=params, incam=incam, logits=logits, boxes=boxes, observed=observed, source_model=model)
+                params=params, incam=incam, logits=logits, boxes=boxes, observed=observed, source_model=model, hand=hand)
 
 
 def _other_joins(person, join):
@@ -375,6 +379,19 @@ def _other_joins(person, join):
         return (j['project'] != join['project'] and isinstance(sources, list) and bool(sources)
                 and all(isinstance(s, str) for s in sources) and mine.isdisjoint(sources) and live.issuperset(sources))
     return [j for j in person.get('joins') or [] if apart(j)]
+
+
+def _hand_receipt(target, kind, sources, frames, fps):
+    """The HandFlow receipt of a joined finger result, as mocap.handflow.result_current checks it; the model stamps are the first take's."""
+    from . import handflow
+    from .motion_tools import RESULTS
+    from .result_artifacts import file_stat
+    from .storage import atomic_json
+    receipts = [s['hand'][kind]['receipt'] for s in sources]
+    warning = ' '.join(dict.fromkeys(r['warning'] for r in receipts if r.get('warning')))
+    atomic_json(target/f'{kind}_handflow.json', dict(version=handflow.VERSION, output_stat=file_stat(target/RESULTS[kind][0]), code_stat=file_stat(handflow.code_path()),
+        models=receipts[0]['models'], fps=fps, frames=frames, body_and_wrists_unchanged=True, physical_finger_rotations=True,
+        detection_coverage=[min(c) for c in zip(*(r['detection_coverage'] for r in receipts))], prediction_cached=False, warning=warning, joined=True))
 
 
 def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
@@ -405,6 +422,7 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     for kind in kinds:
         name, key = RESULTS[kind]
         payload = {key: _tensors(joined['params'][kind])}
+        if kind in lead['hand']:payload.update(source=lead['hand'][kind]['source'], method=lead['hand'][kind]['method'])
         if kind == 'initial':
             payload.update(smpl_params_incam=_tensors(joined['incam']), source_model=lead['source_model'] or pipeline['model'],
                            net_outputs={'static_conf_logits': torch.from_numpy(joined['logits'].astype(np.float32))[None]})
@@ -421,6 +439,7 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     if 'start' in lead_state:state['start'] = lead_state['start']
     inherit_storage(lead['folder'], target, state)
     atomic_json(target/'project.json', state)
+    for kind in lead['hand']:_hand_receipt(target, kind, sources, end-first, state.get('fps', 30))  # needs the final result and project.json
     atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
         gaps=[dict(_record(g), **({} if r is None else dict(residual_cm=_cm(r[base]))), **({} if e is None else dict(generator=_generator(e, g))))
