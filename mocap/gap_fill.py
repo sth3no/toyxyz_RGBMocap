@@ -126,6 +126,17 @@ def copy_fill(before, after, donor, keys, height_scale=1.0, stats=None):
     if stats is not None: stats.update(residual=float(np.linalg.norm(res[[0, 2]])), blend=tuple(B))
     return out
 
+def fade_rows(before, after, donor, blend):
+    """Gap rows of one pose key from the donor's n+2 rows, with copy_fill's blend lengths `blend` and weights: near each end a row
+    lies on the geodesic, per joint, from the captured boundary pose to the donor's own row of that frame. Unlike copy_fill's carried
+    difference, an outlier in the donor row facing a boundary does not reach the rows after it."""
+    v = np.asarray(donor, np.float64).reshape(len(donor), -1, 3); n = len(v) - 2; o = v[1:-1].copy()
+    b, a = np.atleast_2d(np.asarray(before, np.float64))[-1], np.atleast_2d(np.asarray(after, np.float64))[0]
+    u = lambda j, side: 1 - _smoothstep(j / (blend[side] + 1))
+    for j in range(1, blend[0] + 1): o[j - 1] = _slerp(v[j], b, [u(j, 0)])[0]
+    for j in range(1, blend[1] + 1): o[n - j] = _slerp(v[n + 1 - j], a, [u(j, 1)])[0]
+    return o.reshape(n, -1)
+
 def generated_fill(before, after, generated, keys):
     """Gap rows from the generated n+2 rows (rows 0 and n+1 are the boundary frames); transl is the pelvis position.
     Nothing is turned or rescaled: the boundary differences of the poses and of the pelvis position fade out at each end."""

@@ -755,7 +755,9 @@ deactivating one changes the shared-floor signature. It never becomes the scene
 reference camera. Supported kinds are `initial`, `footmr_initial`, `handflow_initial`,
 `handflow_footmr_initial` and their corrected variants; the HTD-refined kinds stay
 refused (`Hidden ranges do not support HTD Refine results in this version.` in the
-panel, `...; switch HTD Refine off.` in the job). A joined take of a HandFlow kind holds
+panel, `...; switch HTD Refine off.` in the job).
+
+A joined take of a HandFlow kind holds
 `<kind>.pt` with `smpl_params_global` (the body keys plus `left_hand_pose` and
 `right_hand_pose`), `source` and `method`, and a receipt `<kind>_handflow.json`
 written by `take_join._hand_receipt` (the model stamps of the first source take, the
@@ -763,10 +765,16 @@ lowest detection coverage of the sources, `joined: true`). `handflow.result_curr
 checks that receipt before correction and export accept the result, and it records the
 stat of `mocap/handflow.py`: editing that file makes every finger result, joined or
 not, out of date. `mocap/handflow.py` is hashed into cache identities and must not be
-edited. In a copied range `take_join._copy` takes the body rows of a finger kind from
+edited. When `mocap/handflow.py` or a HandFlow model file changes, the source takes'
+finger results are out of date as well, so the fill is refused with `The
+handflow_initial result of take … is out of date. Reconstruct it first.` (from
+`take_join._check`) until those takes are reconstructed; only then does **Fill hidden
+ranges** write a new joined take. In a copied range `take_join._copy` takes the body rows of a finger kind from
 its body kind, because `gap_fill.copy_fill` sizes its blend from every pose key; the
 donor must have the finger result too (`<name> has no finger motion for this result.
-Reconstruct that person with HandFlow.`). `take_join.assemble` dispatches per gap through `FILLS`: `smooth`, `copy` and
+Reconstruct that person with HandFlow.`).
+
+`take_join.assemble` dispatches per gap through `FILLS`: `smooth`, `copy` and
 `auto`; a later method plugs in there with its own fill function and `params`.
 The Automatic files below are new too and are hashed into no cache identity. Automatic fill is **Experimental**: keep the note `Experimental support. Generated motion is plausible, not what the person did.` wherever it is introduced.
 

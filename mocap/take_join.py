@@ -9,7 +9,7 @@ import sys
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 from . import auto_fill
-from .gap_fill import COPIED, GENERATED, HANDS, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
+from .gap_fill import COPIED, GENERATED, HANDS, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fade_rows, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
 from .hidden_ranges import typed as _typed
 
 STAGE = 'take_join'
@@ -75,6 +75,8 @@ def _copy(a, b, g, pelvis):
         stats, keys = {}, [k for k in p if k != 'transl']
         params[kind] = at(copy_fill(at(p, pelvis, 1), at(b['params'][kind], pelvis, 1), donor, keys, g.get('height_scale', 1.), stats), pelvis, -1)
         residual[kind] = stats['residual']
+        # HandFlow fingers have one-frame outliers: a finger row fades from the captured pose to the donor's row of its frame, not by a carried difference.
+        if kind.startswith('handflow_'):params[kind].update({k: fade_rows(p[k], b['params'][kind][k], donor[k], stats['blend']) for k in HANDS if k in keys and k in donor})
     # The finger poses lengthen the boundary blends, so a finger result takes the body rows of its body result and keeps only its hands.
     for kind in [k for k in params if k.startswith('handflow_')]:
         params[kind] = dict(params[kind.removeprefix('handflow_')], **{k: params[kind][k] for k in HANDS if k in params[kind]})
@@ -351,6 +353,16 @@ def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
     return None
 
 
+def _finger_receipt(folder, kind):
+    """A take's HandFlow receipt with the fields a joined receipt is made from; refused before anything is written."""
+    try:receipt = json.loads((folder/f'{kind}_handflow.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):receipt = None
+    coverage = receipt.get('detection_coverage') if isinstance(receipt, dict) else None
+    if not (isinstance(receipt, dict) and {'models', 'warning'} <= set(receipt) and isinstance(coverage, list) and len(coverage) == 2
+            and all(type(c) in (int, float) for c in coverage)):raise Refused(f'The finger result of take {folder.name} cannot be read. Reconstruct it first.')
+    return receipt
+
+
 def _load(root, take, kinds, names, pelvis):
     import torch
     from .motion_tools import RESULTS, has_handflow
@@ -365,8 +377,7 @@ def _load(root, take, kinds, names, pelvis):
         record = torch.load(folder/RESULTS[kind][0], map_location='cpu', weights_only=False)
         params[kind] = numpy(record[RESULTS[kind][1]])
         if has_handflow(kind):  # A donor's entry is read the same way; only its params are used.
-            hand[kind] = dict(source=record['source'], method=record['method'],
-                              receipt=json.loads((folder/f'{kind}_handflow.json').read_text(encoding='utf-8')))
+            hand[kind] = dict(source=record['source'], method=record['method'], receipt=_finger_receipt(folder, kind))
         if kind == 'initial':  # A donor's camera-space motion is not used.
             incam, model = numpy(record['smpl_params_incam']) if 'tracking.npz' in names else None, record.get('source_model')
             logits = record['net_outputs']['static_conf_logits'][0].double().numpy()
@@ -536,7 +547,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='take_join_boot.py', description='Join the takes of one person across the selected hidden ranges into one new take.')
     parser.add_argument('--project', required=True, help='scene root folder')
     parser.add_argument('--person-id', type=int, required=True)
-    parser.add_argument('--result', default='initial', help='initial, footmr_initial or a corrected_ variant')
+    parser.add_argument('--result', default='initial', help='a result without HTD Refine: initial, footmr_initial, their handflow_ variants, or a corrected_ variant of these')
     args = parser.parse_args(argv);started = time.monotonic();root = Path(args.project).resolve();projects = []
     try:
         cached = run(root, args.person_id, args.result, projects)
