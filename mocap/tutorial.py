@@ -11,7 +11,8 @@ from .tutorial_steps import CHAPTERS, hidden_ranges_usable
 
 STATE = 'tutorial'
 WELCOME = ('This tutorial shows the way from a video to an exported animation, right in this window: it highlights a control, '
-           'explains it and waits for you. You can end it at any time and start it again from Help → Tutorial.')
+           'explains it and waits for you. You can end it at any time and start it again from Help → Tutorial or '
+           'File → Settings.')
 HINT = 'This person has a hidden range: a gap between two takes. A short chapter shows how it can be filled.'
 
 

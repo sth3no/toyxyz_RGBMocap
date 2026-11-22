@@ -4,7 +4,7 @@ import re
 from PySide6.QtCore import QLocale
 from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
-    QFormLayout, QMessageBox, QVBoxLayout, QWidget)
+    QFormLayout, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 from .paths import ROOT
 
 STYLE = """
@@ -169,6 +169,19 @@ class AppearanceDialog(QDialog):
         form = QFormLayout()
         form.addRow('Theme', self.theme)
         form.addRow('UI Scale', self.scale)
+        # The tutorial starts from here too; Help > Tutorial has the same chapters.
+        from .tutorial_steps import CHAPTERS
+        self.chapter = None  # the chapter to start once these settings are accepted
+        self.tutorial_buttons = {}
+        chapters = QVBoxLayout()
+        for key, chapter in CHAPTERS.items():
+            button = QPushButton(chapter.title)
+            button.setAutoDefault(False)  # Enter stays OK
+            button.setToolTip('Apply these settings, close this dialog and start this chapter of the tutorial.')
+            button.clicked.connect(lambda _=False, key=key: self.start_chapter(key))
+            chapters.addWidget(button)
+            self.tutorial_buttons[key] = button
+        form.addRow('Tutorial', chapters)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -183,6 +196,12 @@ class AppearanceDialog(QDialog):
     def set_choices(self, theme, scale):
         self.theme.setCurrentIndex(self.theme.findData(theme))
         self.scale.setCurrentIndex(self.scale.findData(scale))
+
+    def start_chapter(self, key):
+        self.chapter = key
+        self.accept()
+        if self.result() != QDialog.DialogCode.Accepted:
+            self.chapter = None  # the settings could not be saved and the dialog stays open
 
     def accept(self):
         from .resource_safety import update

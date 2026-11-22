@@ -164,6 +164,57 @@ class MenuTest(WindowCase):
         resize_appearance_controls(self.window())
 
 
+class SettingsTest(WindowCase):
+    """File > Settings... starts a chapter too."""
+    def answered(self, w, answer):
+        """Open Settings and let `answer(dialog)` stand for the user."""
+        from PySide6.QtWidgets import QDialog
+        from mocap.theme import AppearanceDialog
+        from mocap.workspace_ui import show_appearance_settings
+        def run(dialog):
+            answer(dialog)
+            return QDialog.DialogCode(dialog.result())
+        with patch.object(AppearanceDialog, 'exec', run):show_appearance_settings(w)  # a plain function binds the dialog
+
+    def test_settings_offer_both_chapters(self):
+        from mocap.theme import AppearanceDialog
+        dialog = AppearanceDialog(self.window());self.addCleanup(dialog.deleteLater)
+        self.assertEqual({key: button.text() for key, button in dialog.tutorial_buttons.items()},
+                         dict(basics='From video to export', hidden_ranges='Hidden ranges'))
+        self.assertIsNone(dialog.chapter)
+        self.assertTrue(all(button.toolTip() for button in dialog.tutorial_buttons.values()))
+
+    def test_a_chapter_chosen_in_settings_starts_when_the_dialog_closes(self):
+        w = self.window()
+        self.answered(w, lambda dialog: dialog.tutorial_buttons['hidden_ranges'].click())
+        self.assertEqual(w.tutorial.chapter.key, 'hidden_ranges');self.assertTrue(w.tutorial.card.isVisible())
+
+    def test_ok_or_cancel_in_settings_starts_nothing(self):
+        w = self.window()
+        self.answered(w, lambda dialog: dialog.accept());self.answered(w, lambda dialog: dialog.reject())
+        self.assertIsNone(w.tutorial)
+
+    def test_cancel_after_looking_at_a_chapter_button_starts_nothing(self):
+        w = self.window()
+        def answer(dialog):
+            dialog.chapter = 'basics';dialog.reject()
+        self.answered(w, answer)
+        self.assertIsNone(w.tutorial)
+
+    def test_a_chapter_button_also_keeps_the_chosen_appearance(self):
+        from mocap.theme import apply_appearance, current_appearance, load_appearance
+        w = self.window()
+        self.addCleanup(apply_appearance, APP, 'dark', 100)
+        def answer(dialog):
+            dialog.set_choices('light', 125);dialog.tutorial_buttons['basics'].click()
+        self.answered(w, answer)
+        self.assertEqual((current_appearance(), load_appearance()), (('light', 125), ('light', 125)))
+        self.assertEqual(w.tutorial.chapter.key, 'basics');self.assertEqual(w.tutorial.card.width(), 400)
+
+    def test_the_tutorial_says_it_is_in_settings_too(self):
+        self.assertIn('File → Settings', tutorial.WELCOME)
+
+
 class FirstRunTest(WindowCase):
     def test_first_run_shows_the_welcome_once(self):
         w = self.window()

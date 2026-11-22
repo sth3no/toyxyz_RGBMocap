@@ -92,10 +92,9 @@ def show_appearance_settings(window):
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return
     choices = dialog.theme.currentData(), dialog.scale.currentData()
-    if choices == old:
-        return
-    apply_appearance(QApplication.instance(), *choices)
-    resize_appearance_controls(window)
+    if choices != old:
+        apply_appearance(QApplication.instance(), *choices)
+        resize_appearance_controls(window)
     if choices[1] > old[1] and not (window.isMaximized() or window.isFullScreen()):
         area = window.screen().availableGeometry()
         decorations = window.frameGeometry().size() - window.size()
@@ -104,6 +103,9 @@ def show_appearance_settings(window):
         frame = window.frameGeometry()
         window.move(max(area.left(), min(frame.left(), area.right() - frame.width() + 1)),
                     max(area.top(), min(frame.top(), area.bottom() - frame.height() + 1)))
+    if dialog.chapter:  # a Tutorial button of the dialog: the chapter starts in the appearance just chosen
+        from .tutorial import open_chapter
+        open_chapter(window, dialog.chapter)
 
 
 def build_workspace(w):

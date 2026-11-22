@@ -1,5 +1,22 @@
 # Source package validation
 
+## Tutorial from Settings (2026-11-23)
+
+**File > Settings...** has a **Tutorial** row with one button per chapter. A
+button applies and saves the chosen theme and scale like **OK**, closes the
+dialog and starts that chapter.
+
+- Tests, offscreen with the GUI runtime, on the real `MainWindow`
+  (`tests/test_tutorial_window.py`, 36 tests in all): the dialog offers both
+  chapters; a chapter button starts its chapter after the dialog closes; a
+  theme and scale chosen before the button are applied and saved, and the
+  tutorial card takes the new scale; **OK** and **Cancel** start nothing. The
+  dialog's `exec` was replaced by a function standing for the user. The whole
+  `tests` folder in one process: 660 tests passed, 66 skipped, none failed.
+- The dialog was drawn offscreen in the dark and the light theme and looked at:
+  the row and both buttons fit.
+- Not run: the dialog on a real screen.
+
 ## Reconstruct 3D in view and people the 3D view cannot draw (2026-11-23)
 
 Seen in the real window on a 1080p screen: with four people checked only one
