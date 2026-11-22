@@ -141,7 +141,15 @@ def generated_fill(before, after, generated, keys):
         v = f(generated, k).reshape(n + 2, -1, 3); rows[k] = v
         # Local rotations compose on the right: generated row · D equals the boundary pose.
         diffs[k] = [(R.from_rotvec(v[i]).inv() * R.from_rotvec(x)).as_rotvec() for i, x in ((0, b), (-1, a))]
-    B = [_blend([d[side] for d in diffs.values()], n) for side in (0, 1)]
+    B = [_blend([d[side] for d in diffs.values()], 2 * BLEND_MAX) for side in (0, 1)]
+    # A range too short for both blends shares it out: every row takes 1-s of the start difference and s of the end one.
+    if max(B) > n // 2:
+        w = s[1:n + 1]; out['transl'] += (1 - w)[:, None] * (p0 - gp[0]) + w[:, None] * (p1 - gp[-1])
+        for k in keys:
+            if k not in generated: continue
+            v = rows[k]; D0, D1 = diffs[k]
+            out[k] = np.stack([(R.from_rotvec(v[j]) * R.from_rotvec(D0 * (1 - w[j - 1])) * R.from_rotvec(D1 * w[j - 1])).as_rotvec() for j in range(1, n + 1)]).reshape(n, -1)
+        B = [0, 0]
     u = lambda j, side: 1 - _smoothstep(j / (B[side] + 1))
     for j in range(1, B[0] + 1): out['transl'][j - 1] += u(j, 0) * (p0 - gp[0])
     for j in range(1, B[1] + 1): out['transl'][n - j] += u(j, 1) * (p1 - gp[-1])
@@ -149,6 +157,7 @@ def generated_fill(before, after, generated, keys):
         if k not in generated:
             b, a = np.atleast_2d(f(before, k)), np.atleast_2d(f(after, k))
             out[k] = _slerp(b[-1], a[0], s[1:n + 1]).reshape(n, -1); continue
+        if k in out: continue  # shared out above
         v = rows[k]; o = v[1:-1].copy(); D0, D1 = diffs[k]
         for j in range(1, B[0] + 1): o[j - 1] = (R.from_rotvec(v[j]) * R.from_rotvec(D0 * u(j, 0))).as_rotvec()
         for j in range(1, B[1] + 1): o[n - j] = (R.from_rotvec(v[n + 1 - j]) * R.from_rotvec(D1 * u(j, 1))).as_rotvec()

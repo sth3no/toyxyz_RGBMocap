@@ -215,11 +215,36 @@ class GeneratedFillTest(unittest.TestCase):
         out=g.generated_fill(self.before,self.after,self.gen,KEYS)
         np.testing.assert_allclose(out['left_hand_pose'],np.tile(.2*np.arange(1,n+1)[:,None]/(n+1),(1,45)),atol=1e-12)
         self.assertEqual(out['right_hand_pose'].shape,(n,45))
-    def test_one_frame(self):
-        gen={k:v[:3]+(.05 if k=='transl' else 0) for k,v in self.gen.items()};after={k:v[self.f0+1:self.f0+3] for k,v in self.m.items()}   # frame f0 hidden
-        out=g.generated_fill(self.before,after,gen,KEYS)
-        self.assertTrue(all(v.shape[0]==1 and np.isfinite(v).all() for v in out.values()))
-        np.testing.assert_allclose(out['transl'],gen['transl'][1:2],atol=1e-12)
+    def short(self,n,shift_after):
+        """Truth rows around n hidden frames; the generated rows are offset by 5 cm and 0.3 rad on one joint, and so is `after` when shift_after."""
+        rows=lambda a,b:{k:v[a:b].copy() for k,v in self.m.items()};f0=self.f0;f1=f0+n;O=R.from_rotvec([0,0,.3])
+        offset=lambda d:dict(d,transl=d['transl']+[.05,0,0],body_pose=np.c_[d['body_pose'][:,:9],(R.from_rotvec(d['body_pose'][:,9:12])*O).as_rotvec(),d['body_pose'][:,12:]])
+        gen=offset({k:v for k,v in rows(f0-1,f1+1).items() if k in('global_orient','body_pose','transl')});after=rows(f1,f1+2)
+        return rows(f0-2,f0),offset(after) if shift_after else after,gen,rows(f0-1,f1+1)
+    def test_short_ranges_correct_every_row(self):
+        for n in(1,2,3,9):
+            before,after,gen,truth=self.short(n,False)   # the same offset at both ends: every row is the truth again
+            out=g.generated_fill(before,after,gen,KEYS)
+            self.assertTrue(all(v.shape[0]==n and np.isfinite(v).all() for v in out.values()),n)
+            np.testing.assert_allclose(out['transl'],truth['transl'][1:-1],atol=1e-12,err_msg=str(n))
+            np.testing.assert_allclose(out['body_pose'],truth['body_pose'][1:-1],atol=1e-12,err_msg=str(n))
+            np.testing.assert_allclose(out['global_orient'],truth['global_orient'][1:-1],atol=1e-12,err_msg=str(n))
+    def test_short_ranges_spread_a_one_sided_offset(self):
+        for n in(1,2,3,9):
+            before,after,gen,truth=self.short(n,True)   # the offset only at the start: it is spread evenly over the n+1 steps
+            out=g.generated_fill(before,after,gen,KEYS)
+            p=np.vstack([before['transl'][-1:],out['transl'],after['transl'][:1]]);t=truth['transl']
+            step=np.linalg.norm(np.diff(p,axis=0),axis=1);true=np.linalg.norm(np.diff(t,axis=0),axis=1)
+            self.assertLessEqual((step-true).max(),.05/(n+1)+1e-9,n)
+            self.assertGreater(step.max(),.05/(n+1)/2,n)   # the offset is actually crossed
+            q=R.from_rotvec(np.vstack([before['body_pose'][-1:,9:12],out['body_pose'][:,9:12],after['body_pose'][:1,9:12]]));r=R.from_rotvec(truth['body_pose'][:,9:12])
+            step=(q[:-1].inv()*q[1:]).magnitude();true=(r[:-1].inv()*r[1:]).magnitude()
+            self.assertLessEqual((step-true).max(),.3/(n+1)+1e-9,n)
+    def test_long_ranges_keep_the_end_blends(self):
+        for shift in(False,True):   # 17 degrees: 5 blend rows each side; between them the generated rows are kept
+            before,after,gen,truth=self.short(20,shift);out=g.generated_fill(before,after,gen,KEYS)
+            np.testing.assert_allclose(out['transl'][5:15],gen['transl'][6:16],atol=1e-12);np.testing.assert_allclose(out['body_pose'][5:15],gen['body_pose'][6:16],atol=1e-12)
+            np.testing.assert_allclose(out['transl'][0],truth['transl'][1]+np.array([.05,0,0])*g._smoothstep(1/6),atol=1e-12)
 
 class ContactLogitsTest(unittest.TestCase):
     def test_values(self):
