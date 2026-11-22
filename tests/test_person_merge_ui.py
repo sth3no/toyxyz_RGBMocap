@@ -19,13 +19,13 @@ class PersonMergeUiTest(unittest.TestCase):
         self.tm,self.ps,self.W,self.PeopleList=tm,ps,PeopleWorkspace,PeopleList
         self.app=QApplication.instance() or QApplication([])
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=tm.build(self.tmp.name)
-        self.loaded=[];self.requested=[]
+        self.loaded=[];self.requested=[];self.kept=[]
     def host(self,project=None,model='gvhmr',busy=False):
         status=SimpleNamespace(value='');status.setText=lambda t:setattr(status,'value',t);status.text=lambda:status.value
         slider=SimpleNamespace(position=0,maximum=lambda:299);slider.value=lambda:slider.position;slider.setValue=lambda v:setattr(slider,'position',v)
         host=SimpleNamespace(busy=busy,contact_saving=False,people_root=self.root,people_state=self.ps.load_people(self.root),
             model_choice=SimpleNamespace(currentData=lambda:model),info=None,project=project,active_result='gvhmr',status=status,log=[],
-            load_project=self.loaded.append,_hidden_refresh=False,source_offset=0,slider=slider,motion_view=SimpleNamespace(auto_fit=True),
+            load_project=lambda path,keep_current_options=False:self.kept.append(keep_current_options) or self.loaded.append(path),_hidden_refresh=False,source_offset=0,slider=slider,motion_view=SimpleNamespace(auto_fit=True),
             request_people_scene=lambda force=False:self.requested.append(force),update_readiness=lambda:self.requested.append('ready'))
         for name in('_merge_people','_resync_people','_show_people','_scene_fps'):   # the helpers the handlers call on the window
             setattr(host,name,lambda *args,name=name:getattr(self.W,name)(host,*args))
@@ -86,9 +86,12 @@ class PersonMergeUiTest(unittest.TestCase):
         h=self.host()
         with mock.patch('mocap.person_merge.continue_as',side_effect=OSError('disk full')):self.W.continue_person_as(h,3,1)
         self.assertEqual(h.status.text(),'Cannot change the people of this scene: disk full');self.assertEqual(self.loaded,[])
+    def test_the_reload_keeps_the_options_in_use(self):
+        h=self.host(project=self.path(1,0,120));self.W.continue_person_as(h,3,1)
+        self.assertEqual(self.kept,[True])   # like switching the person: the camera background and a pending result stay
     def test_a_take_that_cannot_be_opened_is_reported(self):
         h=self.host(project=self.path(1,0,120))
-        def refuse(path):h.status.setText('Cannot open project: broken');return False
+        def refuse(path,keep_current_options=False):h.status.setText('Cannot open project: broken');return False
         h.load_project=refuse
         self.W.continue_person_as(h,3,1)
         self.assertEqual([p['id'] for p in h.people_state['people']],[1,2]);self.assertEqual(self.requested,[]);self.assertFalse(h._hidden_refresh)
@@ -178,7 +181,7 @@ class PersonMergeUiTest(unittest.TestCase):
         self.assertEqual(h.status.text(),'Late now continues as Anna. Right-click Anna and choose Separate again to undo.')
     def test_the_playhead_keeps_its_time(self):
         cover=self.path(7,121,136);h=self.host(project=cover);h.info={'fps':30};h.source_offset=121/30;h.slider.position=5
-        def load(path):self.loaded.append(path);h.slider.position=0   # a reload starts at the first frame
+        def load(path,keep_current_options=False):self.loaded.append(path);h.slider.position=0   # a reload starts at the first frame
         h.load_project=load
         self.W.continue_person_as(h,3,1)
         self.assertEqual(self.loaded,[cover]);self.assertEqual(h.slider.position,5);self.assertFalse(h.motion_view.auto_fit)

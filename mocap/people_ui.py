@@ -760,7 +760,7 @@ class PeopleWorkspace:
         shown=Path(self.project).resolve() if self.project else None
         path=shown if shown in used else used[-1] if used else safe_child(self.people_root,target['preview'])
         source_time=self.source_offset+(self.slider.value()/self.info['fps'] if self.info else 0)
-        loaded=self.load_project(path)
+        loaded=self.load_project(path,keep_current_options=True)
         if loaded is not False:
             self.motion_view.auto_fit=False
             if self.info:self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))))
