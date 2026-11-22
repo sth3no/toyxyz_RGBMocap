@@ -1071,7 +1071,7 @@ turns the fingers smoothly from the last captured finger pose before the range
 to the first one after it. **Copy from person** uses the other person's
 fingers, exchanged left to right with **Mirror**; the body and wrists of the
 joined result are the same with or without fingers. That person must have been
-reconstructed with **HandFlow** too: otherwise the row shows `<name> has no
+reconstructed with **HandFlow** too: otherwise the panel shows `<name> has no
 finger motion for this result. Reconstruct that person with HandFlow.` and
 **Fill hidden ranges** is disabled. **Automatic (Experimental)** generates no
 fingers; they turn smoothly between the two sides. Both neighbouring takes must
