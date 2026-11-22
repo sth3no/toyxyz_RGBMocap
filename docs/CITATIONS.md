@@ -158,8 +158,11 @@ mesh workflow or reported throughput.
 
 When using ExMR, also cite FootMR and the original GVHMR work.
 Cite optional HTD-Refine and HandFlow when using those add-ons. The
-application's use of Kimodo MotionCorrection does not imply use of the Kimodo
-text-to-motion generator.
+application's use of the vendored Kimodo MotionCorrection backend does not by
+itself imply use of the Kimodo motion generator. The optional Automatic fill of
+hidden ranges does use it (Kimodo with the Kimodo-SOMA-RP-v1.2 model, see
+[the Kimodo guide](models/KIMODO.md)); cite NVIDIA's Kimodo release if you use
+that feature.
 
 
 ## GeoCalib (PEAR Camera Align and MAMMA background gravity)

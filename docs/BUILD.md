@@ -188,6 +188,18 @@ Keep the overlay, weights and experiment outputs out of the source package.
 Verify text-only discovery, marking inside the trim, the last source frame on a
 high-FPS clip, and Default discovery after switching back.
 
+## Optional Kimodo runtime
+
+`Setup_Kimodo.cmd` installs a separate `runtime_kimodo/` overlay on the pinned
+ExMR environment for Automatic fill of hidden ranges; see the
+[Kimodo guide](models/KIMODO.md). Keep its dependencies and the pinned Kimodo
+revision in `tools/setup_kimodo.py` and `mocap/kimodo_runtime.py`, and the worker
+route through `kimodo_worker_boot.py`. The overlay holds Kimodo's code, fetched
+at the pinned revision, and six packages with pinned hashes; the model files are
+verified separately in Model Manager. Keep the overlay, the model files and
+experiment outputs out of the source package, and keep Kimodo's licence and
+attributions (`KIMODO_LICENSE`, `KIMODO_ATTRIBUTIONS.MD`) with the overlay.
+
 ## Optional MAMMA runtime
 
 Follow the [agent installation and native-build runbook](MAMMA_AGENT_SETUP.md)

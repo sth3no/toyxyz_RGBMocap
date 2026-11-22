@@ -920,7 +920,7 @@ an estimate and can leave residual sliding or penetration.
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. Right-click also offers **Continue as** and **Separate again** when the tracker found one human as two people; see [One person found as two](#one-person-found-as-two). |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
-| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation) or **Copy from person** (another person's motion). **Fill hidden ranges** writes one joined take. |
+| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic** (generated motion, optional). **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -972,21 +972,42 @@ to -21, 21 to 79.` (or `<name> has no captured take long enough to cover this
 range.`, or `Choose a person to copy from.`) and **Fill hidden ranges** is
 disabled. Joined takes are never used as the source.
 
+**Automatic** generates the motion of the range from the captured poses just
+before and just after it, with NVIDIA Kimodo. **The result is plausible motion,
+not what the person did.** On a group dance it was further from the real motion
+than a plain blend of the two end poses, so it is not a way to recover a
+dance. It is meant for ranges in which a person keeps moving or travels, for
+example while walking behind an object; that use has not been measured with
+real footage yet, so review the result. It has no text prompt in this version
+and generates no fingers: they blend between the two sides. A range may have up
+to 290 frames. **Variation** is a number from 0 to 999: another number gives
+another motion, and the same number gives the same motion again, because
+generated ranges are kept in the folder `auto_fill` inside the person's preview
+folder. Automatic needs a separate setup: close the app, run `Setup_Kimodo.cmd`,
+then get the eight Kimodo files in **Model Manager** (1.13 GB; **Download All**
+skips them). It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
+range takes roughly 10 to 15 seconds on an RTX 5060 Ti, including starting the
+generator. Until setup is complete, **Automatic** is greyed out and its tooltip
+says what is missing. The Console reports how closely each generated range met
+the captured poses, with a line such as `Frames 101–120 generated: the captured
+poses on both sides were met within 2.4 cm.` See the [Kimodo guide](models/KIMODO.md).
+
 The result is one new joined take that covers the takes and the chosen gaps. The
 scene, **Apply Correction**, export and retargeting use it instead of the source
 takes. The source takes are kept unchanged. The take selector shows the joined
 take with the suffix ` · filled`, and export file names end with `_filled`.
 
-Interpolated and copied frames are marked by a thin band on the timeline. Export
+Interpolated, copied and generated frames are marked by a thin band on the timeline. Export
 also writes a console line such as `Person 1_filled: 45 of 313 frames are
 interpolated across hidden ranges.` When a take has copied frames, it writes a
 line such as `Person 1_filled: 45 of 313 frames are filled across hidden ranges (0
-interpolated, 45 copied from another person).`
+interpolated, 45 copied from another person).` Generated frames are counted
+as `generated` in the same line.
 
 A joined take is used only while it is current. If a source take is
 reconstructed again, the other person of a copy is reconstructed again, or the
-person, **Mirror** or **Offset** of a copy is changed, the joined take is out of
-date: the selector shows
+person, **Mirror**, **Offset** or **Variation** of a range is changed, the joined
+take is out of date: the selector shows
 **Fill hidden ranges** as its status, the source takes are used again and the
 view moves to one of them. Click
 **Fill hidden ranges** to write a new joined take. Choosing **Do not fill**
@@ -1008,6 +1029,10 @@ Limits of this version:
   shows the reason when it is unavailable.
 - Manual contact-lock edits on the source takes are not carried into the joined
   take; the panel says so.
+- Automatic: 30 fps takes only and at most 290 frames per range. A joined take
+  needs **Apply Correction** like any joined take. A new Kimodo runtime or model
+  version does not make an existing joined take out of date; change the
+  **Variation** and fill again to generate the range again.
 
 ### One person found as two
 

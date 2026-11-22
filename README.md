@@ -96,6 +96,7 @@ you use them, after the base installation:
 | MAMMA | `Setup_MAMMA.cmd` | [MAMMA guide](docs/MAMMA.md) |
 | PromptHMR | `Setup_PromptHMR.cmd` | [PromptHMR guide](docs/models/PROMPTHMR.md) |
 | GEM-X | `Setup_GEMX.cmd` | [GEM-X guide](docs/models/GEMX.md) |
+| Kimodo (Automatic fill of hidden ranges, GVHMR and ExMR) | `Setup_Kimodo.cmd` | [Kimodo guide](docs/models/KIMODO.md) |
 
 MAMMA and PromptHMR require **Visual Studio 2022 C++ Build Tools**, the Windows SDK and
 **CUDA Toolkit 12.8** for local native builds. Close the app and review the
@@ -118,6 +119,12 @@ run `Setup_SAM31.cmd` after the base setup. Then choose **SAM 3.1** next to
 **Resource Mode > Automatic** can offload tracking state and masks to system
 RAM when VRAM is tight and retry once after CUDA runs out of memory.
 See the [SAM 3.1 tracker guide](docs/models/SAM31.md#vram-use).
+
+For optional **Automatic** fill of hidden ranges (GVHMR and ExMR), run
+`Setup_Kimodo.cmd` after the base setup, then get the eight Kimodo files
+(1.13 GB; **Download All** skips them) in **Model Manager**. Automatic produces
+plausible motion, not what the person did; see the
+[Kimodo guide](docs/models/KIMODO.md).
 
 **Track Face** adds CPU face tracking for saved video. The 3D viewport shows
 facial landmarks on SMPL-X, SMPL-H and SOMA surfaces. **Export Face** saves

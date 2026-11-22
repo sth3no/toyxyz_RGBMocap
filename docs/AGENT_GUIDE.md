@@ -116,6 +116,7 @@ Use **Model Manager** for the selected model and add-ons. Automatic download may
 | `Setup_PromptHMR.cmd` | Optional independent PromptHMR runtime | Same build tools, separate provider license review; MAMMA/SDF not required |
 | `Setup_GEMX.cmd` | Optional GEM-X Windows runtime | Reuses the pinned ExMR CPython and compatible CUDA DLLs, keeps its own inference packages, verifies CUDA. No compiler required. |
 | `Setup_SAM31.cmd` | Optional SAM 3.1 Find person tracker for ExMR, FlowHMR and GVHMR on Windows | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA with native bfloat16. Uses pinned wheels and a separate overlay. |
+| `Setup_Kimodo.cmd` | Optional Kimodo overlay for Automatic fill of hidden ranges (GVHMR, ExMR) | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA. Fetches Kimodo at a pinned revision and six pinned packages into `runtime_kimodo/` (about 15 MB); the model is a separate Model Manager download. See [the Kimodo guide](models/KIMODO.md). |
 | `update.cmd` | Source update and base runtime verification | Close the app and preserve tracked edits; it does not install the optional runtimes |
 
 ### GEM-X support
@@ -720,7 +721,7 @@ choices. `person['joins']` holds the joined takes, separately from
 is a new folder `<person>/takes/{first:09d}_{end:09d}_fill_v1` containing a
 normal take plus `fill.json` (sources with file stamps, gaps and methods, and
 `kinds`, the base results it provides, and `donors`) and `fill_mask.npy` (0
-captured, 1 interpolated, 2 copied; 3 is reserved). Consumers pick takes through
+captured, 1 interpolated, 2 copied, 3 generated). Consumers pick takes through
 `people_store.active_takes(root, person, kind)`. A join is current while its
 source files keep their stamps, each filled range is still a gap of
 `person['takes']` and `gap_fill` still selects the same choice (method and params; a copy choice is
@@ -751,8 +752,9 @@ up axis and its height above its own floor. A current joined take is part of
 the shared scene like any take: `scene_camera.take_projects` lists it after the
 person's takes, so it enters the shared floor inputs, and creating, removing or
 deactivating one changes the shared-floor signature. It never becomes the scene
-reference camera. `take_join.assemble` dispatches per gap through `FILLS`; a later
-method plugs in there with its own fill function and `params`.
+reference camera. `take_join.assemble` dispatches per gap through `FILLS`: `smooth`, `copy` and
+`auto`; a later method plugs in there with its own fill function and `params`.
+The Automatic files below are new too and are hashed into no cache identity.
 
 Copy from person (`gap_fill.copy_fill`, `take_join._copy`): the donor is read
 in its own world (world params only, `transl` turned into pelvis positions with
@@ -777,6 +779,45 @@ the donor's facing at its first row. Camera-space rows of a copied gap are its
 joined-world rows seen through a camera pairing interpolated between the two
 seams. Source and donor takes are never modified. For the user-facing behavior
 and limits see [the user guide](USER_GUIDE.md#hidden-ranges).
+
+Automatic fill (`take_join._auto`, `mocap/auto_fill.py`,
+`mocap/kimodo_runtime.py`, `kimodo_worker_boot.py`, `mocap/kimodo_fill.py`,
+`mocap/soma_convert.py`; setup in `Setup_Kimodo.cmd` and `tools/setup_kimodo.py`;
+user-facing behavior and licences in [the Kimodo guide](models/KIMODO.md)). The
+choice is `{'method': 'auto', 'seed': 0..999}` (`hidden_ranges.choice_params`,
+`SEED_LIMIT`); a range is limited to `AUTO_MAX_FRAMES` (290, so 290 + 2 x 5 known
+frames = the generator's 300) and the take rate to 30 fps. `_auto` sends up to
+45 captured frames from each side (`AUTO_CONTEXT`) as a request of arrays
+(SMPL-X `orient`, `pose`, pelvis, the body `rest` and `sole`, `frames`, `seed`,
+`fps`) to `auto_fill.generate`, which looks for `<key>.npz` in the folder
+`auto_fill` of the person's preview folder before starting a worker. The key
+hashes every request array and the generator identity
+(`kimodo_runtime.identity()`: Kimodo revision, profile version and the hash of
+the model file). On a miss it writes `<key>.request.npz`, starts the worker
+(`kimodo_runtime.command` runs `kimodo_worker_boot.py` in the ExMR Python,
+which activates the `exmr` profile and then adds `runtime_kimodo/` to
+`sys.path`), and publishes `<key>.partial.npz` as `<key>.npz` after validating
+it; request and partial files are removed afterwards, also those of a killed
+run. The response holds `orient`, `pose`, `pelvis` (5 known + n + 5 known rows,
+fewer on a short take), `contacts` (four columns, bool), `context` and
+`end_pose_cm`. Failures reach the user as `Refused` sentences (`Unavailable`).
+`gap_fill.generated_fill` joins the generated rows to the boundary frames
+(the boundary differences fade out at each end); keys the generator does not
+provide, the fingers, are interpolated between the two sides, `take_join` marks the rows 3
+in `fill_mask.npy`, and `fill.json` stores per gap `params` (`seed`) and the
+report `generator` (`name`, `identity`, `version`, `end_pose_cm`), which the
+currency check ignores like `residual_cm`: a new runtime or model does not make a
+join out of date, a changed seed does. `hidden_ranges_state.export_line` counts
+generated frames. The Hidden ranges panel offers Automatic and its Variation
+(`hidden_ranges_ui.py`); `people_ui.py` passes `kimodo_runtime.issue()` so the
+row is disabled with the reason when the runtime or the model is missing. Keep
+the GUI free of numpy and torch: `kimodo_runtime.py` is stdlib only, and the
+model rows are in `models.py` (`KIMODO_FILES`, the stage `kimodo_fill`,
+skipped by Download All in `model_manager.py`). `Setup_Kimodo.cmd` keeps a valid
+runtime, and otherwise builds a new overlay in `.setup` and swaps it in, leaving
+a `kimodo-backup-*` folder. Do not delete `runtime_kimodo/`, its backups or the
+Kimodo model files without the user's authorization. Real runs and their results
+belong in [VALIDATION.md](VALIDATION.md), not here.
 
 Continue as and Separate again (`mocap/person_merge.py`, Qt-free; handlers
 `continue_person_as` and `separate_person` and the right-click menu in
