@@ -1,6 +1,6 @@
 """Join one person of a scene into another and undo it, on the scene's files only (Qt-free).
 
-Every change is first written whole to PENDING and then executed by recover(); each step gives the same result when repeated, so a crash leaves a file that recover() finishes."""
+Every change is first written whole to PENDING and then executed step by step; each step gives the same result when repeated, so a file left by a failure or a crash is finished by recover()."""
 from __future__ import annotations
 import copy
 import json
@@ -10,16 +10,23 @@ import uuid
 from contextlib import closing
 from pathlib import Path
 import numpy as np
-from .people_store import load_people, safe_child
+from .people_store import load_people, read_people_json, safe_child
 from .storage import atomic_json
 
 PENDING = 'people_merge_pending.json'
+DISCARDED = 'people_merge_pending.discarded.json'
+SET_ASIDE = 'people_merge_pending.unreadable.json'
 MODELS = ('gvhmr', 'exmr')
-UNREADABLE = 'A previous Continue as did not finish and cannot be read. Run Find person again.'
+UNREADABLE = (f'A previous Continue as did not finish and its record cannot be read. It was set aside as {SET_ASIDE}. '
+              'Check the people of this scene; Find person can be run again to start over.')
 
 
 class Refused(ValueError):
     """str(error) is the message for the user."""
+
+
+class Unfinished(Refused):
+    """Part of the change is on disk; the pending file stays so that recover() finishes it."""
 
 
 def _name(person):
@@ -31,10 +38,14 @@ def candidates(state, ident):
 
 
 def absorbed(person):
-    try:
-        return [(r['person']['id'], _name(r['person'])) for r in reversed(person.get('absorbed') or [])]
-    except (TypeError, KeyError, AttributeError):
-        return []
+    records = person.get('absorbed') if isinstance(person, dict) else None
+    out = []
+    for r in reversed(records) if isinstance(records, list) else ():
+        try:
+            out.append((r['person']['id'], _name(r['person'])))
+        except (TypeError, KeyError, AttributeError):
+            continue
+    return out
 
 
 def _joined_id(record):
@@ -78,6 +89,39 @@ def _database(root, state):
     return path
 
 
+def _manifest(path):
+    """A take's project.json as a dict, None when it is missing or damaged; a file that cannot be opened is an error."""
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _tracking(path):
+    """(K, frame count) of a preview tracking.npz; raises when it is damaged."""
+    with open(path, 'rb') as file, np.load(file) as old:  # own handle: np.load leaves its own open when the file is damaged
+        if 'observed' not in old.files:
+            raise KeyError('observed')
+        return old['K'].copy(), len(old['boxes'])
+
+
+def _readable(root, projects, preview):
+    """Refuse before the pending file exists when a file a step reads is damaged, so nothing is half applied."""
+    for project in projects:
+        path = safe_child(root, project) / 'project.json'
+        if path.is_file() and _manifest(path) is None:
+            raise Refused(f'{Path(project, "project.json").as_posix()} cannot be read, so the people of this scene were not changed.')
+    path = safe_child(root, preview) / 'tracking.npz'
+    if path.is_file():
+        try:
+            _tracking(path)
+        except Exception:
+            raise Refused(f'{Path(preview, "tracking.npz").as_posix()} cannot be read, so the people of this scene were not changed.') from None
+
+
 def _person_ids(root, projects):
     ids = {}
     for project in projects:
@@ -105,14 +149,17 @@ def continue_as(root, source_id, target_id, model, fps):
         raise Refused(f'{_name(b)} and {_name(a)} are both visible in {len(own & theirs)} frames, so they cannot be the same person.')
     moved = _ranges(theirs - own)
     projects = [t['project'] for t in b.get('takes', [])]
+    _readable(root, projects, a['preview'])
     after = own | theirs
     record = dict(person=copy.deepcopy(b), index=state['people'].index(b), takes=projects, frames=moved,
-        before={k: a.get(k) for k in ('first', 'last', 'observations')}, person_ids=_person_ids(root, projects))
+        before={k: a.get(k) for k in ('first', 'last', 'observations', 'checked')}, person_ids=_person_ids(root, projects))
     state = copy.deepcopy(state)
     a = next(p for p in state['people'] if p['id'] == target_id)
     a['takes'] = [*a.get('takes', []), *copy.deepcopy(b.get('takes', []))]
     if after:
         a.update(first=min(after), last=max(after) + 1, observations=len(after))
+    if b.get('checked'):  # otherwise the motion that was shown disappears from the view
+        a['checked'] = True
     a['absorbed'] = [*(a.get('absorbed') or []), record]
     state['people'] = [p for p in state['people'] if p['id'] != source_id]
     state['active'] = target_id
@@ -129,6 +176,7 @@ def separate(root, target_id, source_id):
     if source_id not in ids or any(p['id'] == source_id for p in state['people']):
         raise Refused('Choose a person that was joined into this one.')
     _database(root, state)
+    _readable(root, a['absorbed'][ids.index(source_id)].get('person_ids') or {}, a['preview'])
     state = copy.deepcopy(state)
     a = next(p for p in state['people'] if p['id'] == target_id)
     record = a['absorbed'][ids.index(source_id)]
@@ -159,9 +207,21 @@ def separate(root, target_id, source_id):
 
 def _run(root, state, move, frames, person_ids, person):
     """move is (from, to) observation ids; person is the one whose preview tracking is rebuilt."""
-    atomic_json(root / PENDING, dict(version=1, state=state, move={'from': move[0], 'to': move[1], 'frames': frames},
-        person_ids=person_ids, tracking=dict(preview=person['preview'], observation=_observation(person))))
-    recover(root)
+    pending = dict(version=1, state=state, move={'from': move[0], 'to': move[1], 'frames': frames},
+        person_ids=person_ids, tracking=dict(preview=person['preview'], observation=_observation(person)))
+    atomic_json(root / PENDING, pending)
+    try:
+        _relabel(root, pending)
+    except Exception:  # one transaction that did not commit: nothing was applied, so there is nothing to finish
+        (root / PENDING).unlink(missing_ok=True)
+        raise
+    try:
+        for step in (_write_person_ids, _write_tracking, _publish, _retire):
+            step(root, pending)
+    except Exception as error:
+        text = str(error).rstrip()
+        raise Unfinished(f'The change could not be finished: {text}{"" if text.endswith(".") else "."} '
+                         'It will be finished when this scene is opened again.') from error
     return state
 
 
@@ -175,9 +235,9 @@ def _relabel(root, pending):
 def _write_person_ids(root, pending):
     for project, value in pending['person_ids'].items():
         path = safe_child(root, project) / 'project.json'
-        if not path.is_file():
+        manifest = _manifest(path)
+        if manifest is None:  # damaged after the start: left as it is, like a missing one
             continue
-        manifest = json.loads(path.read_text(encoding='utf-8'))
         if value is None:
             manifest.pop('person_id', None)
         else:
@@ -190,8 +250,12 @@ def _write_tracking(root, pending):
     path = safe_child(root, pending['tracking']['preview']) / 'tracking.npz'
     if not path.is_file():
         return
-    with np.load(path) as old:
-        K, count = old['K'].copy(), len(old['boxes'])
+    try:
+        K, count = _tracking(path)
+    except OSError:  # cannot be opened now: recover() tries again
+        raise
+    except Exception:  # damaged after the start: left as it is, like a missing one
+        return
     boxes = np.full((count, 4), np.nan, np.float32)
     observed = np.zeros(count, bool)
     with closing(_connect(_database(root, pending['state']))) as db:
@@ -212,14 +276,26 @@ def _publish(root, pending):
     atomic_json(root / 'people.json', pending['state'])
 
 
+def _retire(root, pending):
+    (root / PENDING).unlink()
+
+
+def _observations(root):
+    try:
+        return read_people_json(root / 'people.json')['observations']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def recover(root):
     """Finish an interrupted operation: True when there was one."""
     root = Path(root)
     path = root / PENDING
     if not path.is_file():
         return False
+    raw = path.read_bytes()  # a file that cannot be opened now stays for a later try
     try:
-        pending = json.loads(path.read_text(encoding='utf-8'))
+        pending = json.loads(raw.decode('utf-8'))
         if pending['version'] != 1:
             raise ValueError
         move, tracking = pending['move'], pending['tracking']
@@ -228,10 +304,13 @@ def recover(root):
                 and all(isinstance(f, list) and len(f) == 2 and all(type(x) is int for x in f) for f in move['frames'])
                 and all(isinstance(k, str) for k in pending['person_ids'])):
             raise ValueError
-    except (OSError, ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError):
+        os.replace(path, root / SET_ASIDE)  # kept for inspection, but it no longer blocks every change
         raise Refused(UNREADABLE) from None
+    if pending['state']['observations'] != _observations(root):  # Find person ran again since: replaying it would damage the new list
+        os.replace(path, root / DISCARDED)
+        return False
     _database(root, pending['state'])  # before any step, so a missing file leaves everything as it was
-    for step in (_relabel, _write_person_ids, _write_tracking, _publish):
+    for step in (_relabel, _write_person_ids, _write_tracking, _publish, _retire):
         step(root, pending)
-    path.unlink()
     return True

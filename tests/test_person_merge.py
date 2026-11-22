@@ -57,6 +57,10 @@ def assert_same(t,a,b):
     for k in a[3]:
         for x,y in zip(a[3][k],b[3][k]):t.assertTrue(np.array_equal(x,y,equal_nan=True),k)
 
+def files(root):
+    """Every file of the scene byte for byte; works also when a file is damaged."""
+    return {str(p.relative_to(root)):p.read_bytes() for p in sorted(Path(root).rglob('*')) if p.is_file()}
+
 def motion(root):
     return {str(p):(p.stat().st_size,p.stat().st_mtime_ns) for p in sorted(root.glob('people/gen/*/takes/*/hmr4d_results.pt'))}
 
@@ -146,7 +150,7 @@ class PersonMergeTest(unittest.TestCase):
         self.assertFalse((root/DB).exists());self.assertEqual((root/'people.json').read_bytes(),before);self.assertFalse((root/m.PENDING).exists())
     def test_recover_without_database_is_refused_and_creates_nothing(self):
         root=self.root;m.continue_as(root,3,1,'gvhmr',30)
-        with mock.patch.object(m,'_relabel',side_effect=OSError('stopped')),self.assertRaises(OSError):m.separate(root,1,3)
+        with mock.patch.object(m,'_write_person_ids',side_effect=OSError('stopped')),self.assertRaises(m.Unfinished):m.separate(root,1,3)
         (root/DB).unlink();pending=(root/m.PENDING).read_bytes();people=(root/'people.json').read_bytes()
         for call in(lambda:m.recover(root),lambda:m.continue_as(root,3,1,'gvhmr',30)):
             with self.assertRaises(m.Refused) as c:call()
@@ -160,7 +164,7 @@ class PersonMergeTest(unittest.TestCase):
         pending=dict(version=1,state=dict(observations=DB,people=[]),move={'from':1,'to':7,'frames':[[120,136]]},person_ids={},tracking=dict(preview=PREVIEW(1)))
         (root/m.PENDING).write_text(json.dumps(pending),encoding='utf-8')
         with self.assertRaises(m.Refused) as c:m.recover(root)
-        self.assertEqual(str(c.exception),'A previous Continue as did not finish and cannot be read. Run Find person again.')
+        self.assertEqual(str(c.exception),m.UNREADABLE)
     def test_interrupted_operation_is_finished(self):
         with tempfile.TemporaryDirectory() as tmp:
             ref=build(tmp);m.continue_as(ref,3,1,'gvhmr',30);want=snapshot(ref)
@@ -168,31 +172,107 @@ class PersonMergeTest(unittest.TestCase):
             def stop_at_people(path,value):
                 if Path(path).name=='people.json':raise OSError('stopped')
                 real(path,value)
-            cases=(('before the database',mock.patch.object(m,'_relabel',side_effect=OSError('stopped'))),
-                   ('after the database',mock.patch.object(m,'_write_person_ids',side_effect=OSError('stopped'))),
+            cases=(('after the database',mock.patch.object(m,'_write_person_ids',side_effect=OSError('stopped'))),
                    ('after the tracking',mock.patch.object(m,'atomic_json',side_effect=stop_at_people)))
             for name,patch in cases:
                 with self.subTest(name),tempfile.TemporaryDirectory() as tmp2:
                     root=build(tmp2)
-                    with patch,self.assertRaises(OSError):m.continue_as(root,3,1,'gvhmr',30)
+                    with patch,self.assertRaises(m.Unfinished):m.continue_as(root,3,1,'gvhmr',30)
                     self.assertTrue((root/m.PENDING).is_file())
                     self.assertTrue(m.recover(root));self.assertFalse((root/m.PENDING).exists());self.assertFalse(m.recover(root))
                     got=snapshot(root);want[0]['input']=got[0]['input'];self.assertEqual(got[0],want[0]);assert_same(self,want,got)
     def test_interrupted_separate_is_finished(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=build(tmp);before=snapshot(root);m.continue_as(root,3,1,'gvhmr',30)
-            with mock.patch.object(m,'_write_tracking',side_effect=OSError('stopped')),self.assertRaises(OSError):m.separate(root,1,3)
+            with mock.patch.object(m,'_write_tracking',side_effect=OSError('stopped')),self.assertRaises(m.Unfinished):m.separate(root,1,3)
             self.assertTrue(m.recover(root));after=snapshot(root);before[0]['active']=after[0]['active'];assert_same(self,before,after)
+    def merged(self):
+        """Snapshot of an uninterrupted Continue as of Cover into Anna, built in a scene of its own."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ref=build(tmp);m.continue_as(ref,3,1,'gvhmr',30);return snapshot(ref)
+    def assert_merged(self,want):
+        got=snapshot(self.root);want[0]['input']=got[0]['input'];assert_same(self,want,got)
+    def test_a_failed_first_step_leaves_nothing_behind(self):
+        root=self.root;before=snapshot(root)
+        with mock.patch.object(m,'_relabel',side_effect=sqlite3.OperationalError('database is locked')),self.assertRaises(sqlite3.OperationalError):
+            m.continue_as(root,3,1,'gvhmr',30)
+        self.assertFalse((root/m.PENDING).exists());assert_same(self,before,snapshot(root))
+        m.continue_as(root,3,1,'gvhmr',30);self.assert_merged(self.merged())
+    def test_a_failed_later_step_is_reported_and_finished_later(self):
+        root=self.root;want=self.merged()
+        with mock.patch.object(m,'_write_person_ids',side_effect=PermissionError('stopped')),self.assertRaises(m.Unfinished) as c:
+            m.continue_as(root,3,1,'gvhmr',30)
+        self.assertIsInstance(c.exception,m.Refused)
+        self.assertEqual(str(c.exception),'The change could not be finished: stopped. It will be finished when this scene is opened again.')
+        self.assertTrue((root/m.PENDING).is_file())
+        self.assertTrue(m.recover(root));self.assertFalse((root/m.PENDING).exists());self.assert_merged(want)
+    def test_crash_after_people_json_is_saved(self):
+        root=self.root;want=self.merged()
+        with mock.patch.object(m,'_retire',side_effect=OSError('in use.')),self.assertRaises(m.Unfinished) as c:m.continue_as(root,3,1,'gvhmr',30)
+        self.assertEqual(str(c.exception),'The change could not be finished: in use. It will be finished when this scene is opened again.')
+        self.assertTrue((root/m.PENDING).is_file());self.assertEqual(len(ps.load_people(root)['people']),2)
+        self.assertTrue(m.recover(root));self.assertFalse((root/m.PENDING).exists());self.assert_merged(want)
+    def test_unreadable_files_are_refused_before_anything_changes(self):
+        manifest=take(7,121,136)+'/project.json'
+        def truncate(root):p=root/PREVIEW(1)/'tracking.npz';p.write_bytes(p.read_bytes()[:100])
+        def without_k(root):np.savez_compressed(root/PREVIEW(1)/'tracking.npz',boxes=np.zeros((300,4),np.float32),observed=np.zeros(300,bool))
+        def not_json(root):(root/manifest).write_text('{',encoding='utf-8')
+        cases=((truncate,PREVIEW(1)+'/tracking.npz',False),(without_k,PREVIEW(1)+'/tracking.npz',False),(not_json,manifest,False),
+               (not_json,manifest,True),(truncate,PREVIEW(1)+'/tracking.npz',True))
+        for damage,name,joined in cases:
+            with self.subTest(damage=damage.__name__,separate=joined),tempfile.TemporaryDirectory() as tmp:
+                root=build(tmp)
+                if joined:m.continue_as(root,3,1,'gvhmr',30)
+                damage(root);before=files(root)
+                with self.assertRaises(m.Refused) as c:m.separate(root,1,3) if joined else m.continue_as(root,3,1,'gvhmr',30)
+                self.assertEqual(str(c.exception),f'{name} cannot be read, so the people of this scene were not changed.')
+                self.assertEqual(files(root),before);self.assertFalse((root/m.PENDING).exists())
+    def test_recover_skips_a_file_damaged_after_the_start(self):
+        root=self.root
+        with mock.patch.object(m,'_write_person_ids',side_effect=OSError('stopped')),self.assertRaises(m.Unfinished):m.continue_as(root,3,1,'gvhmr',30)
+        (root/take(7,121,136)/'project.json').write_text('{',encoding='utf-8');(root/PREVIEW(1)/'tracking.npz').write_bytes(b'')
+        self.assertTrue(m.recover(root));self.assertFalse((root/m.PENDING).exists())
+        self.assertEqual([p['id'] for p in ps.load_people(root)['people']],[1,2]);self.assertEqual(rows(root,1,120,136),list(range(120,136)))
+        self.assertEqual((root/take(7,121,136)/'project.json').read_text(encoding='utf-8'),'{');self.assertEqual((root/PREVIEW(1)/'tracking.npz').read_bytes(),b'')
+    def test_a_pending_file_of_an_earlier_find_person_is_set_aside(self):
+        root=self.root;before=snapshot(root)
+        pending=dict(version=1,state=dict(observations='people/old/observations.sqlite',people=[]),move={'from':7,'to':1,'frames':[[120,136]]},
+            person_ids={},tracking=dict(preview=PREVIEW(1),observation=1))
+        text=json.dumps(pending);(root/m.PENDING).write_text(text,encoding='utf-8')
+        (root/'people_merge_pending.discarded.json').write_text('older',encoding='utf-8')
+        self.assertFalse(m.recover(root));self.assertFalse((root/m.PENDING).exists())
+        self.assertEqual((root/'people_merge_pending.discarded.json').read_text(encoding='utf-8'),text)
+        assert_same(self,before,snapshot(root))
+        m.continue_as(root,3,1,'gvhmr',30);self.assert_merged(self.merged())
     def test_recover_without_pending_file(self):self.assertFalse(m.recover(self.root))
-    def test_unreadable_pending_file_is_refused_and_kept(self):
-        before=snapshot(self.root)
+    def test_unreadable_pending_file_is_set_aside_once(self):
+        self.assertEqual(m.UNREADABLE,'A previous Continue as did not finish and its record cannot be read. It was set aside as people_merge_pending.unreadable.json. '
+            'Check the people of this scene; Find person can be run again to start over.')
+        before=snapshot(self.root);aside=self.root/'people_merge_pending.unreadable.json'
         for text in('{',json.dumps(dict(version=2,state={}))):
-            (self.root/m.PENDING).write_text(text,encoding='utf-8')
             for call in(lambda:m.recover(self.root),lambda:m.continue_as(self.root,3,1,'gvhmr',30),lambda:m.separate(self.root,1,3)):
+                (self.root/m.PENDING).write_text(text,encoding='utf-8')
                 with self.assertRaises(m.Refused) as c:call()
-                self.assertEqual(str(c.exception),'A previous Continue as did not finish and cannot be read. Run Find person again.')
-            self.assertEqual((self.root/m.PENDING).read_text(encoding='utf-8'),text)
-        (self.root/m.PENDING).unlink();assert_same(self,before,snapshot(self.root))
+                self.assertEqual(str(c.exception),m.UNREADABLE)
+                self.assertFalse((self.root/m.PENDING).exists());self.assertEqual(aside.read_text(encoding='utf-8'),text)
+                self.assertFalse(m.recover(self.root))
+        assert_same(self,before,snapshot(self.root))
+    def test_a_checked_person_keeps_showing_after_the_join(self):
+        for anna_checked in(False,None):
+            for order in((3,4),(4,3)):
+                with self.subTest(anna=anna_checked,order=order),tempfile.TemporaryDirectory() as tmp:
+                    root=build(tmp);add_person(root,4,'Late',9,range(140,151),[(140,151)])
+                    state=ps.load_people(root);anna=state['people'][0]
+                    if anna_checked is None:del anna['checked']
+                    else:anna['checked']=False
+                    ps.save_people(root,state)
+                    self.assertTrue(m.continue_as(root,3,1,'gvhmr',30)['people'][0]['checked'])
+                    self.assertTrue(m.continue_as(root,4,1,'gvhmr',30)['people'][0]['checked'])
+                    for ident in order:state=m.separate(root,1,ident)
+                    anna=state['people'][0]
+                    if anna_checked is None:self.assertNotIn('checked',anna)
+                    else:self.assertIs(anna['checked'],False)
+                    self.assertTrue(all(p['checked'] for p in state['people'][1:]))
     def test_candidates_and_absorbed(self):
         state=ps.load_people(self.root)
         self.assertEqual(m.candidates(state,3),[(1,'Anna'),(2,'Ben')])
@@ -200,6 +280,9 @@ class PersonMergeTest(unittest.TestCase):
         self.assertEqual(m.absorbed(dict(id=1)),[]);self.assertEqual(m.absorbed(dict(id=1,absorbed='bad')),[])
         self.assertEqual(m.absorbed(dict(id=1,absorbed=[dict(person={})])),[])
         self.assertEqual(m.absorbed(dict(id=1,absorbed=[dict(person=dict(id=5))])),[(5,'Person 5')])
+    def test_one_malformed_record_does_not_hide_the_others(self):
+        records=[dict(person=dict(id=5)),'bad',dict(person={}),dict(person=5),None,dict(person=dict(id=6,name='Six'))]
+        self.assertEqual(m.absorbed(dict(id=1,absorbed=records)),[(6,'Six'),(5,'Person 5')])
     def test_motion_files_are_never_touched(self):
         before=motion(self.root);m.continue_as(self.root,3,1,'gvhmr',30);self.assertEqual(motion(self.root),before)
         m.separate(self.root,1,3);self.assertEqual(motion(self.root),before)
