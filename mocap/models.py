@@ -497,6 +497,7 @@ def copy_hashed(source: Path, target: Path, report: bool = False) -> str:
 
 
 def require_space(name: str, missing_bytes: int) -> None:
+    if not missing_bytes:return  # nothing to write
     needed=missing_bytes+256*1024**2
     folder=MODELS
     while not folder.exists() and folder.parent!=folder:folder=folder.parent
@@ -507,8 +508,10 @@ def require_space(name: str, missing_bytes: int) -> None:
 
 def import_llama(source: Path) -> Path:
     """Import the four Llama 3 weight files from the folder that holds the one the user chose."""
-    import os, uuid
+    import os
     files=[BY_KEY[key] for key in GROUPS['kimodo_llama']]
+    # A stopped worker does not unwind, so remove what an earlier import left staged before anything is measured.
+    for stale in files[0].path.parent.glob('model-0000?-of-00004.safetensors.*part'):stale.unlink(missing_ok=True)
     if source.name not in {model.path.name for model in files}:
         raise ValueError('Choose one of the four model-0000N-of-00004.safetensors files.')
     for model in files:
@@ -523,7 +526,7 @@ def import_llama(source: Path) -> Path:
         # Every file is copied and checked before any is published, so a wrong file leaves nothing new behind.
         for model in pending:
             model.path.parent.mkdir(parents=True,exist_ok=True)
-            temporary=model.path.with_name(model.path.name+'.'+uuid.uuid4().hex+'.part');staged.append(temporary)
+            temporary=model.path.with_name(model.path.name+'.import.part');staged.append(temporary)
             incoming=source.parent/model.path.name
             if copy_hashed(incoming,temporary,report=True)!=model.expected_sha256:
                 raise ValueError(model.path.name+' is not the expected Llama 3 8B Instruct file.')

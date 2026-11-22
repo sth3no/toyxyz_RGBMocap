@@ -309,6 +309,12 @@ def small_records(keys):
                                      expected_sha256=hashlib.sha256(content(key)).hexdigest()) for key in keys}
 
 
+def free_space(free):
+    """What shutil.disk_usage returns, as far as the free-space check reads it."""
+    from types import SimpleNamespace
+    return SimpleNamespace(free=free)
+
+
 def content(key):
     """What the patched network returns for a downloadable record, else a short stand-in."""
     url = models.BY_KEY[key].download_url
@@ -372,7 +378,7 @@ class KimodoGroupTests(unittest.TestCase):
         import shutil
         for key in ('kimodo_text', 'kimodo'):
             needed = sum(models.BY_KEY[member].minimum_bytes for member in models.GROUPS[key]) + 256 * 1024**2
-            with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed - 1)):
+            with patch.object(shutil, 'disk_usage', return_value=free_space(needed - 1)):
                 with self.assertRaisesRegex(OSError, r'^Not enough free disk space for '
                                             + models.BY_KEY[key].name.replace('(', r'\(').replace(')', r'\)')
                                             + r' \(0\.3 GiB needed\)\.$'):
@@ -422,12 +428,44 @@ class KimodoGroupTests(unittest.TestCase):
         import shutil
         self.downloads()
         needed = sum(models.BY_KEY[key].minimum_bytes for key in LLAMA_KEYS) + 256 * 1024**2
-        with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed - 1)):
+        with patch.object(shutil, 'disk_usage', return_value=free_space(needed - 1)):
             with self.assertRaisesRegex(OSError, r'^Not enough free disk space for Llama 3 8B Instruct Weights'):
                 models.import_model_file('kimodo_llama', self.folder / 'model-00002-of-00004.safetensors')
         self.assertEqual(self.files(), [])
-        with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed)):
+        with patch.object(shutil, 'disk_usage', return_value=free_space(needed)):
             models.import_model_file('kimodo_llama', self.folder / 'model-00002-of-00004.safetensors')
+
+    def test_llama_import_removes_parts_a_stopped_import_left(self):
+        import shutil
+        target = models.BY_KEY['kimodo_llama'].path.parent
+        needed = sum(models.BY_KEY[key].minimum_bytes for key in LLAMA_KEYS) + 256 * 1024**2
+        def stale():
+            target.mkdir(parents=True, exist_ok=True)
+            parts = (target / 'model-00002-of-00004.safetensors.import.part',
+                     target / ('model-00003-of-00004.safetensors.' + '0' * 32 + '.part'))
+            for part in parts:part.write_bytes(b'left by a stopped import')
+            return parts
+        def usage(folder):  # free space as it would be with the stale parts still on disk
+            return free_space(needed - sum(part.stat().st_size for part in target.glob('*part')))
+        with patch.object(shutil, 'disk_usage', side_effect=usage):
+            self.downloads(); (self.folder / 'model-00004-of-00004.safetensors').write_bytes(
+                b'y' * models.BY_KEY['kimodo_llama_4'].minimum_bytes)
+            parts = stale()
+            with self.assertRaisesRegex(ValueError, 'not the expected Llama 3 8B Instruct file'):
+                models.import_model_file('kimodo_llama', self.folder / 'model-00001-of-00004.safetensors')
+            self.assertFalse(any(part.exists() for part in parts)); self.assertEqual(self.files(), [])
+            self.downloads(); parts = stale()
+            models.import_model_file('kimodo_llama', self.folder / 'model-00001-of-00004.safetensors')
+        self.assertFalse(any(part.exists() for part in parts))
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_llama']))
+        self.assertEqual(sorted(path.name for path in target.iterdir() if path.suffix == '.part'), [])
+
+    def test_a_complete_group_downloads_nothing_and_needs_no_space(self):
+        import shutil
+        for key in TEXT_KEYS:self.install(key)
+        with patch.object(shutil, 'disk_usage', return_value=free_space(0)):
+            self.assertEqual(models.download('kimodo_text'), models.BY_KEY['kimodo_text'].path)
+        self.assertEqual(self.urls, [])
 
     def test_removing_a_leader_removes_the_whole_group(self):
         for key in LLAMA_KEYS:self.install(key)
