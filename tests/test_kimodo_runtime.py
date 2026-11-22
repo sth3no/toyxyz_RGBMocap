@@ -92,6 +92,27 @@ class LocationTest(unittest.TestCase):
         with patch.object(models, 'missing', return_value=[]):
             self.assertIsNone(runtime.issue())
 
+    def test_text_issue(self):
+        self.assertEqual(runtime.text_issue(), SENTENCE)
+        self.prepare()
+        text = ('A description needs the Kimodo text adapters and the Llama 3 weights. '
+                'Use Set up… to get them in Model Manager.')
+        def missing(stage, files):return lambda name: [models.BY_KEY['kimodo_llama']] if name == stage and files else []
+        with patch.object(models, 'missing', side_effect=missing('kimodo_text', True)):
+            self.assertEqual(runtime.text_issue(), text)
+        with patch.object(models, 'missing', side_effect=missing('kimodo_fill', True)):
+            self.assertEqual(runtime.text_issue(), 'Get the Kimodo model in Model Manager to use automatic fill.')
+        with patch.object(models, 'missing', return_value=[]):
+            self.assertIsNone(runtime.text_issue())
+
+    def test_text_identity_names_every_text_file(self):
+        identity = runtime.text_identity()
+        keys = models.STAGE_REQUIREMENTS['kimodo_text']
+        self.assertEqual(len(keys), 12)
+        self.assertEqual(identity, ':'.join([runtime.REVISION, str(runtime.PROFILE_VERSION),
+                                             *(models.BY_KEY[key].expected_sha256 for key in keys)]))
+        self.assertEqual(len(set(identity.split(':')[2:])), 12)
+
     def test_identity_names_the_revision_and_the_weights(self):
         identity = runtime.identity()
         self.assertEqual(identity, f"{runtime.REVISION}:{runtime.PROFILE_VERSION}:{models.BY_KEY['kimodo'].expected_sha256}")

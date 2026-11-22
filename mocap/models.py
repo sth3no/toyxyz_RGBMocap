@@ -110,7 +110,7 @@ MODELS_LIST.extend([
 # Kimodo for automatic fill of hidden ranges: the files its loader reads, from one pinned snapshot.
 KIMODO_REV = '0e3c89024d896064b6851201373f7834784a386b'
 KIMODO_FILES = (
-    ('kimodo', 'Kimodo Motion Generation (Optional)', 'model.safetensors', 1133177724, 'fdcef624140a12c0a4840192ce0b75cafb4e73228a893da3864b4a990d3e919e'),
+    ('kimodo', 'Kimodo Motion Generation (Experimental, optional)', 'model.safetensors', 1133177724, 'fdcef624140a12c0a4840192ce0b75cafb4e73228a893da3864b4a990d3e919e'),
     ('kimodo_config', 'Kimodo Configuration (Optional)', 'config.yaml', 675, '82f1e9f44d0df517d8ebde03d2e9396fd0bf372360714757901c1d97a2626599'),
     ('kimodo_stats_body_mean', 'Kimodo Statistics (body mean) (Optional)', 'stats/motion/body/mean.npy', 3040, 'd42f35f8bb7ef52fdec66ae29c5cf590bd038f4f1aabd2d560d1d0f78663ed6f'),
     ('kimodo_stats_body_std', 'Kimodo Statistics (body std) (Optional)', 'stats/motion/body/std.npy', 3040, '965bbad497726ef4e6c46b519827e2cbcb29f974214b25718d20a725b82279ed'),
@@ -123,6 +123,36 @@ MODELS_LIST.extend(
     Model(key, name, 'kimodo/Kimodo-SOMA-RP-v1.2/' + path, 'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2', minimum_bytes=size,
           download_url=f'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2/resolve/{KIMODO_REV}/{path}', expected_sha256=digest)
     for key, name, path, size, digest in KIMODO_FILES)
+# A description for automatic fill: LLM2Vec's two adapters (public) and Meta's gated Llama 3 weights (imported by the user).
+LLM2VEC = 'https://huggingface.co/McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp'
+KIMODO_TEXT_FILES = (  # key, name, folder, repository, revision, file, size, SHA-256
+    ('kimodo_text', 'Kimodo Text Adapters (Experimental, optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'adapter_model.safetensors', 167829552, 'de9c8736618a13173c6a1623cdef1b75e86c69317f1073ae82cd516ac36a632d'),
+    ('kimodo_text_mntp_config', 'Kimodo Text Adapter Configuration (Optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'adapter_config.json', 794, '1d3bbf14142865885ea8d0dbc1fb261adf4f5d14ddbdc939efb47c4913037813'),
+    ('kimodo_text_model_config', 'Kimodo Text Encoder Configuration (Optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'config.json', 781, '416c570276487324e49dca7c3d79e212b948d9cb2282fa734b1fa8014de041d1'),
+    ('kimodo_text_tokenizer', 'Kimodo Text Tokenizer (Optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'tokenizer.json', 9085671, '52b583ee1699c6ca4468f70885bd5f96dd1f7517292362a67581038afc04f4d8'),
+    ('kimodo_text_tokenizer_config', 'Kimodo Text Tokenizer Configuration (Optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'tokenizer_config.json', 51042, '0655c52e874137e4a455228155d982c4ea18419f461a10ceb57054995fec4223'),
+    ('kimodo_text_special_tokens', 'Kimodo Text Special Tokens (Optional)', 'mntp', LLM2VEC, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'special_tokens_map.json', 335, '849070cae53bd45439e64ce5b1ddd650a66081b1bd47895c5a58939a05055579'),
+    ('kimodo_text_supervised', 'Kimodo Text Adapter, Supervised (Optional)', 'supervised', LLM2VEC + '-supervised', 'baa8ebf04a1c2500e61288e7dad65e8ae42601a7', 'adapter_model.safetensors', 167829552, '53f8f94ebdf396667ba99dd96e78203edae27bbcdbd1cf5f12b611e1d916b225'),
+    ('kimodo_text_supervised_config', 'Kimodo Text Adapter Configuration, Supervised (Optional)', 'supervised', LLM2VEC + '-supervised', 'baa8ebf04a1c2500e61288e7dad65e8ae42601a7', 'adapter_config.json', 794, '2a1265e4a7829c16dad38a5175ec8ac41ea1e851654da5044ace2437615a58ba'),
+)
+MODELS_LIST.extend(
+    Model(key, name, f'kimodo_text/{folder}/{file}', repository, minimum_bytes=size,
+          download_url=f'{repository}/resolve/{revision}/{file}', expected_sha256=digest)
+    for key, name, folder, repository, revision, file, size, digest in KIMODO_TEXT_FILES)
+LLAMA = 'https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct'
+LLAMA_FILES = (  # gated: no download_url; the user imports all four from the folder they downloaded them into
+    ('kimodo_llama', 'Llama 3 8B Instruct Weights for Descriptions (Experimental, optional)', 'model-00001-of-00004.safetensors', 4976698672, 'd8cf9c4d0dd972e1a2131bfe656235ee98221679711a3beef6d46dadf0f20b5c'),
+    ('kimodo_llama_2', 'Llama 3 8B Instruct Weights, part 2 of 4 (Optional)', 'model-00002-of-00004.safetensors', 4999802720, '8d4782b4a69ef03845159ce1a15e272aadaaf134dc138d68f616098e8531729c'),
+    ('kimodo_llama_3', 'Llama 3 8B Instruct Weights, part 3 of 4 (Optional)', 'model-00003-of-00004.safetensors', 4915916176, '3acdd690e65c24f42a24581b8467af98bd3ca357444580f8012aacd2bd607921'),
+    ('kimodo_llama_4', 'Llama 3 8B Instruct Weights, part 4 of 4 (Optional)', 'model-00004-of-00004.safetensors', 1168138808, '67e9ad31c8c32abf3a55ee7fc7217b3ecb35fd3c74d98a5bd233e0e4d6964f46'),
+)
+MODELS_LIST.extend(Model(key, name, 'kimodo_text/llama/' + file, LLAMA, minimum_bytes=size, expected_sha256=digest)
+                   for key, name, file, size, digest in LLAMA_FILES)
+# A row that stands for several files: leader key -> every key of the group, the leader included.
+GROUPS = {'kimodo': tuple(entry[0] for entry in KIMODO_FILES),
+          'kimodo_text': tuple(entry[0] for entry in KIMODO_TEXT_FILES),
+          'kimodo_llama': tuple(entry[0] for entry in LLAMA_FILES)}
+LEADERS = {member: leader for leader, members in GROUPS.items() for member in members}
 from .mamma_models import ASSETS as MAMMA_ASSETS, KEYS as MAMMA_KEYS, INSTRUCTIONS as MAMMA_INSTRUCTIONS
 MODELS_LIST.extend(Model(**entry) for entry in MAMMA_ASSETS)
 from .prompthmr_models import ASSETS as PHMR_ASSETS,KEYS as PHMR_KEYS,CAMERA_KEYS as PHMR_CAMERA_KEYS,INSTRUCTIONS as PHMR_INSTRUCTIONS
@@ -151,6 +181,12 @@ MANUAL_INSTRUCTIONS.update(MAMMA_INSTRUCTIONS)
 MANUAL_INSTRUCTIONS.update(PHMR_INSTRUCTIONS)
 MANUAL_INSTRUCTIONS.update(PEAR_INSTRUCTIONS)
 MANUAL_INSTRUCTIONS.update(GEMX_INSTRUCTIONS)
+MANUAL_INSTRUCTIONS['kimodo_llama'] = (
+    '1. Sign in at Hugging Face and open meta-llama/Meta-Llama-3-8B-Instruct using the Official website link below.\n'
+    "2. Read and accept Meta's Llama 3 licence on that page. Wait until your account has access.\n"
+    '3. Open Files and versions and download the four model-0000N-of-00004.safetensors files (N = 1 to 4, about 16 GB) into one folder.\n'
+    '4. Return to this row, click Import... and choose any one of the four files. The app imports all four from that folder.\n'
+    'The app does not need your account password or access token.')
 
 for _key in ('mano_right','smplh'):
     MANUAL_INSTRUCTIONS[_key] += ('\nIf the MANO website shows 502 Bad Gateway, use the Recommended download link below '
@@ -185,6 +221,9 @@ MANUAL_DETAILS = {
         location='flowhmr_latest/config.yml',avoid='The flowhmr_base configuration, config.json, an HTML page, or a configuration from a different revision.'),
     'flow_metadata': dict(selection='Files and versions > config.json (repository root)',
         location='config.json',avoid='config.yml, edited JSON, an HTML page, or a different revision.'),
+    'kimodo_llama': dict(selection='meta-llama/Meta-Llama-3-8B-Instruct > Files and versions > model-00001-of-00004.safetensors to model-00004-of-00004.safetensors',
+        location='All four files in one folder; choose any one of them',
+        avoid='The original folder (consolidated.00.pth), Llama 3.1 or other Llama models, or a repository ZIP.'),
 }
 for _key, _file in SAM_MANUAL_FILES.items():
     MANUAL_DETAILS[_key] = dict(selection='facebook/sam-3d-body-dinov3 > ' + _file,
@@ -285,11 +324,19 @@ STAGE_REQUIREMENTS = {
     'mamma_camera': ('flow_vggt','pear_geocalib'),
     'mamma_fit': ('mamma_vertices','mamma_body','mamma_body_male','mamma_body_female'),
     'mamma_publish': ('mamma_body','mamma_vertices'),
-    'kimodo_fill': tuple(entry[0] for entry in KIMODO_FILES),
+    'kimodo_fill': GROUPS['kimodo'],
+    'kimodo_text': GROUPS['kimodo_text'] + GROUPS['kimodo_llama'],
 }
 
 
 def ready(model: Model) -> bool:
+    """A group leader is ready when every file of its group is."""
+    if model.key in GROUPS:
+        return all(file_ready(BY_KEY[key]) for key in GROUPS[model.key])
+    return file_ready(model)
+
+
+def file_ready(model: Model) -> bool:
     if model.key=='pear_geometry':
         from .pear_models import geometry_ready
         return geometry_ready()
@@ -318,14 +365,16 @@ def download(key: str, progress=None) -> Path:
         # Hugging Face checkpoint metadata uses the same pinned revision. It is
         # not the inference YAML and must not invalidate existing motion caches.
         download('flow_metadata', progress)
-    if key == 'kimodo':
-        # Auto Download on the Kimodo Motion Generation row fetches all eight files: the small ones first, then the weights.
-        for companion, *_ in KIMODO_FILES[1:]:
-            download(companion, progress)
     model = BY_KEY[key]
     if not model.drive_id and not model.download_url:
         raise ValueError("Obtain this model from its official website, then import it.")
-    if ready(model):
+    if key in GROUPS:
+        # Auto Download on a group row fetches every file of the group: the others first, then the leader's own file.
+        require_space(model.name, sum(BY_KEY[member].minimum_bytes for member in GROUPS[key] if not file_ready(BY_KEY[member])))
+        for member in GROUPS[key]:
+            if member != key:
+                download(member, progress)
+    if file_ready(model):
         return model.path
     model.path.parent.mkdir(parents=True, exist_ok=True)
     part = model.path.with_suffix(model.path.suffix + ".part")
@@ -394,6 +443,8 @@ def import_model_file(key: str, source: Path) -> Path:
     if key=='pear_geometry':
         from .pear_models import import_bundle
         return import_bundle(source)
+    if key=='kimodo_llama':
+        return import_llama(Path(source).resolve())
     model=BY_KEY[key]; source=Path(source).resolve()
     if source.stat().st_size < model.minimum_bytes:
         raise ValueError('The file is too small for '+model.name)
@@ -417,12 +468,7 @@ def import_model_file(key: str, source: Path) -> Path:
     temporary=model.path.with_name(model.path.name+'.'+uuid.uuid4().hex+'.part')
     try:
         # Validate the bytes actually copied; a changing source cannot publish.
-        import hashlib
-        checksum=hashlib.sha256()
-        with source.open('rb') as incoming, temporary.open('wb') as output:
-            for chunk in iter(lambda:incoming.read(8*1024**2),b''):
-                output.write(chunk);checksum.update(chunk)
-        digest=checksum.hexdigest()
+        digest=copy_hashed(source,temporary)
         if model.expected_sha256 and digest!=model.expected_sha256:
             raise ValueError('This file does not match the supported official '+model.name+'. Check the filename and download version.')
         if key=='smplh':
@@ -436,6 +482,58 @@ def import_model_file(key: str, source: Path) -> Path:
         if license_file.exists() and license_file.resolve()!=(model.path.parent/'LICENSE.txt').resolve():shutil.copy2(license_file,model.path.parent/'LICENSE.txt')
     finally:temporary.unlink(missing_ok=True)
     return model.path
+
+
+def copy_hashed(source: Path, target: Path, report: bool = False) -> str:
+    """Copy in 8 MiB chunks and return the SHA-256 of the bytes written. A report prints a progress line every few seconds."""
+    import hashlib, time
+    checksum=hashlib.sha256(); total=source.stat().st_size; copied=0; last=time.monotonic()
+    with source.open('rb') as incoming, target.open('wb') as output:
+        for chunk in iter(lambda:incoming.read(8*1024**2),b''):
+            output.write(chunk);checksum.update(chunk);copied+=len(chunk)
+            if report and time.monotonic()-last>=3:
+                print(f'Importing {source.name}: {copied/1024**3:.1f} of {total/1024**3:.1f} GiB',flush=True);last=time.monotonic()
+    return checksum.hexdigest()
+
+
+def require_space(name: str, missing_bytes: int) -> None:
+    needed=missing_bytes+256*1024**2
+    folder=MODELS
+    while not folder.exists() and folder.parent!=folder:folder=folder.parent
+    if shutil.disk_usage(folder).free<needed:
+        import math
+        raise OSError(f'Not enough free disk space for {name} ({math.ceil(needed/1024**3*10)/10} GiB needed).')
+
+
+def import_llama(source: Path) -> Path:
+    """Import the four Llama 3 weight files from the folder that holds the one the user chose."""
+    import os, uuid
+    files=[BY_KEY[key] for key in GROUPS['kimodo_llama']]
+    if source.name not in {model.path.name for model in files}:
+        raise ValueError('Choose one of the four model-0000N-of-00004.safetensors files.')
+    for model in files:
+        incoming=source.parent/model.path.name
+        if not incoming.is_file():raise ValueError(model.path.name+' is missing next to the file you chose.')
+        if incoming.stat().st_size!=model.minimum_bytes:
+            raise ValueError(f'{model.path.name} is not complete (expected {model.minimum_bytes} bytes).')
+    pending=[model for model in files if not file_ready(model)]
+    require_space(files[0].name,sum(model.minimum_bytes for model in pending))
+    staged=[]
+    try:
+        # Every file is copied and checked before any is published, so a wrong file leaves nothing new behind.
+        for model in pending:
+            model.path.parent.mkdir(parents=True,exist_ok=True)
+            temporary=model.path.with_name(model.path.name+'.'+uuid.uuid4().hex+'.part');staged.append(temporary)
+            incoming=source.parent/model.path.name
+            if copy_hashed(incoming,temporary,report=True)!=model.expected_sha256:
+                raise ValueError(model.path.name+' is not the expected Llama 3 8B Instruct file.')
+        for model,temporary in zip(pending,staged):
+            os.replace(temporary,model.path)
+            atomic_json(model.path.with_suffix(model.path.suffix+'.receipt.json'),dict(source=str(source.parent/model.path.name),
+                sha256=model.expected_sha256,stat=[model.path.stat().st_size,model.path.stat().st_mtime_ns],manual_import=True))
+    finally:
+        for temporary in staged:temporary.unlink(missing_ok=True)
+    return files[0].path
 
 
 def import_body_model(source: Path) -> Path:

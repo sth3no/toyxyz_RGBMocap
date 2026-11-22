@@ -162,10 +162,10 @@ class KimodoModelTests(unittest.TestCase):
             sizes[path] = model.minimum_bytes
         self.assertEqual(sizes['model.safetensors'], 1133177724)
         self.assertEqual(sum(sizes.values()), 1133209886 - 1519 - 10229 - 13003)
-        self.assertEqual(models.BY_KEY['kimodo'].name, 'Kimodo Motion Generation (Optional)')
+        self.assertEqual(models.BY_KEY['kimodo'].name, 'Kimodo Motion Generation (Experimental, optional)')
         self.assertEqual(models.BY_KEY['kimodo_config'].name, 'Kimodo Configuration (Optional)')
         self.assertEqual(models.BY_KEY['kimodo_stats_global_root_std'].name, 'Kimodo Statistics (global root std) (Optional)')
-        self.assertTrue(all(models.BY_KEY[key].name.endswith(' (Optional)') for key in KIMODO_KEYS))
+        self.assertTrue(all(models.BY_KEY[key].name.endswith(' (Optional)') for key in KIMODO_KEYS[1:]))
 
     def test_all_missing_in_an_empty_models_folder(self):
         with tempfile.TemporaryDirectory() as name, patch.object(models, 'MODELS', Path(name)):
@@ -194,7 +194,7 @@ class KimodoModelTests(unittest.TestCase):
         from mocap.kimodo_runtime import WORKFLOWS
         self.assertEqual(WORKFLOWS, frozenset(('gvhmr', 'exmr')))
         users = manager.model_consumers(manager.workflow_catalog())
-        for key in KIMODO_KEYS:
+        for key in KIMODO_KEYS:  # members are counted for their group's row in Installed Models
             self.assertEqual(set(users[key]), {'gvhmr', 'exmr'})
 
 
@@ -241,6 +241,202 @@ class KimodoDownloadTests(unittest.TestCase):
 
     def test_other_rows_download_alone(self):
         models.download('kimodo_stats_body_mean'); self.assertEqual(self.urls, [self.url('kimodo_stats_body_mean')])
+
+
+MNTP = 'https://huggingface.co/McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp'
+TEXT_FILES = (  # key, folder, repository, revision, file, size, SHA-256
+    ('kimodo_text', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'adapter_model.safetensors', 167829552, 'de9c8736618a13173c6a1623cdef1b75e86c69317f1073ae82cd516ac36a632d'),
+    ('kimodo_text_mntp_config', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'adapter_config.json', 794, '1d3bbf14142865885ea8d0dbc1fb261adf4f5d14ddbdc939efb47c4913037813'),
+    ('kimodo_text_model_config', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'config.json', 781, '416c570276487324e49dca7c3d79e212b948d9cb2282fa734b1fa8014de041d1'),
+    ('kimodo_text_tokenizer', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'tokenizer.json', 9085671, '52b583ee1699c6ca4468f70885bd5f96dd1f7517292362a67581038afc04f4d8'),
+    ('kimodo_text_tokenizer_config', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'tokenizer_config.json', 51042, '0655c52e874137e4a455228155d982c4ea18419f461a10ceb57054995fec4223'),
+    ('kimodo_text_special_tokens', 'mntp', MNTP, '31474e395ada192e8ed1586db6be79fb3b70c9c0', 'special_tokens_map.json', 335, '849070cae53bd45439e64ce5b1ddd650a66081b1bd47895c5a58939a05055579'),
+    ('kimodo_text_supervised', 'supervised', MNTP + '-supervised', 'baa8ebf04a1c2500e61288e7dad65e8ae42601a7', 'adapter_model.safetensors', 167829552, '53f8f94ebdf396667ba99dd96e78203edae27bbcdbd1cf5f12b611e1d916b225'),
+    ('kimodo_text_supervised_config', 'supervised', MNTP + '-supervised', 'baa8ebf04a1c2500e61288e7dad65e8ae42601a7', 'adapter_config.json', 794, '2a1265e4a7829c16dad38a5175ec8ac41ea1e851654da5044ace2437615a58ba'),
+)
+LLAMA_FILES = (
+    ('kimodo_llama', 'model-00001-of-00004.safetensors', 4976698672, 'd8cf9c4d0dd972e1a2131bfe656235ee98221679711a3beef6d46dadf0f20b5c'),
+    ('kimodo_llama_2', 'model-00002-of-00004.safetensors', 4999802720, '8d4782b4a69ef03845159ce1a15e272aadaaf134dc138d68f616098e8531729c'),
+    ('kimodo_llama_3', 'model-00003-of-00004.safetensors', 4915916176, '3acdd690e65c24f42a24581b8467af98bd3ca357444580f8012aacd2bd607921'),
+    ('kimodo_llama_4', 'model-00004-of-00004.safetensors', 1168138808, '67e9ad31c8c32abf3a55ee7fc7217b3ecb35fd3c74d98a5bd233e0e4d6964f46'),
+)
+TEXT_KEYS = tuple(row[0] for row in TEXT_FILES)
+LLAMA_KEYS = tuple(row[0] for row in LLAMA_FILES)
+GROUP_KEYS = KIMODO_KEYS + TEXT_KEYS + LLAMA_KEYS
+
+
+class KimodoGroupRecordTests(unittest.TestCase):
+    def test_three_groups_with_pinned_records(self):
+        self.assertEqual(models.GROUPS, {'kimodo': KIMODO_KEYS, 'kimodo_text': TEXT_KEYS, 'kimodo_llama': LLAMA_KEYS})
+        self.assertEqual(models.BY_KEY['kimodo_text'].name, 'Kimodo Text Adapters (Experimental, optional)')
+        self.assertEqual(models.BY_KEY['kimodo_llama'].name, 'Llama 3 8B Instruct Weights for Descriptions (Experimental, optional)')
+        for key, folder, repository, revision, file, size, digest in TEXT_FILES:
+            model = models.BY_KEY[key]
+            self.assertEqual((model.relative, model.url, model.download_url, model.minimum_bytes, model.expected_sha256),
+                             (f'kimodo_text/{folder}/{file}', repository, f'{repository}/resolve/{revision}/{file}', size, digest))
+        for key, file, size, digest in LLAMA_FILES:
+            model = models.BY_KEY[key]
+            self.assertEqual((model.relative, model.url, model.download_url, model.drive_id, model.minimum_bytes, model.expected_sha256),
+                             ('kimodo_text/llama/' + file, 'https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct', None, None, size, digest))
+        self.assertEqual(models.STAGE_REQUIREMENTS['kimodo_text'], TEXT_KEYS + LLAMA_KEYS)
+        self.assertEqual(models.STAGE_REQUIREMENTS['kimodo_fill'], KIMODO_KEYS)
+
+    def test_only_the_three_leaders_are_rows_on_gvhmr_and_exmr(self):
+        catalog = manager.workflow_catalog()
+        for workflow, keys in catalog.items():
+            shown = set(keys) & set(GROUP_KEYS)
+            self.assertEqual(shown, {'kimodo', 'kimodo_text', 'kimodo_llama'} if workflow in ('gvhmr', 'exmr') else set(), workflow)
+
+    def test_all_twelve_text_files_missing_in_an_empty_folder(self):
+        with tempfile.TemporaryDirectory() as name, patch.object(models, 'MODELS', Path(name)):
+            self.assertEqual([model.key for model in models.missing('kimodo_text')], list(TEXT_KEYS + LLAMA_KEYS))
+
+    def test_download_all_leaves_the_groups_out(self):
+        self.assertTrue(all(manager.download_all_skips(key) for key in GROUP_KEYS))
+
+    def test_llama_instructions_name_the_licence_and_the_import(self):
+        text = models.MANUAL_INSTRUCTIONS['kimodo_llama']
+        for part in ('Hugging Face', 'licence', 'model-0000N-of-00004.safetensors', 'one folder', 'Import',
+                     'The app does not need your account password or access token.'):
+            self.assertIn(part, text)
+        self.assertIn('https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct', models.manual_instructions_html('kimodo_llama'))
+
+
+def small_records(keys):
+    """The group records with tiny contents, so no gigabytes are written."""
+    import dataclasses, hashlib
+    return {key: dataclasses.replace(models.BY_KEY[key], minimum_bytes=len(content(key)),
+                                     expected_sha256=hashlib.sha256(content(key)).hexdigest()) for key in keys}
+
+
+def content(key):
+    """What the patched network returns for a downloadable record, else a short stand-in."""
+    url = models.BY_KEY[key].download_url
+    return b'payload of ' + url.encode() if url else b'content of ' + key.encode()
+
+
+class KimodoGroupTests(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name).resolve(); self.root = base / 'installation'; self.root.mkdir()
+        self.folder = base / 'Downloads'; self.folder.mkdir()
+        self.urls, self.failing = [], set()
+        def get(url, **kw):self.urls.append(url); return Response(url, self.failing)
+        paths = dict(HOME=self.root, ROOT=self.root, MODELS=self.root / 'models', UPSTREAM=self.root / 'third_party')
+        for target in (patch.multiple(manager, **paths), patch.object(models, 'MODELS', paths['MODELS']),
+                       patch.dict(models.BY_KEY, small_records(GROUP_KEYS)), patch('requests.get', get)):
+            target.start(); self.addCleanup(target.stop)
+
+    def install(self, key):
+        model = models.BY_KEY[key]; model.path.parent.mkdir(parents=True, exist_ok=True)
+        model.path.write_bytes(content(key)); stat = model.path.stat()
+        atomic_json(manager.receipt_path(model), dict(sha256=model.expected_sha256, stat=[stat.st_size, stat.st_mtime_ns]))
+
+    def downloads(self):
+        for key, *_ in LLAMA_FILES:
+            (self.folder / models.BY_KEY[key].path.name).write_bytes(content(key))
+
+    def files(self):
+        return sorted(path for path in manager.MODELS.rglob('*') if path.is_file()) if manager.MODELS.exists() else []
+
+    def test_a_leader_is_ready_when_every_member_has_its_file_and_receipt(self):
+        for key in LLAMA_KEYS:
+            self.assertFalse(models.ready(models.BY_KEY['kimodo_llama']))
+            self.install(key)
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_llama']))
+        manager.receipt_path(models.BY_KEY['kimodo_llama_3']).unlink()
+        self.assertFalse(models.ready(models.BY_KEY['kimodo_llama']))
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_llama_2']))
+
+    def test_text_download_fetches_members_then_the_leader(self):
+        path = models.download('kimodo_text')
+        self.assertEqual(self.urls, [models.BY_KEY[key].download_url for key in TEXT_KEYS[1:] + TEXT_KEYS[:1]])
+        self.assertEqual(path, models.BY_KEY['kimodo_text'].path)
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_text']))
+        self.urls.clear(); models.download('kimodo_text'); self.assertEqual(self.urls, [])
+
+    def test_ready_members_are_skipped(self):
+        models.download('kimodo_text_tokenizer'); self.urls.clear()
+        models.download('kimodo_text')
+        self.assertNotIn(models.BY_KEY['kimodo_text_tokenizer'].download_url, self.urls)
+        self.assertEqual(len(self.urls), 7)
+
+    def test_a_failed_member_stops_before_the_leader(self):
+        import requests
+        self.failing.add(models.BY_KEY['kimodo_text_supervised'].download_url)
+        with self.assertRaises(requests.HTTPError):models.download('kimodo_text')
+        self.assertNotIn(models.BY_KEY['kimodo_text'].download_url, self.urls)
+        self.assertFalse(models.ready(models.BY_KEY['kimodo_text']))
+
+    def test_group_download_refuses_without_disk_space(self):
+        import shutil
+        for key in ('kimodo_text', 'kimodo'):
+            needed = sum(models.BY_KEY[member].minimum_bytes for member in models.GROUPS[key]) + 256 * 1024**2
+            with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed - 1)):
+                with self.assertRaisesRegex(OSError, r'^Not enough free disk space for '
+                                            + models.BY_KEY[key].name.replace('(', r'\(').replace(')', r'\)')
+                                            + r' \(0\.3 GiB needed\)\.$'):
+                    models.download(key)
+        self.assertEqual(self.urls, []); self.assertEqual(self.files(), [])
+
+    def test_llama_import_takes_all_four_from_one_pick(self):
+        self.downloads()
+        path = models.import_model_file('kimodo_llama', self.folder / 'model-00003-of-00004.safetensors')
+        self.assertEqual(path, models.BY_KEY['kimodo_llama'].path)
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_llama']))
+        self.assertEqual(models.missing('kimodo_text')[0].key, 'kimodo_text')
+        self.assertEqual([model.key for model in models.missing('kimodo_text')], list(TEXT_KEYS))
+
+    def test_llama_import_prints_progress_lines(self):
+        import contextlib, io, itertools, time
+        self.downloads(); out = io.StringIO()
+        with patch.object(time, 'monotonic', side_effect=itertools.count(0, 5)), contextlib.redirect_stdout(out):
+            models.import_model_file('kimodo_llama', self.folder / 'model-00001-of-00004.safetensors')
+        self.assertIn('Importing model-00004-of-00004.safetensors: 0.0 of 0.0 GiB', out.getvalue().splitlines())
+
+    def test_llama_import_skips_ready_files(self):
+        self.downloads(); self.install('kimodo_llama_2')
+        before = models.BY_KEY['kimodo_llama_2'].path.stat().st_mtime_ns
+        (self.folder / 'model-00002-of-00004.safetensors').write_bytes(b'x' * models.BY_KEY['kimodo_llama_2'].minimum_bytes)
+        models.import_model_file('kimodo_llama', self.folder / 'model-00001-of-00004.safetensors')
+        self.assertEqual(models.BY_KEY['kimodo_llama_2'].path.stat().st_mtime_ns, before)
+        self.assertTrue(models.ready(models.BY_KEY['kimodo_llama']))
+
+    def test_llama_import_refusals_copy_nothing(self):
+        self.downloads()
+        sibling = self.folder / 'model-00004-of-00004.safetensors'
+        size = models.BY_KEY['kimodo_llama_4'].minimum_bytes
+        cases = (
+            (lambda: sibling.unlink(), 'model-00004-of-00004.safetensors is missing next to the file you chose.'),
+            (lambda: sibling.write_bytes(b'short'), f'model-00004-of-00004.safetensors is not complete (expected {size} bytes).'),
+            (lambda: sibling.write_bytes(b'y' * size), 'model-00004-of-00004.safetensors is not the expected Llama 3 8B Instruct file.'),
+        )
+        for change, sentence in cases:
+            self.downloads(); change()
+            with self.assertRaises((ValueError, OSError)) as caught:
+                models.import_model_file('kimodo_llama', self.folder / 'model-00001-of-00004.safetensors')
+            self.assertEqual(str(caught.exception), sentence)
+            self.assertEqual(self.files(), [])
+
+    def test_llama_import_refuses_without_disk_space(self):
+        import shutil
+        self.downloads()
+        needed = sum(models.BY_KEY[key].minimum_bytes for key in LLAMA_KEYS) + 256 * 1024**2
+        with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed - 1)):
+            with self.assertRaisesRegex(OSError, r'^Not enough free disk space for Llama 3 8B Instruct Weights'):
+                models.import_model_file('kimodo_llama', self.folder / 'model-00002-of-00004.safetensors')
+        self.assertEqual(self.files(), [])
+        with patch.object(shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(1, 1, needed)):
+            models.import_model_file('kimodo_llama', self.folder / 'model-00002-of-00004.safetensors')
+
+    def test_removing_a_leader_removes_the_whole_group(self):
+        for key in LLAMA_KEYS:self.install(key)
+        plan = manager.removal_plan(['kimodo_llama'])
+        expected = {path for key in LLAMA_KEYS for path in (models.BY_KEY[key].path, manager.receipt_path(models.BY_KEY[key]))}
+        self.assertEqual({item.path for item in plan}, expected)
+        self.assertEqual(set(manager.recovery_roots(['kimodo_llama'], [])) & set(self.files()), expected)
+        manager.remove_models(['kimodo_llama'], plan)
+        self.assertEqual(self.files(), [])
 
 
 if __name__ == '__main__':

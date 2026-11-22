@@ -6,7 +6,7 @@ from pathlib import Path
 import stat
 from uuid import uuid4
 
-from .models import BY_KEY, MODELS_LIST, STAGE_REQUIREMENTS, ready
+from .models import BY_KEY, GROUPS, LEADERS, MODELS_LIST, STAGE_REQUIREMENTS, ready
 from .motion_tools import MOTION_TOOLS
 from .paths import HOME, MODELS, ROOT, UPSTREAM
 from .storage import atomic_json
@@ -25,12 +25,13 @@ def workflow_catalog():
         if key in SUPPORTED:
             stages = (*stages, 'people', 'sam31_people')
         if key in WORKFLOWS:
-            stages = (*stages, 'kimodo_fill')
+            stages = (*stages, 'kimodo_fill', 'kimodo_text')
         if key == 'pear':
             stages = (*stages, 'pear_align')
         if key == 'prompthmr':
             stages = (*stages, 'prompthmr_camera_assets')
-        keys = {model for stage in stages for model in STAGE_REQUIREMENTS.get(stage, ())}
+        # A group shows as its leader's row only.
+        keys = {LEADERS.get(model, model) for stage in stages for model in STAGE_REQUIREMENTS.get(stage, ())}
         if key == 'flowhmr':
             keys.update(('flow_metadata', *MODEL_KEYS))
         if not tool.live:
@@ -51,7 +52,7 @@ def workflow_name(key):
 
 def model_consumers(catalog):
     return {
-        model.key: tuple(workflow for workflow, keys in catalog.items() if model.key in keys)
+        model.key: tuple(workflow for workflow, keys in catalog.items() if LEADERS.get(model.key, model.key) in keys)
         for model in MODELS_LIST
     }
 
@@ -142,7 +143,18 @@ def receipt_path(model):
     return model.path.with_suffix(model.path.suffix + '.receipt.json')
 
 
+def group_keys(keys):
+    """The keys with every group leader expanded to its whole group."""
+    return {member for key in keys for member in GROUPS.get(key, (key,))}
+
+
 def installed_files(model):
+    if model.key in GROUPS:
+        return tuple(item for key in GROUPS[model.key] for item in file_entries(BY_KEY[key]))
+    return file_entries(model)
+
+
+def file_entries(model):
     if model.key != 'pear_geometry':
         payload = entry(model.path, HOME)
         if payload is None:
@@ -185,7 +197,8 @@ def file_size(size):
 
 def removal_plan(keys):
     keys = set(keys)
-    retained = {model.path for model in MODELS_LIST if model.key not in keys}
+    removed = group_keys(keys)
+    retained = {model.path for model in MODELS_LIST if model.key not in removed}
     files = {}
     for key in sorted(keys):
         model = BY_KEY[key]
@@ -205,7 +218,7 @@ def journal_path():
 
 def recovery_roots(keys, paths):
     allowed = {}
-    for key in keys:
+    for key in group_keys(keys):
         model = BY_KEY[key]
         allowed[model.path] = HOME
         if key != 'pear_geometry':

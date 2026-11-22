@@ -40,6 +40,24 @@ def identity():
     return f"{REVISION}:{PROFILE_VERSION}:{BY_KEY['kimodo'].expected_sha256}"
 
 
+def text_issue():
+    """Why a description cannot be used now, or None."""
+    reason = issue()
+    if reason:
+        return reason
+    from .models import missing
+    if missing('kimodo_text'):
+        return ('A description needs the Kimodo text adapters and the Llama 3 weights. '
+                'Use Set up… to get them in Model Manager.')
+    return None
+
+
+def text_identity():
+    from .models import BY_KEY, STAGE_REQUIREMENTS
+    return ':'.join([REVISION, str(PROFILE_VERSION),
+                     *(BY_KEY[key].expected_sha256 for key in STAGE_REQUIREMENTS['kimodo_text'])])
+
+
 def activate(folder):
     sys.path.insert(0, str(folder))
 
