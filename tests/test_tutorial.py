@@ -359,6 +359,13 @@ class ControllerTest(HomeCase):
         self.assertEqual(len(self.t.overlay.holes), 1)
         self.assertTrue(QRect(600, 0, 200, 200).contains(self.t.overlay.holes[0]))
 
+    def test_scrolling_a_target_into_view_never_moves_the_panel_sideways(self):
+        area = QScrollArea(self.w);area.setGeometry(600, 0, 200, 200)
+        inner = QWidget();inner.setFixedSize(600, 2000);far = QPushButton('far', inner);far.move(450, 1800);area.setWidget(inner);area.show()
+        self.w.settings_scroll = area;self.w.far = far;APP.processEvents()
+        self.t.start(Chapter('s', 'S', (Step('far', 'Far', 'x', lambda w: [w.far]),)));APP.processEvents()
+        self.assertEqual(area.horizontalScrollBar().value(), 0);self.assertGreater(area.verticalScrollBar().value(), 0)
+
     def test_a_message_is_a_centred_card_without_a_chapter(self):
         calls = []
         self.t.message('Welcome', 'Hello', [('Not now', lambda: calls.append('no')), ('Start', lambda: calls.append('yes'))], closed=lambda: calls.append('closed'))

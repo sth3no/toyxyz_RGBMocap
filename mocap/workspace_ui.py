@@ -83,6 +83,7 @@ def resize_appearance_controls(window):
     window.appearance_sidebar.setMaximumWidth(ui_px(330))
     window.appearance_sidebar.setMinimumWidth(ui_px(235))
     window.log.setMaximumHeight(ui_px(110))
+    if getattr(window, 'tutorial', None):window.tutorial.refresh_appearance()
 
 
 def show_appearance_settings(window):
@@ -677,6 +678,16 @@ def build_workspace(w):
     file_menu.addSeparator()
     file_menu.addAction("Exit", w.close)
     help_menu = w.menuBar().addMenu("Help")
+    from .tutorial import open_chapter
+    from .tutorial_steps import CHAPTERS
+    w.tutorial = None  # created by the first chapter opened, or by app.py on a normal start
+    tutorial_menu = help_menu.addMenu('Tutorial')
+    tutorial_menu.setToolTipsVisible(True)
+    w.tutorial_actions = {}
+    for key, tip in (('basics', 'Show the way from a video to an export, step by step in this window.'),
+                     ('hidden_ranges', 'Show how gaps between two takes of a person are filled.')):
+        w.tutorial_actions[key] = tutorial_menu.addAction(CHAPTERS[key].title, lambda key=key: open_chapter(w, key))
+        w.tutorial_actions[key].setToolTip(tooltip_text(tip))
     w.check_system_action = help_menu.addAction("Check System", lambda: w.start_jobs([("diagnose", [])]))
     help_menu.addAction("Controls", lambda: QMessageBox.information(w, "Workspace Controls",
         "Space: Play / Pause\nLeft / Right: Step one frame\nShift + Left / Right: Step one second\nHome / End: First / last frame\n\nViewport: LMB orbit, MMB / RMB pan, wheel zoom\nGizmo: click an axis to align the view\nTimeline: drag video clip edges to trim\nClick the frame ruler or drag the blue frame box to seek\nWheel to zoom; MMB to pan; Reset Trim restores the full clip\nClick ? in the timeline header for editing help.\nPlayback and reconstruction use the selected video clip range.\n\nThe mesh shows the selected motion result.\nFlowHMR and ExMR track fingers directly. GVHMR uses optional HandFlow for finger tracking.\nUse File > Export to choose FBX, BVH or a portable Blender project and save the displayed animation."))

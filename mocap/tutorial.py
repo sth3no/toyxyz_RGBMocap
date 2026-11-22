@@ -7,8 +7,12 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer, S
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from .theme import is_light_theme, set_appearance_style, theme_color, ui_px
+from .tutorial_steps import CHAPTERS, hidden_ranges_usable
 
 STATE = 'tutorial'
+WELCOME = ('This tutorial shows the way from a video to an exported animation, right in this window: it highlights a control, '
+           'explains it and waits for you. You can end it at any time and start it again from Help → Tutorial.')
+HINT = 'This person has a hidden range: a gap between two takes. A short chapter shows how it can be filled.'
 
 
 def load_state():
@@ -149,6 +153,9 @@ class Tutorial(QObject):
         self.card.closed.connect(self._closed)
         self.timer = QTimer(self);self.timer.setInterval(200);self.timer.timeout.connect(self.tick)
         self._links, self._shown, self._action, self._message = [], None, None, None
+        # Offers the Hidden ranges chapter once the panel can really fill; started by first_run only.
+        self.hint_timer = QTimer(self);self.hint_timer.setInterval(1000);self.hint_timer.timeout.connect(self.hint_tick)
+        self._hint_quiet = False
         window.installEventFilter(self)
 
     @property
@@ -158,9 +165,22 @@ class Tutorial(QObject):
     def step(self):return self.chapter.steps[self.index] if self.chapter else None
 
     def eventFilter(self, watched, event):
-        if watched is self.window and event.type() == QEvent.Resize and (self.chapter or self._message):
-            QTimer.singleShot(0, self.tick)
+        if watched is not self.window:return False
+        if event.type() == QEvent.Resize and (self.chapter or self._message):QTimer.singleShot(0, self.tick)
+        # Hidden, not Close: the window may refuse to close while a job runs. Minimising hides it too and must not end a chapter.
+        elif event.type() == QEvent.Hide and not self.window.isMinimized():
+            self.stop();self.hint_timer.stop()
+            self._message = None;self.card.hide();self._shown = None
         return False
+
+    def hint_tick(self):
+        if self._hint_quiet or self.chapter or self._message or modal_open() or not hidden_ranges_usable(self.window):return
+        state = load_state()
+        quiet = lambda: setattr(self, '_hint_quiet', True)
+        done = state.get('done') if state else None
+        if state is None or state.get('hint_off') or (isinstance(done, list) and 'hidden_ranges' in done):return quiet()
+        self.message('Hidden ranges', HINT, [("Don't show again", lambda: (quiet(), save_state(hint_off=True))), ('Not now', quiet),
+                                             ('Show me', lambda: (quiet(), open_chapter(self.window, 'hidden_ranges')))], closed=quiet)
 
     def _ask(self, rule, *arguments, default=None):
         """A rule of a step; one that meets a control deleted meanwhile (rows are rebuilt) counts as not met."""
@@ -216,7 +236,9 @@ class Tutorial(QObject):
         scroll = getattr(self.window, 'settings_scroll', None)
         for target in self._ask(self.step.targets) or []:
             try:
-                if scroll is not None and isinstance(target, QWidget) and scroll.isAncestorOf(target):scroll.ensureWidgetVisible(target)
+                if scroll is not None and isinstance(target, QWidget) and scroll.isAncestorOf(target):
+                    sideways = scroll.horizontalScrollBar().value()  # the settings panel only scrolls up and down
+                    scroll.ensureWidgetVisible(target);scroll.horizontalScrollBar().setValue(sideways)
             except RuntimeError:pass
             break
         self.tick()
@@ -300,3 +322,27 @@ class Tutorial(QObject):
     def _closed(self):
         if self.chapter:self.stop()
         elif self._message:self._message()
+
+
+def controller(window):
+    if getattr(window, 'tutorial', None) is None:window.tutorial = Tutorial(window)
+    return window.tutorial
+
+
+def open_chapter(window, key):controller(window).start(CHAPTERS[key])
+
+
+def smoke_run(args):
+    """A scripted check of the app. Told by values: --smoke-render-mode and --smoke-playback-seconds have defaults."""
+    return bool(args.smoke_screenshot or args.smoke_run_analysis or args.smoke_playback_seconds or args.smoke_report
+                or args.smoke_camera_distance is not None or args.smoke_bone_overlay)
+
+
+def first_run(window, welcome):
+    """Called by app.py once the window is shown: the welcome on the very first start, and the Hidden ranges hint."""
+    guide, state = controller(window), load_state()
+    if welcome and state is not None and not state.get('seen'):
+        seen = lambda: save_state(seen=True)
+        guide.message('Welcome to RGB MoCap', WELCOME, [('Not now', seen), ('Start', lambda: (seen(), open_chapter(window, 'basics')))],
+                      closed=seen)
+    guide.hint_timer.start()

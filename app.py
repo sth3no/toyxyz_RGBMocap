@@ -47,6 +47,9 @@ def main():
     if args.project:
         window.load_project(args.project)
     window.show()
+    from mocap.tutorial import first_run, smoke_run
+    if not smoke_run(args):
+        first_run(window, welcome=not (args.video or args.project))
     if args.smoke_camera_distance is not None:
         window.motion_view.auto_fit = False
         window.motion_view.distance = max(0.4, min(80, args.smoke_camera_distance))
