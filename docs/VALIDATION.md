@@ -1,5 +1,104 @@
 # Source package validation
 
+## Descriptions for Automatic fill and its setup from the app (2026-11-22)
+
+- Same machine (Windows 11, RTX 5060 Ti 16 GB, 31 GB of RAM of which 3 to 9 GB
+  were free). Kimodo revision `e1c219c9`, runtime version 2, text files
+  `meta-llama/Meta-Llama-3-8B-Instruct` (four weight files) and the two
+  McGill-NLP LLM2Vec adapters at the pinned revisions.
+- Automated tests on the final code, shared runtime unless noted:
+  `test_soma_convert` 10, `test_gap_fill` 34, `test_take_join` 84 (1 skipped,
+  ExMR only), `test_take_joins` 33, `test_hidden_ranges` 18,
+  `test_hidden_ranges_ui` 46, `test_auto_fill` 23, `test_kimodo_runtime` 17,
+  `test_setup_kimodo` 10, `test_model_manager` 49 (7 skipped there; 49 with 1
+  skipped in the GUI runtime), `test_kimodo_fill` 24 and `test_kimodo_text` 18,
+  both including cases that start the real workers on the GPU,
+  `test_hidden_ranges_panel` 35 (GUI runtime, offscreen). The whole folder ran
+  471 tests with the one known import error (`test_local_choices` needs
+  PySide6).
+- Text encoder, measured before and during the build:
+  - The whole model fits neither this GPU (16 GB of weights, 11 GB free) nor
+    the free RAM. Streamed through the GPU one layer at a time, a new
+    description takes 14 to 25 s, with a peak of 1.68 GiB of video memory,
+    about 1.5 GiB of RAM and 3.65 GiB of committed memory. Reading the weights
+    through whole-file mappings had peaked at 15.7-16.1 GiB of committed
+    memory and was replaced by reads by offset.
+  - Against LLM2Vec's own method on a model cut to 4 of 32 layers, three
+    prompts: cosine 0.99997. **The full 32 layers were not compared** with
+    Kimodo's own bfloat16 encoder; the evidence at full depth is the effect on
+    the motion. The worker's vector equals the trial's for the same sentence
+    (largest difference 0.0), and `a person walks forward` gives the same
+    vector as `A person walks forward.` once tidied as Kimodo tidies prompts.
+  - Free generation of 150 frames from the vectors, two seeds each: `A person
+    walks forward.` travelled 7.1 m (0.3-1.2 m without text), `A person sits
+    down on the ground.` lowered the pelvis to 0.11 m, `A person jumps up and
+    down.` moved it between 0.82 and 1.24 m.
+  - In the constrained fill of the 91-frame range below, text weight 2, 4, 6
+    and 8 with two seeds: `covers their face with one hand` brought a wrist to
+    30-33, 20-22, 21 and 20-22 cm from the head (77 cm without text);
+    `raises both arms above the head` raised a wrist +12/-26, +27 to +36, +39
+    to +40 and +40 to +42 cm above the head. Weight 4 is used. At weight 2,
+    `walks slowly and then covers their face with one hand` showed nothing.
+- Setup, through the real main window run without a screen and driven through
+  its own widgets (the confirmation and file dialogs replaced by functions
+  that answer; the Model Manager constructed, not shown modally; nobody looked
+  at it):
+  - With runtime version 1 installed, the hidden range's row showed
+    `Automatic (Experimental)` enabled, the sentence `Automatic fill is not set
+    up. Use Set up… and install the runtime in Model Manager.`, **Set up…**
+    visible and Fill disabled. Model Manager showed `Runtime not installed`
+    and the three rows.
+  - **Install Runtime**: the question text shown, the job ran 63 s through its
+    five steps, then `Runtime installed`. Text adapters: one **Auto
+    Download**, 9.5 s, Ready. Llama weights: one pick of `model-00002-of-00004
+    .safetensors` in the download folder imported all four files (16 GB) in
+    21 s, Ready.
+  - On the final code, **Reinstall Runtime** with a sound runtime ran the
+    check only: 13.5 s, `Automatic fill runtime verified.`
+  - Not run: a failing check that reinstalls, a setup offline, without Git or
+    with a full disk, Cancel during a setup job (all covered by tests with a
+    stand-in build only); the group import of the motion model and of the
+    text adapters from a folder (tests only); `Setup_Kimodo.cmd` itself.
+- Descriptions, same window, the walking clip of the section below (a man
+  covered for 3 s, hidden range frames 91-181), Variation 0, final code. The
+  driver set the **Description** field's text, finished the edit and clicked
+  Fill:
+  - `A person raises both arms above the head.`: saved with the choice; fill
+    job 36 s (description read in 14.2 s, 101 frames generated in 7.0 s); the
+    Console said `Frames 91–181 generated from the description "A person
+    raises both arms above the head.": the captured poses next to the range
+    were missed by 2.4 cm before it and 1.5 cm after it.` Both wrists are
+    above the head in 55 of the 91 frames, the highest 36 cm above it.
+  - `a person covers their face with one hand`: the Console said `Description
+    read as "A person covers their face with one hand." in 14.0 seconds`; a
+    wrist is within 25 cm of the head in 48 frames, nearest 22 cm; seams 2.5
+    and 1.7 cm.
+  - Emptied: `{'method': 'auto', 'seed': 0}`, fill 13 s, nearest wrist 77 cm
+    from the head, seams 2.9 and 1.2 cm, joints equal to the fill made before
+    the field existed (largest difference 0.00 cm; the world and camera
+    parameters and contact logits of an earlier run were bit-identical to step
+    4's).
+  - After each fill Motion Correction and Export ran and the take showed as
+    `Ready · filled`. Fill again unchanged: 1 s, no worker.
+  - The same three fills took 57-60 s and 27 s in an earlier run while another
+    program used the GPU.
+  - Against the same clip without the cover: mean pose error 16.6 cm (arms
+    raised), 10.6 cm (face covered), 7.7 cm (no description), 7.8 cm (a blend
+    of the end poses). The man really walks with his arms down. **A
+    description makes the range do what it says; it does not make it closer
+    to what the person did.** The described fills kept walking (5 foot
+    strikes) and slid the toes 30-45 % more than the plain fill while low.
+  - Joint data of the described ranges was analysed by the final reviewer: no
+    jump at either seam, the arms back within 5 cm of the captured pose 4-6
+    frames before the range ends, elbows never bent backwards, the fastest
+    wrist 3.6 m/s; a left wrist twisted 72 degrees for 67 frames in the
+    face-covering fill. Side-view pose strips were looked at by Claude.
+    **Nobody has looked at a described fill as a mesh or in the 3D view.**
+- Not run: ExMR; a description on a dance or with several people; a second
+  described range of one person; other languages; ranges longer than 91
+  frames with a description; a GPU with less than 16 GB; a machine without the
+  page file headroom; FBX export of a described take (BVH was written).
+
 ## Automatic fill of hidden ranges with Kimodo (2026-11-22)
 
 - Same machine (Windows 11, RTX 5060 Ti 16 GB). Kimodo revision `e1c219c9`,

@@ -1008,16 +1008,17 @@ covers their face with one hand` brought a wrist within 25 cm of the head in 41
 frames, where without a description the nearest wrist stayed 77 cm away; the
 described fills missed the captured poses next to the range by 1.5 to 2.5 cm. The
 man really walked with his arms down, so the described fills were further from
-what he did (mean pose error 16.6 and 10.8 cm against 7.7 cm without a
+what he did (mean pose error 16.6 and 10.6 cm against 7.7 cm without a
 description), and on that range they slid the toes 30 to 45 % more. "First
 this, then that" and actions that fight the straight path mostly did not show
 in a 3-second range, and nobody has looked at a described fill by eye yet. A
 description does not make the motion closer to what the person did. Reading a
-new description takes 18 to 25 seconds from an NVMe drive (it reads the 16 GB
+new description takes 14 to 25 seconds from an NVMe drive (it reads the 16 GB
 of Llama files every time; a slower disk takes longer), with a peak of 1.7 GiB
 of video memory, about 1.5 GiB of RAM and 3.65 GiB of committed memory (backed
 by the page file) on an RTX 5060 Ti; a described fill of that 91-frame range
-took 57 to 60 seconds in all, a plain one 27 seconds. A description read once
+took 36 to 60 seconds in all and a plain one 13 to 27 seconds, depending on
+what else used the GPU. A description read once
 is kept for every project. Empty means no description, and the range is
 generated as without the field.
 

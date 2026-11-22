@@ -134,7 +134,7 @@ obtained in Model Manager as above.
 Re-running the setup (**Reinstall Runtime**, or `Setup_Kimodo.cmd`) keeps a
 runtime whose receipt is valid and that passes its check; a runtime that fails
 the check is installed again. Staging folders of a cancelled setup are removed
-by the next one.
+by the next setup that installs a runtime.
 
 ## Fill a hidden range
 
@@ -184,10 +184,10 @@ from what you typed, the Console line says what was read, for example
 seconds; peak video memory X GiB.`
 
 **What it costs.** The first time a description is used, a separate worker
-reads it with the text encoder: 18 to 25 seconds, a peak of 1.7 GiB of video
+reads it with the text encoder: 14 to 25 seconds, a peak of 1.7 GiB of video
 memory, about 1.5 GiB of RAM and 3.65 GiB of committed memory (backed by the
 page file) on an RTX 5060 Ti. It reads the 16 GB of Llama files from disk for
-every new description; 18 to 25 seconds is the time from an NVMe drive, and a
+every new description; 14 to 25 seconds is the time from an NVMe drive, and a
 slower disk takes longer. The encoder is Llama 3 8B Instruct with the two
 LLM2Vec adapters. It does not fit this GPU whole, so the worker streams its 32
 layers through the GPU one at a time, reading each from the four Llama files
@@ -217,18 +217,19 @@ with the descriptions typed into the field:
 
 | Description typed | In the 91 frames | Seams before / after | Fill took |
 | --- | --- | --- | --- |
-| `A person raises both arms above the head.` | both wrists above the head in 55 frames, the highest 36 cm above it | 2.4 / 1.5 cm | 60 s |
-| `a person covers their face with one hand` | a wrist within 25 cm of the head in 41 frames, nearest 23 cm | 2.5 / 1.6 cm | 57 s |
-| (none) | nearest wrist 77 cm from the head | 2.9 / 1.2 cm | 27 s |
+| `A person raises both arms above the head.` | both wrists above the head in 55 frames, the highest 36 cm above it | 2.4 / 1.5 cm | 36 s |
+| `a person covers their face with one hand` (read as `A person covers their face with one hand.`) | a wrist within 25 cm of the head in 48 frames, nearest 22 cm | 2.5 / 1.7 cm | 36 s |
+| (none) | nearest wrist 77 cm from the head | 2.9 / 1.2 cm | 13 s |
 
-The described fills include reading the description (19 to 20 seconds). The
+The described fills include reading the description (14 seconds). These times
+are with the GPU otherwise idle; while another program used it the same fills
+took 57 to 60 seconds (20 seconds of it reading the description) and the plain
+one 27 seconds. The
 real man walks with his arms down, so the described fills are further from what
-he did, as they must be: a mean pose error of 16.6 cm (arms raised) and 10.8 cm
+he did, as they must be: a mean pose error of 16.6 cm (arms raised) and 10.6 cm
 (face covered) against 7.7 cm for the fill without a description. On this one
 range the described fills also slid the toes 30 to 45 % more than the plain
-fill. The second description was typed lower-case without a period, before the
-tidying existed; it is read now as `A person covers their face with one hand.`,
-so a fill made with it today can differ from the one measured.
+fill.
 
 In the trials made before (`experiments/hidden-person-fill/step-5-gate.md`), a
 91-frame range of the walking clip with two seeds each, at weight 4:
