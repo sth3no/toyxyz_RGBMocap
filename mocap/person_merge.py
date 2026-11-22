@@ -119,21 +119,25 @@ def separate(root, target_id, source_id):
     state = copy.deepcopy(state)
     a = next(p for p in state['people'] if p['id'] == target_id)
     record = next(r for r in a['absorbed'] if r['person']['id'] == source_id)
-    for r in a['absorbed'][a['absorbed'].index(record) + 1:]:  # they were taken out of a list without this person, so once it is back their place moves down
+    later = a['absorbed'][a['absorbed'].index(record) + 1:]
+    for r in later:  # they were taken out of a list without this person, so once it is back their place moves down
         r['index'] += r['index'] >= record['index']
+    if later:  # the earliest record left must keep A's values from before the first merge
+        later[0]['before'] = record['before']
     a['absorbed'] = [r for r in a['absorbed'] if r['person']['id'] != source_id]
-    if not a['absorbed']:
-        del a['absorbed']
     gone = set(record['takes'])
     a['takes'] = [t for t in a.get('takes', []) if t['project'] not in gone]
-    # Values come from the rows that remain: a later merge can have been made after this one, so its "before" would not be A's now.
-    rest = _frames(_database(root, state), _observation(a)) - {f for x, y in record['frames'] for f in range(x, y)}
-    values = dict(first=min(rest) if rest else None, last=max(rest) + 1 if rest else None, observations=len(rest))
-    for key, was in record['before'].items():
-        if was is None:
-            a.pop(key, None)
-        else:
-            a[key] = values[key] if rest else was  # nothing left to measure
+    if a['absorbed']:  # other joins remain: measure what A has now
+        rest = _frames(_database(root, state), _observation(a)) - {f for x, y in record['frames'] for f in range(x, y)}
+        if rest:
+            a.update(first=min(rest), last=max(rest) + 1, observations=len(rest))
+    else:
+        del a['absorbed']
+        for key, was in record['before'].items():
+            if was is None:
+                a.pop(key, None)
+            else:
+                a[key] = was
     people = state['people']
     people.insert(min(record['index'], len(people)), copy.deepcopy(record['person']))
     return _run(root, state, (_observation(a), _observation(record['person'])), record['frames'], record['person_ids'], a)

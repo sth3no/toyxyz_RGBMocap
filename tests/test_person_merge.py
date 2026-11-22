@@ -98,6 +98,19 @@ class PersonMergeTest(unittest.TestCase):
                     self.assertEqual(m.absorbed(ps.load_people(root)['people'][0]),[(4,'Late'),(3,'Cover')])
                     for ident in order:m.separate(root,1,ident)
                     after=snapshot(root);before[0]['active']=after[0]['active'];assert_same(self,before,after)
+    def test_separate_restores_the_original_counts_in_any_order(self):
+        for drop in(False,True):
+            for order in((3,4),(4,3)):
+                with self.subTest(drop=drop,order=order),tempfile.TemporaryDirectory() as tmp:
+                    root=build(tmp);add_person(root,4,'Late',9,range(140,151),[(140,151)])
+                    state=ps.load_people(root);anna=state['people'][0];anna.update(first=1,last=999,observations=7)
+                    if drop:del anna['observations']
+                    ps.save_people(root,state)
+                    m.continue_as(root,3,1,'gvhmr',30);m.continue_as(root,4,1,'gvhmr',30)
+                    for ident in order:got=m.separate(root,1,ident)['people'][0]
+                    self.assertEqual((got['first'],got['last']),(1,999))
+                    if drop:self.assertNotIn('observations',got)
+                    else:self.assertEqual(got['observations'],7)
     def test_a_joined_person_keeps_its_own_absorbed_people(self):
         root=self.root;add_person(root,4,'Late',9,range(140,151),[(140,151)]);before=snapshot(root)
         m.continue_as(root,4,3,'gvhmr',30);state=m.continue_as(root,3,1,'gvhmr',30);anna=state['people'][0]
