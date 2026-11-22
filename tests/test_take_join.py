@@ -593,6 +593,25 @@ class WriteTest(unittest.TestCase):
         for k,v in rows(J).items():np.testing.assert_array_equal(v,first[k],k)
         person=ps.load_people(self.root)['people'][0];self.assertEqual([j['project'] for j in person['joins']],['p1/takes/000000000_000000150_fill_v1'])
         self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_earlier_range_changes_later_automatic_ranges(self):
+        # Known property: the request is expressed in the world and body of the chain's first take, so filling or unfilling an
+        # earlier range of the same person changes it, and the later Automatic range is generated again (and may differ).
+        state=ps.load_people(self.root);person=state['people'][0]
+        person['takes']=[person['takes'][0],self.take(110,150,WB),self.take(160,200,WC)];ps.save_people(self.root,state)
+        runs,requests=[],[];real=auto_fill.generate
+        def run(command):
+            args=dict(zip(command[1::2],command[2::2]));runs.append(command)
+            with np.load(args['--request'],allow_pickle=False) as z:request={k:z[k] for k in z.files}
+            requests.append(request);np.savez(args['--response'],**straight([])(request));return 0,[]
+        patches=[mock.patch.object(kimodo_runtime,'issue',lambda:None),mock.patch.object(kimodo_runtime,'command',lambda args:['kimodo',*map(str,args)]),
+                 mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:real(folder,request,run=run,**kw))]
+        for p in patches:p.start();self.addCleanup(p.stop)
+        alone,joined={'150_160':{'method':'auto','seed':3}},{'100_110':{'method':'smooth'},'150_160':{'method':'auto','seed':3}}
+        for choices,count in((alone,1),(joined,2),(alone,2),(joined,2)):   # each chain's request is generated once, then served from the cache
+            state=ps.load_people(self.root);state['people'][0]['gap_fill']=choices;ps.save_people(self.root,state)
+            code,events=self.join();self.assertEqual((code,len(runs)),(0,count),events)
+        self.assertGreater(np.abs(requests[0]['before_pelvis']-requests[1]['before_pelvis']).max(),1e-3)   # another world
+        self.assertEqual((requests[0]['frames'],requests[0]['seed']),(requests[1]['frames'],requests[1]['seed']))
     def test_automatic_needs_30_fps(self):
         for take in(TAKE(0,100),TAKE(110,200)):
             p=self.root/take/'project.json';p.write_text(json.dumps(dict(json.loads(p.read_text(encoding='utf-8')),fps=25)),encoding='utf-8')

@@ -75,9 +75,12 @@ under `.setup`, which you may delete.
 ## Fill a hidden range
 
 1. Choose **Automatic** in the row of the range. **Variation** is a number from
-   0 to 999. Another number gives another motion for the range; the same
-   number gives the same motion again, because generated ranges are kept in the
-   folder `auto_fill` inside the person's preview folder and served from there.
+   0 to 999. Another number gives another motion for the range. Generated
+   ranges are kept in the folder `auto_fill` inside the person's preview folder
+   and served from there, so the same number gives the same motion again while
+   the takes joined before the range stay the same. Filling or unfilling an
+   earlier range of the same person changes the chain of joined takes: the
+   later **Automatic** ranges are then generated again and may differ.
 2. Click **Fill hidden ranges**. The first range of a run takes about 10 to 15
    seconds on an RTX 5060 Ti including starting the worker (12.6 seconds for 70
    frames, measured once); a range that was generated before comes from the

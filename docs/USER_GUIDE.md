@@ -981,9 +981,12 @@ example while walking behind an object; that use has not been measured with
 real footage yet, so review the result. It has no text prompt in this version
 and generates no fingers: they blend between the two sides. A range may have up
 to 290 frames. **Variation** is a number from 0 to 999: another number gives
-another motion, and the same number gives the same motion again, because
-generated ranges are kept in the folder `auto_fill` inside the person's preview
-folder. Automatic needs a separate setup: close the app, run `Setup_Kimodo.cmd`,
+another motion. Generated ranges are kept in the folder `auto_fill` inside the
+person's preview folder, so the same number gives the same motion again while
+the takes joined before the range stay the same. Filling or unfilling an earlier
+range of the same person changes the chain of joined takes; the later
+**Automatic** ranges are then generated again and may differ. Automatic needs a
+separate setup: close the app, run `Setup_Kimodo.cmd`,
 then get the eight Kimodo files in **Model Manager** (1.13 GB; their rows are
 marked **(Optional)** and **Download All** skips them). Auto Download on the
 Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
