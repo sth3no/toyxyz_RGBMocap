@@ -8,10 +8,12 @@ from unittest.mock import patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtCore import QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QApplication, QPushButton
+from PySide6.QtWidgets import QApplication, QPushButton, QScrollArea, QWidget
+import shiboken6
 
 from mocap import paths, resource_safety, tutorial
 from mocap.theme import ui_px
+from mocap.tutorial_steps import Chapter, Step
 
 APP = QApplication.instance() or QApplication([])
 
@@ -153,6 +155,220 @@ class WidgetsTest(AppearanceCase):
         APP.setProperty('uiTheme', 'light')
         image = self.overlay().grab().toImage()
         self.assertIn(QColor('#2866a3'), [image.pixelColor(x, 120) for x in range(90, 100)])
+
+
+class Stand(QWidget):
+    """A window with three controls and the state the test steps read."""
+    def __init__(self):
+        super().__init__()
+        self.resize(1100, 700)
+        self.a, self.b, self.c = (QPushButton(name, self) for name in 'abc')
+        self.a.setGeometry(50, 50, 100, 30);self.b.setGeometry(900, 300, 150, 40);self.c.setGeometry(400, 600, 120, 30)
+        self.flag = self.busy = self.hide_b = False
+        self.failure = self.block = ''
+
+
+def demo(**changes):
+    steps = dict(a=Step('a', 'First', 'Text a', lambda w: [w.a]), b=Step('b', 'Second', 'Text b', lambda w: [w.b]),
+                 c=Step('c', 'Third', lambda w: 'Text c for ' + w.c.text(), lambda w: [w.c]))
+    for key, fields in changes.pop('steps', {}).items():steps[key] = Step(key, steps[key].title, steps[key].text, steps[key].targets, **fields)
+    return Chapter('demo', 'Demo', tuple(steps.values()), **changes)
+
+
+class ControllerTest(HomeCase):
+    def setUp(self):
+        super().setUp()
+        self.w = Stand();self.w.show();APP.processEvents()
+        self.t = tutorial.Tutorial(self.w)
+        self.ended = [];self.t.finished.connect(lambda key, completed: self.ended.append((key, completed)))
+        def close():
+            self.t.stop();self.w.close();self.w.deleteLater();APP.processEvents()
+        self.addCleanup(close)
+
+    def buttons(self):return [b.text() for b in self.t.card.findChildren(QPushButton)]
+
+    def press(self, label):next(b for b in self.t.card.findChildren(QPushButton) if b.text() == label).click()
+
+    def test_next_moves_through_the_steps_and_finish_records_the_chapter(self):
+        self.t.start(demo())
+        self.assertTrue(self.t.active);self.assertTrue(self.t.timer.isActive())
+        self.assertTrue(self.t.card.isVisible());self.assertTrue(self.t.overlay.isVisible())
+        self.assertEqual((self.t.card.header.text(), self.t.card.title.text(), self.t.card.text.text()), ('Demo · Step 1 of 3', 'First', 'Text a'))
+        self.assertEqual(self.buttons(), ['×', 'Next'])
+        self.press('Next')
+        self.assertEqual(self.buttons(), ['×', 'Back', 'Next'])
+        self.press('Next')
+        self.assertEqual((self.t.card.text.text(), self.buttons()), ('Text c for c', ['×', 'Back', 'Finish']))
+        self.press('Finish')
+        self.assertEqual(self.ended, [('demo', True)]);self.assertEqual(tutorial.load_state()['done'], ['demo'])
+        self.assertFalse(self.t.active);self.assertFalse(self.t.timer.isActive())
+        self.assertFalse(self.t.card.isVisible());self.assertFalse(self.t.overlay.isVisible())
+
+    def test_a_met_condition_moves_on_at_the_next_tick(self):
+        self.t.start(demo(steps=dict(a=dict(done=lambda w, e: w.flag, waiting='Waiting for the flag…'))))
+        self.t.tick()
+        self.assertEqual(self.t.index, 0);self.assertEqual(self.t.card.status.text(), 'Waiting for the flag…')
+        self.assertEqual(self.buttons(), ['×', 'Skip step'])
+        self.w.flag = True;self.t.tick()
+        self.assertEqual(self.t.index, 1)
+
+    def test_a_skipped_step_is_never_shown_and_is_not_counted(self):
+        self.t.start(demo(steps=dict(b=dict(skip=lambda w: w.hide_b))))
+        self.w.hide_b = True;self.t.tick()
+        self.assertEqual(self.t.card.header.text(), 'Demo · Step 1 of 2')
+        self.t.next()
+        self.assertEqual((self.t.step.key, self.t.card.header.text()), ('c', 'Demo · Step 2 of 2'))
+        self.t.back()
+        self.assertEqual(self.t.step.key, 'a')
+
+    def test_a_first_step_that_is_skipped_is_not_the_start(self):
+        self.t.start(demo(steps=dict(a=dict(skip=lambda w: True))))
+        self.assertEqual((self.t.step.key, self.buttons()), ('b', ['×', 'Next']))
+
+    def test_back_holds_a_step_whose_condition_is_already_met(self):
+        self.w.flag = True
+        self.t.start(demo(steps=dict(b=dict(done=lambda w, e: w.flag))))
+        self.t.next();self.t.tick()
+        self.assertEqual(self.t.step.key, 'c')
+        self.t.back();self.t.tick();self.t.tick()
+        self.assertEqual((self.t.step.key, self.buttons()), ('b', ['×', 'Back', 'Next']))
+        self.t.next()
+        self.assertEqual(self.t.step.key, 'c')
+
+    def test_a_signal_counts_only_when_its_condition_holds(self):
+        self.t.start(demo(events=lambda w: {'go': (w.a.clicked, lambda w: w.busy)}, steps=dict(a=dict(done=lambda w, e: 'go' in e))))
+        self.w.a.click();self.t.tick()
+        self.assertEqual(self.t.index, 0)
+        self.w.busy = True;self.w.a.click();self.t.tick()
+        self.assertEqual(self.t.index, 1)
+
+    def test_an_earlier_signal_does_not_count_for_a_later_step(self):
+        self.t.start(demo(events=lambda w: {'go': (w.a.clicked, lambda w: True)}, steps=dict(b=dict(done=lambda w, e: 'go' in e))))
+        self.w.a.click();self.t.next();self.t.tick()
+        self.assertEqual(self.t.step.key, 'b')
+
+    def test_retry_sends_the_guide_one_step_back_with_its_note(self):
+        self.t.start(demo(steps=dict(b=dict(retry=lambda w, e: w.failure or None))))
+        self.t.next();self.t.tick()
+        self.assertEqual(self.t.step.key, 'b')
+        self.w.failure = 'The job stopped.';self.t.tick()
+        self.assertEqual((self.t.step.key, self.t.card.status.text()), ('a', 'The job stopped.'))
+        self.w.failure = '';self.t.next()
+        self.assertEqual((self.t.step.key, self.t.card.status.text()), ('b', ''))
+
+    def test_a_blocked_chapter_shows_its_reason_and_does_not_move(self):
+        self.w.block = 'Choose another model.'
+        self.t.start(demo(blocked=lambda w: w.block or None, steps=dict(a=dict(done=lambda w, e: True))))
+        self.t.tick()
+        self.assertEqual((self.t.index, self.t.card.text.text(), self.buttons()), (0, 'Choose another model.', ['×']))
+        self.assertFalse(self.t.overlay.isVisible())
+        self.w.block = '';self.t.tick()
+        self.assertEqual(self.t.index, 1);self.assertTrue(self.t.overlay.isVisible())
+
+    def test_overlay_hole_is_the_target_rectangle_in_window_coordinates(self):
+        self.t.start(demo());self.t.next()
+        self.assertEqual(self.t.overlay.holes, [QRect(900, 300, 150, 40)])
+        self.assertEqual(self.t.overlay.geometry(), self.w.rect())
+        self.assertEqual(self.t.card.x() + self.t.card.width() + ui_px(12), 900)
+
+    def test_a_centred_step_keeps_the_card_in_the_middle(self):
+        self.t.start(demo(steps=dict(a=dict(card='center'))))
+        self.assertEqual(self.t.card.pos(), tutorial.place_card(self.w.size(), self.t.card.size(), None, ui_px(12)))
+        self.assertEqual(self.t.overlay.holes, [QRect(50, 50, 100, 30)])
+
+    def test_a_rectangle_target_is_used_as_it_is(self):
+        self.t.start(Chapter('r', 'R', (Step('r', 'R', 'x', lambda w: [QRect(10, 20, 30, 40)]),)))
+        self.assertEqual(self.t.overlay.holes, [QRect(10, 20, 30, 40)])
+
+    def test_a_hidden_target_gets_no_ring_and_the_card_stays(self):
+        self.w.b.hide();self.t.start(demo());self.t.next()
+        self.assertEqual(self.t.overlay.holes, []);self.assertTrue(self.t.card.isVisible())
+
+    def test_a_deleted_target_does_not_break_the_tick(self):
+        self.t.start(demo());self.t.next()
+        shiboken6.delete(self.w.b);self.t.tick()
+        self.assertEqual(self.t.overlay.holes, []);self.assertEqual(self.t.step.key, 'b')
+
+    def test_a_condition_on_a_deleted_control_does_not_break_the_tick(self):
+        self.t.start(demo(steps=dict(a=dict(done=lambda w, e: w.b.isChecked(), skip=lambda w: w.b.isChecked()))))
+        shiboken6.delete(self.w.b);self.t.tick()
+        self.assertEqual(self.t.index, 0)
+
+    def test_starting_again_restarts_without_doubling_the_signals(self):
+        self.seen = []
+        chapter = demo(events=lambda w: {'go': (w.a.clicked, lambda w: self.seen.append(1) or True)})
+        self.t.start(chapter);self.t.next();self.t.start(chapter)
+        self.w.a.click()
+        self.assertEqual((self.seen, self.t.index), ([1], 0));self.assertEqual(self.ended, [('demo', False)])
+
+    def test_signals_are_released_when_the_chapter_ends(self):
+        self.seen = []
+        self.t.start(demo(events=lambda w: {'go': (w.a.clicked, lambda w: self.seen.append(1) or True)}));self.t.stop()
+        self.w.a.click()
+        self.assertEqual(self.seen, [])
+
+    def test_a_modal_dialog_hides_the_guide_until_it_closes(self):
+        self.t.start(demo(steps=dict(a=dict(done=lambda w, e: w.flag))))
+        self.w.flag = True
+        with patch.object(tutorial, 'modal_open', return_value=True):
+            self.t.tick()
+            self.assertFalse(self.t.card.isVisible());self.assertFalse(self.t.overlay.isVisible());self.assertEqual(self.t.index, 0)
+        self.t.tick()
+        self.assertTrue(self.t.card.isVisible());self.assertTrue(self.t.overlay.isVisible());self.assertEqual(self.t.index, 1)
+
+    def test_an_open_menu_hides_the_highlight_but_keeps_the_card(self):
+        self.t.start(demo())
+        with patch.object(tutorial, 'popup_open', return_value=True):
+            self.t.tick()
+            self.assertTrue(self.t.card.isVisible());self.assertFalse(self.t.overlay.isVisible())
+        self.t.tick()
+        self.assertTrue(self.t.overlay.isVisible())
+
+    def test_stop_does_not_record_the_chapter(self):
+        self.t.start(demo());self.t.next();self.press('×')
+        self.assertEqual(self.ended, [('demo', False)]);self.assertEqual(tutorial.load_state(), {})
+        self.assertFalse(self.t.card.isVisible())
+
+    def test_an_unchanged_card_keeps_its_buttons_between_ticks(self):
+        self.t.start(demo())
+        before = self.t.card.findChildren(QPushButton)
+        self.t.tick();self.t.tick()
+        self.assertEqual([id(b) for b in self.t.card.findChildren(QPushButton)], [id(b) for b in before])
+
+    def test_an_action_button_runs_the_action_of_the_step(self):
+        self.t.start(demo(steps=dict(a=dict(action=lambda w: None if w.busy else ('Use it', lambda: setattr(w, 'flag', True))))))
+        self.assertEqual(self.buttons(), ['×', 'Use it', 'Next'])
+        self.press('Use it');self.assertTrue(self.w.flag)
+        self.w.busy = True;self.t.tick()
+        self.assertEqual(self.buttons(), ['×', 'Next'])
+
+    def test_the_overlay_follows_the_window_size(self):
+        self.t.start(demo());self.w.resize(1300, 800);APP.processEvents()
+        self.assertEqual(self.t.overlay.geometry(), QRect(0, 0, 1300, 800))
+
+    def test_card_stays_inside_the_window_for_every_step(self):
+        self.t.start(demo())
+        for _ in range(3):
+            self.assertTrue(self.w.rect().contains(self.t.card.geometry()), self.t.step.key);self.t.next()
+
+    def test_a_target_in_the_settings_scroll_area_is_scrolled_into_view(self):
+        area = QScrollArea(self.w);area.setGeometry(600, 0, 200, 200)
+        inner = QWidget();inner.setFixedSize(180, 2000);far = QPushButton('far', inner);far.move(0, 1800);area.setWidget(inner);area.show()
+        self.w.settings_scroll = area;self.w.far = far;APP.processEvents()
+        self.t.start(Chapter('s', 'S', (Step('far', 'Far', 'x', lambda w: [w.far]),)));APP.processEvents();self.t.tick()
+        self.assertEqual(len(self.t.overlay.holes), 1)
+        self.assertTrue(QRect(600, 0, 200, 200).contains(self.t.overlay.holes[0]))
+
+    def test_a_message_is_a_centred_card_without_a_chapter(self):
+        calls = []
+        self.t.message('Welcome', 'Hello', [('Not now', lambda: calls.append('no')), ('Start', lambda: calls.append('yes'))], closed=lambda: calls.append('closed'))
+        self.assertTrue(self.t.card.isVisible());self.assertFalse(self.t.overlay.isVisible());self.assertFalse(self.t.active)
+        self.assertEqual((self.t.card.title.text(), self.buttons()), ('Welcome', ['×', 'Not now', 'Start']))
+        self.assertEqual(self.t.card.pos(), tutorial.place_card(self.w.size(), self.t.card.size(), None, ui_px(12)))
+        self.press('Start')
+        self.assertEqual(calls, ['yes']);self.assertFalse(self.t.card.isVisible())
+        self.t.message('Welcome', 'Hello', [('Start', print)], closed=lambda: calls.append('closed'));self.press('×')
+        self.assertEqual(calls, ['yes', 'closed']);self.assertFalse(self.t.card.isVisible())
 
 
 if __name__ == '__main__':

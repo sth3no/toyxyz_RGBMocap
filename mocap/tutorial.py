@@ -3,9 +3,9 @@
 The chapters are data in tutorial_steps. MainWindow never starts the tutorial by itself; app.py and the Help menu do.
 Its state is an installation-local convenience in the Resource Safety config/local.json, never project data.
 """
-from PySide6.QtCore import QPoint, QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from .theme import is_light_theme, set_appearance_style, theme_color, ui_px
 
 STATE = 'tutorial'
@@ -129,3 +129,174 @@ class TutorialCard(QFrame):
         self.box.setContentsMargins(margin, ui_px(8), margin, margin);self.box.setSpacing(ui_px(6));self.buttons.setSpacing(ui_px(6))
         self.cross.setFixedSize(ui_px(22), ui_px(22))
         self.fit()
+
+
+def modal_open():return QApplication.activeModalWidget() is not None
+
+
+def popup_open():return QApplication.activePopupWidget() is not None
+
+
+class Tutorial(QObject):
+    """Leads through one chapter: polls the window, moves on when a step is done and draws the highlight and the card."""
+    finished = Signal(str, bool)  # chapter key, completed
+
+    def __init__(self, window):
+        super().__init__(window)
+        self.window, self.chapter, self.index, self.held, self.note, self.events = window, None, 0, False, '', set()
+        self.overlay, self.card = TutorialOverlay(window), TutorialCard(window)
+        self.overlay.hide();self.card.hide()
+        self.card.closed.connect(self._closed)
+        self.timer = QTimer(self);self.timer.setInterval(200);self.timer.timeout.connect(self.tick)
+        self._links, self._shown, self._action, self._message = [], None, None, None
+        window.installEventFilter(self)
+
+    @property
+    def active(self):return self.chapter is not None
+
+    @property
+    def step(self):return self.chapter.steps[self.index] if self.chapter else None
+
+    def eventFilter(self, watched, event):
+        if watched is self.window and event.type() == QEvent.Resize and (self.chapter or self._message):
+            QTimer.singleShot(0, self.tick)
+        return False
+
+    def _ask(self, rule, *arguments, default=None):
+        """A rule of a step; one that meets a control deleted meanwhile (rows are rebuilt) counts as not met."""
+        if rule is None:return default
+        try:return rule(self.window, *arguments)
+        except RuntimeError:return default
+
+    def _skipped(self, index):return bool(self._ask(self.chapter.steps[index].skip))
+
+    def _beside(self, direction):
+        index = self.index + direction
+        while 0 <= index < len(self.chapter.steps) and self._skipped(index):index += direction
+        return index if 0 <= index < len(self.chapter.steps) else None
+
+    def start(self, chapter):
+        self.stop()
+        self._message = None
+        self.chapter, self.index = chapter, -1
+        for name, (signal, condition) in (self._ask(chapter.events) or {}).items():
+            slot = lambda *_, name=name, condition=condition: condition(self.window) and self.events.add(name)
+            signal.connect(slot);self._links.append((signal, slot))
+        first = self._beside(1)
+        if first is None:return self.stop()
+        self.overlay.raise_();self.card.raise_()
+        self.timer.start()
+        self._enter(first)
+
+    def stop(self, completed=False):
+        if not self.chapter:return
+        key, self.chapter = self.chapter.key, None
+        for signal, slot in self._links:
+            try:signal.disconnect(slot)
+            except (RuntimeError, TypeError):pass  # the control is gone
+        self._links = []
+        self.timer.stop();self.overlay.hide();self.card.hide();self._shown = None
+        if completed:mark_done(key)
+        self.finished.emit(key, completed)
+
+    def next(self):
+        if not self.chapter:return
+        index = self._beside(1)
+        if index is None:self.stop(completed=True)
+        else:self._enter(index)
+
+    def back(self):
+        if not self.chapter:return
+        index = self._beside(-1)
+        if index is not None:self._enter(index, held=True)
+
+    def _enter(self, index, held=False, note=''):
+        self.index, self.held, self.note = index, held, note
+        self.events.clear()
+        scroll = getattr(self.window, 'settings_scroll', None)
+        for target in self._ask(self.step.targets) or []:
+            try:
+                if scroll is not None and isinstance(target, QWidget) and scroll.isAncestorOf(target):scroll.ensureWidgetVisible(target)
+            except RuntimeError:pass
+            break
+        self.tick()
+
+    def tick(self):
+        if not self.chapter:
+            if self._message:self._place(None)
+            return
+        if modal_open():
+            self.overlay.hide();self.card.hide();return
+        blocked = self._ask(self.chapter.blocked)
+        if blocked:
+            self.overlay.hide()
+            return self._show(self.chapter.title, self.chapter.title, blocked, '', [], None)
+        step = self.step
+        retry = self._ask(step.retry, self.events)
+        if retry:
+            index = self._beside(-1)
+            if index is not None:return self._enter(index, note=retry)
+        if self._skipped(self.index):return self.next()
+        done = bool(self._ask(step.done, self.events, default=False))
+        if done and not self.held:return self.next()
+        self._render(step, done)
+
+    def _rects(self, step):
+        rects = []
+        for target in self._ask(step.targets) or []:
+            try:
+                if isinstance(target, QRect):rect = target
+                elif target.isVisible():rect = target.visibleRegion().boundingRect().translated(target.mapTo(self.window, QPoint(0, 0)))
+                else:continue
+            except RuntimeError:continue  # deleted while its step is shown
+            if not rect.isEmpty():rects.append(rect)
+        return rects
+
+    def _render(self, step, done):
+        rects = self._rects(step)
+        self.overlay.setGeometry(self.window.rect());self.overlay.set_holes(rects)
+        self.overlay.setVisible(not popup_open())
+        shown = [i for i in range(len(self.chapter.steps)) if i == self.index or not self._skipped(i)]
+        waiting = step.done is not None and not done
+        text = step.text
+        if callable(text):text = self._ask(text, default='') or ''
+        self._action = self._ask(step.action)
+        buttons = [('Back', self.back)] if self._beside(-1) is not None else []
+        if self._action:buttons.append((self._action[0], lambda: self._action and self._action[1]()))
+        buttons.append(('Finish' if self._beside(1) is None else 'Skip step' if waiting else 'Next', self.next))
+        target = None
+        if rects and step.card != 'center':
+            target = rects[0]
+            for rect in rects[1:]:target = target.united(rect)
+        self._show(f'{self.chapter.title} · Step {shown.index(self.index) + 1} of {len(shown)}', step.title, text,
+                   self.note or (step.waiting if waiting else ''), buttons, target)
+
+    def _show(self, header, title, text, status, buttons, target):
+        # The card is rebuilt only when it changes: replacing a button under a pressed mouse would swallow the click.
+        shown = (header, title, text, status, tuple(label for label, _ in buttons))
+        if shown != self._shown:
+            self.card.set_content(header, title, text, status, buttons);self._shown = shown
+        self._place(target)
+
+    def _place(self, target):
+        self.card.move(place_card(self.window.size(), self.card.size(), target, ui_px(12)))
+        self.card.show();self.card.raise_()
+
+    def refresh_appearance(self):
+        self.card.refresh_appearance();self.overlay.update();self.tick()
+
+    def message(self, title, text, buttons, closed=None):
+        """A centred card outside a chapter (welcome, hint). Any button, or the cross, takes it away."""
+        self.stop()
+        def choice(callback):
+            def run():
+                self._message = None;self.card.hide();self._shown = None
+                callback()
+            return run
+        self._message = choice(closed or (lambda: None))
+        self.overlay.hide()
+        self._show('', title, text, '', [(label, choice(callback)) for label, callback in buttons], None)
+
+    def _closed(self):
+        if self.chapter:self.stop()
+        elif self._message:self._message()
