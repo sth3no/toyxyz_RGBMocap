@@ -576,16 +576,19 @@ class PeopleWorkspace:
         choices=person.get('gap_fill') or {}
         people=self.people_state['people'] if self.people_state else []
         reason,manual=panel_state(self.people_root,found,choices,self.model_choice.currentData(),self.active_result,people,person.get('id'))
-        self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason,people,person.get('id'))
+        from . import kimodo_runtime  # standard library only
+        try:auto_issue=kimodo_runtime.issue()
+        except Exception:auto_issue=kimodo_runtime.SETUP
+        self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason,people,person.get('id'),auto_issue)
         self.hidden_ranges.set_manual_note(manual)
 
-    def gap_choice_changed(self,key,method,donor=None,mirror=False,offset=0):
+    def gap_choice_changed(self,key,method,donor=None,mirror=False,offset=0,seed=0):
         from copy import deepcopy
         from .hidden_ranges_state import choose
         if self.people_state is None or self.current_person() is None:return
         state=deepcopy(self.people_state);person=next(p for p in state['people'] if p['id']==self.active_person_id)
         if not isinstance(person.get('gap_fill'),dict):person['gap_fill']={}
-        choose(person['gap_fill'],key,method,donor,mirror,offset)
+        choose(person['gap_fill'],key,method,donor,mirror,offset,seed)
         if not person['gap_fill']:del person['gap_fill']
         try:save_people(self.people_root,state)
         except (ValueError,OSError) as error:

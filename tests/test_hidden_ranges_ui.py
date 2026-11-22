@@ -110,6 +110,58 @@ class CopyRowsTest(unittest.TestCase):
         self.assertEqual(ui.fill_sources(g,{'100_120':COPY()}),[])
         self.assertEqual([t['first'] for t in ui.fill_sources(g,{'100_120':{'method':'smooth'}},PEOPLE,1)],[0,120])
 
+AUTO=lambda seed=7:{'method':'auto','seed':seed}
+SETUP='Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'
+LONG=[T(0,100),T(400,500)]                                                    # 300 hidden frames, over the automatic limit
+
+class AutoRowsTest(unittest.TestCase):
+    def rows(self,choices,auto_issue=None,takes=TAKES):return ui.gap_rows(h.gaps(takes),choices,30,PEOPLE,1,auto_issue)
+    def test_choose(self):
+        choices={}
+        ui.choose(choices,'100_120','auto');self.assertEqual(choices,{'100_120':{'method':'auto','seed':0}})
+        ui.choose(choices,'100_120','auto',2,True,30,7);self.assertEqual(choices,{'100_120':{'method':'auto','seed':7}})
+        ui.choose(choices,'100_120','auto',seed=5000);self.assertEqual(choices['100_120'],{'method':'auto','seed':999})
+        ui.choose(choices,'100_120','auto',seed=-3);self.assertEqual(choices['100_120'],{'method':'auto','seed':0})
+        ui.choose(choices,'100_120','copy',2,seed=7);self.assertEqual(choices['100_120'],COPY())   # other methods ignore the seed
+    def test_saved_choice(self):
+        r=self.rows({'100_120':AUTO()})[0]
+        self.assertEqual((r['method'],r['seed'],r['person'],r['mirror'],r['offset'],r['issue'],r['auto_issue']),('auto',7,None,False,0,None,None))
+        self.assertEqual(self.rows({'100_120':COPY()})[0]['seed'],0)
+        r=self.rows({'100_120':AUTO()},SETUP)[0]
+        self.assertEqual((r['method'],r['seed'],r['issue'],r['auto_issue']),('auto',7,SETUP,SETUP))
+        self.assertEqual(self.rows({},SETUP)[1]['auto_issue'],SETUP)                # every row carries it for the disabled item
+    def test_over_limit(self):
+        r=self.rows({'100_400':AUTO()},None,LONG)[0]
+        sentence='Automatic fill is limited to 290 frames; this range has 300.'
+        self.assertEqual((r['method'],r['auto_issue'],r['issue']),('auto',sentence,sentence))
+        self.assertEqual(self.rows({},SETUP,LONG)[0]['auto_issue'],sentence)        # the range's own limit comes first
+    def test_malformed_shows_none(self):
+        for bad in ({'method':'auto','seed':1000},{'method':'auto','seed':-1},{'method':'auto','seed':'7'},{'method':'auto','seed':7.0},{'method':'auto','seed':True}):
+            r=self.rows({'100_120':bad})[0]
+            self.assertEqual((r['method'],r['seed'],r['issue']),('none',0,None),bad)
+        self.assertEqual(self.rows({'100_120':{'method':'auto'}})[0]['method'],'auto')   # a missing seed is 0
+    def test_can_fill(self):
+        self.assertTrue(ui.can_fill(self.rows({'100_120':AUTO()}),None))
+        self.assertFalse(ui.can_fill(self.rows({'100_120':AUTO()},SETUP),None))
+        self.assertFalse(ui.can_fill(self.rows({'100_400':AUTO()},None,LONG),None))
+        self.assertTrue(ui.can_fill(self.rows({'100_120':{'method':'smooth'}},SETUP),None))   # the issue only stops Automatic rows
+    def test_sources(self):
+        g=h.gaps(TAKES)
+        self.assertEqual([t['first'] for t in ui.fill_sources(g,{'200_260':AUTO()},PEOPLE,1)],[120,260])
+        self.assertEqual([t['first'] for t in ui.fill_sources(g,{'200_260':AUTO()})],[120,260])
+        self.assertEqual(ui.fill_sources(h.gaps(LONG),{'100_400':AUTO()}),[])
+    def test_pending_state(self):
+        g=h.gaps(TAKES);choices={'100_120':COPY(offset=200),'200_260':AUTO()};keep=json.dumps(choices)
+        self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1),({'100_120':None,'200_260':None},True))
+        self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1,SETUP),({'100_120':None,'200_260':SETUP},False))
+        self.assertEqual(json.dumps(choices),keep)
+    def test_panel_state_reads_the_neighbours(self):
+        from unittest import mock
+        root=Path(tempfile.gettempdir())/'scene';g=h.gaps(TAKES);read=[]
+        with mock.patch('mocap.motion_tools.selected_export',lambda p,kind:read.append(p) or p):
+            self.assertIsNone(ui.panel_state(root,g,{'200_260':AUTO()},'gvhmr','initial',PEOPLE,1)[0])
+        self.assertEqual(sorted(read),sorted(root/TAKES[i]['project'] for i in (1,2)))
+
 class PendingAndReadinessTest(unittest.TestCase):
     def test_pending_offset_is_checked_without_saving(self):
         g=h.gaps(TAKES);choices={'100_120':COPY(offset=200)};keep=json.dumps(choices)
@@ -201,6 +253,7 @@ class TakeInUseTest(unittest.TestCase):
         self.person['gap_fill']={'100_120':COPY()};self.assertEqual(self.unlisted([self.person,donor]),set())
         self.person['gap_fill']={'100_120':COPY(offset=300)};self.assertEqual(self.unlisted([self.person,donor]),{self.J})
         self.person['gap_fill']={'100_120':{'method':'copy','mirror':False,'offset':0}};self.assertEqual(self.unlisted([self.person,donor]),{self.J})
+        self.person['gap_fill']={'100_120':AUTO()};self.assertEqual(self.unlisted(),set())
     def test_bad_records_never_raise(self):
         self.assertEqual(ui.unlisted_joins(self.root,dict(id=1,takes=[]),'initial'),set())
         self.assertEqual(ui.unlisted_joins(self.root,dict(id=1,takes='bad',joins=[5,{}]),'initial'),set())

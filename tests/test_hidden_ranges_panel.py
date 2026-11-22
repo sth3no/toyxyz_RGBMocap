@@ -63,6 +63,68 @@ class NarrowPanelTest(unittest.TestCase):
 
 
 @unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
+class AutomaticChoiceTest(unittest.TestCase):
+    def panel(self,choices,auto_issue=None,reason=None):
+        application()
+        from mocap.hidden_ranges import gaps
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        panel=HiddenRangesPanel();self.addCleanup(panel.close);self.emitted=[]
+        panel.choice_changed.connect(lambda *a:self.emitted.append(a));panel.fill_requested.connect(lambda:self.emitted.append('fill'))
+        panel.show_gaps(gaps(PEOPLE[0]['takes']),choices,30,reason,PEOPLE,1,auto_issue)
+        return panel
+    def combo(self,panel):return panel._widgets[1]
+    def variation(self,panel):return next((s for s in panel.findChildren(QSpinBox) if s.accessibleName().startswith('Variation')),None)
+    def test_four_methods(self):
+        from PySide6.QtCore import Qt
+        combo=self.combo(self.panel({}))
+        self.assertEqual([(combo.itemText(i),combo.itemData(i)) for i in range(combo.count())],
+                         [('Do not fill','none'),('Smooth join','smooth'),('Copy from person','copy'),('Automatic','auto')])
+        self.assertTrue(combo.model().item(3).isEnabled())
+        self.assertEqual(combo.itemData(3,Qt.ToolTipRole),'Generate the missing motion from the captured poses on both sides. The result is plausible motion, not a reconstruction.')
+    def test_issue_disables_the_item(self):
+        from PySide6.QtCore import Qt
+        combo=self.combo(self.panel({},'x'))
+        self.assertFalse(combo.model().item(3).isEnabled());self.assertEqual(combo.itemData(3,Qt.ToolTipRole),'x')
+    def test_choosing_automatic(self):
+        panel=self.panel({});self.combo(panel).setCurrentIndex(3)
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,0)])
+        self.assertIsNone(self.variation(panel))
+    def test_variation(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        self.assertEqual(self.combo(panel).currentData(),'auto');self.assertTrue(panel.fill.isEnabled())
+        spin=self.variation(panel)
+        self.assertEqual((spin.minimum(),spin.maximum(),spin.value()),(0,999,3))
+        self.assertEqual(spin.accessibleName(),'Variation, Frames 101–120 (0.7 s)')
+        self.assertEqual(spin.toolTip(),'Another number gives another motion for this range.')
+        spin.editingFinished.emit();self.assertEqual(self.emitted,[])               # an unchanged value is not saved
+        spin.setValue(7);self.assertEqual(self.emitted,[])                           # nor is a value still being edited
+        spin.editingFinished.emit();self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7)])
+    def test_fill_saves_the_variation_first(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        saved=lambda *a:panel.show_gaps(*panel._shown[:1],{'100_120':{'method':'auto','seed':a[5]}},30,*panel._shown[2:])
+        panel.choice_changed.connect(saved)                                          # what the People panel does after saving
+        self.variation(panel).setValue(7);panel.fill.click()
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7),'fill'])
+        self.emitted.clear();panel.fill.click();self.assertEqual(self.emitted,['fill'])
+    def test_fill_waits_when_the_variation_was_not_saved(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        self.variation(panel).setValue(7);panel.fill.click()
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7)])
+    def test_saved_automatic_with_an_issue(self):
+        panel=self.panel({'100_120':{'method':'auto','seed':3}},'x')
+        self.assertEqual(self.combo(panel).currentData(),'auto');self.assertFalse(panel.fill.isEnabled())
+        self.assertIn('x',[w.text() for w in panel._widgets if hasattr(w,'text')])
+    def test_copy_rows_emit_a_trailing_zero(self):
+        panel=self.panel({'100_120':dict(method='copy',person=2,mirror=False,offset=-30)})
+        panel.findChild(QCheckBox).setChecked(True)
+        offset=next(s for s in panel.findChildren(QSpinBox) if s.accessibleName().startswith('Offset'))
+        offset.setValue(-20);offset.editingFinished.emit()
+        self.assertEqual(self.emitted,[('100_120','copy',2,True,-30,0),('100_120','copy',2,True,-20,0)])
+        self.emitted.clear();self.combo(panel).setCurrentIndex(1)
+        self.assertEqual(self.emitted,[('100_120','smooth',2,False,-30,0)])
+
+
+@unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
 class ChoiceGlueTest(unittest.TestCase):
     """PeopleWorkspace methods run on a stand-in window over a real people folder."""
     def setUp(self):
@@ -104,6 +166,25 @@ class ChoiceGlueTest(unittest.TestCase):
         saved=self.choose(self.host(self.S(0,100),10),'smooth')
         self.assertEqual(saved['gap_fill'],{'100_120':{'method':'smooth'}})
         self.assertEqual(self.calls,[('activate',1,self.root/self.J),('scene',True)])
+    def test_automatic_saves_its_variation(self):
+        from mocap.people_ui import PeopleWorkspace
+        PeopleWorkspace.gap_choice_changed(self.host(self.J),'100_120','auto',None,False,0,7)
+        saved=json.loads((self.root/'people.json').read_text(encoding='utf-8'))['people'][0]
+        self.assertEqual(saved['gap_fill'],{'100_120':{'method':'auto','seed':7}})
+    def test_panel_gets_the_automatic_issue(self):
+        from unittest import mock
+        from PySide6.QtCore import Qt
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        from mocap.people_ui import PeopleWorkspace
+        def shown(issue):
+            host=self.host(self.J,hidden_ranges=HiddenRangesPanel(),model_choice=SimpleNamespace(currentData=lambda:'gvhmr'))
+            with mock.patch('mocap.kimodo_runtime.issue',issue):PeopleWorkspace.refresh_hidden_ranges(host,host.current_person())
+            combo=host.hidden_ranges._widgets[1];host.hidden_ranges.close()
+            return combo.model().item(3).isEnabled(),combo.itemData(3,Qt.ToolTipRole)
+        self.assertEqual(shown(lambda:None)[0],True)
+        self.assertEqual(shown(lambda:'Get it.'),(False,'Get it.'))
+        def broken():raise OSError('disk')
+        self.assertEqual(shown(broken),(False,'Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'))
     def test_an_unchanged_take_in_use_is_not_reloaded(self):
         self.choose(self.host(self.J),'smooth')
         self.assertEqual(self.calls,[('populate',),('scene',True)])

@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 import numpy as np
-from .hidden_ranges import METHODS, OFFSET_LIMIT, chains, donor_take, gap_key, gap_label, method_issue
+from .hidden_ranges import METHODS, OFFSET_LIMIT, SEED_LIMIT, chains, choice_params, donor_take, gap_key, gap_label, method_issue
 
 SUPPORTED = ('initial', 'footmr_initial')
 NOT_READY = 'Reconstruct and prepare both neighbouring takes first.'
@@ -26,36 +26,44 @@ def editable(reason):
 def _people(people):return [p for p in people if isinstance(p, dict)] if isinstance(people, list) else []
 
 
-def _shown(choice, gap, people, ident):
-    """(method, person, mirror, offset, issue) as the row shows it; a malformed record shows as Do not fill."""
-    none = ('none', None, False, 0, None)
+def _auto_issue(gap, auto_issue):return method_issue('auto', gap) or auto_issue
+
+
+def _shown(choice, gap, people, ident, auto_issue=None):
+    """(method, person, mirror, offset, seed, issue) as the row shows it; a malformed record shows as Do not fill."""
+    none = ('none', None, False, 0, 0, None)
     if not isinstance(choice, dict) or choice.get('method', 'none') not in METHODS:return none
     method = choice.get('method', 'none')
     if method == 'none':return none
     # Step 1 showed an over-limit Smooth join as Do not fill; keep that.
-    if method == 'smooth':return ('smooth', None, False, 0, None) if method_issue('smooth', gap) is None else none
+    if method == 'smooth':return ('smooth', None, False, 0, 0, None) if method_issue('smooth', gap) is None else none
+    if method == 'auto':
+        try:seed = choice_params(choice)[1]['seed']
+        except ValueError:return none
+        return 'auto', None, False, 0, seed, _auto_issue(gap, auto_issue)
     p, mirror, off = choice.get('person'), choice.get('mirror', False), choice.get('offset', 0)
     # A copy without a person is what choose() records before one is picked; it stays Copy with an issue.
     if (p is not None and type(p) is not int) or type(mirror) is not bool or type(off) is not int or abs(off) > OFFSET_LIMIT:return none
-    return 'copy', p, mirror, off, method_issue('copy', gap, choice, people, ident)
+    return 'copy', p, mirror, off, 0, method_issue('copy', gap, choice, people, ident)
 
 
-def gap_rows(gaps, choices, fps, people=None, ident=None):
+def gap_rows(gaps, choices, fps, people=None, ident=None, auto_issue=None):
+    """One row per gap; `auto_issue` is why Automatic cannot run at all (no runtime or model), None when it can."""
     choices = choices if isinstance(choices, dict) else {};people = _people(people)
     donors = [(p['id'], str(p.get('name') or f"Person {p['id']}")) for p in people if type(p.get('id')) is int and p['id'] != ident]
     rows = []
     for g in gaps:
-        method, person, mirror, offset, issue = _shown(choices.get(gap_key(g)), g, people, ident)
-        rows.append(dict(key=gap_key(g), label=gap_label(g, fps), method=method, person=person, mirror=mirror, offset=offset,
-                         issue=issue, smooth_issue=method_issue('smooth', g), donors=donors))
+        method, person, mirror, offset, seed, issue = _shown(choices.get(gap_key(g)), g, people, ident, auto_issue)
+        rows.append(dict(key=gap_key(g), label=gap_label(g, fps), method=method, person=person, mirror=mirror, offset=offset, seed=seed,
+                         issue=issue, smooth_issue=method_issue('smooth', g), auto_issue=_auto_issue(g, auto_issue), donors=donors))
     return rows
 
 
 def _sources(gaps, choices, people, ident):
-    """{project: (take, donor name or None)} of the takes the worker would read."""
+    """{project: (take, donor name or None)} of the takes the worker would read; Automatic's runtime is not checked here."""
     choices = choices if isinstance(choices, dict) else {};people = _people(people);out = {}
     for g in gaps:
-        method, person, _, offset, issue = _shown(choices.get(gap_key(g)), g, people, ident)
+        method, person, _, offset, _, issue = _shown(choices.get(gap_key(g)), g, people, ident)
         if method == 'none' or issue:continue
         for t in (g['before'], g['after']):out[t['project']] = (t, None)
         donor = next((p for p in people if p.get('id') == person), None) if method == 'copy' else None
@@ -74,18 +82,19 @@ def can_fill(rows, reason):
     return reason is None and bool(chosen) and not any(r['issue'] for r in chosen)
 
 
-def pending_state(gaps, choices, pending, reason, people=None, ident=None):
+def pending_state(gaps, choices, pending, reason, people=None, ident=None, auto_issue=None):
     """({key: issue}, can fill) with unsaved copy edits {key: (person, mirror, offset)} applied; nothing is saved."""
     choices = {k: v for k, v in choices.items()} if isinstance(choices, dict) else {}
     for key, (person, mirror, offset) in pending.items():choose(choices, key, 'copy', person, mirror, offset)
-    rows = gap_rows(gaps, choices, 30, people, ident)
+    rows = gap_rows(gaps, choices, 30, people, ident, auto_issue)
     return {r['key']: r['issue'] for r in rows}, can_fill(rows, reason)
 
 
-def choose(choices, key, method, person=None, mirror=False, offset=0):
+def choose(choices, key, method, person=None, mirror=False, offset=0, seed=0):
     if method not in METHODS:raise ValueError(f'Unknown method: {method}')
     if method == 'none':choices.pop(key, None)
     elif method == 'smooth':choices[key] = {'method': 'smooth'}
+    elif method == 'auto':choices[key] = {'method': 'auto', 'seed': max(0, min(SEED_LIMIT, int(seed)))}
     else:
         choices[key] = {'method': 'copy', **({} if person is None else {'person': int(person)}),
                         'mirror': bool(mirror), 'offset': max(-OFFSET_LIMIT, min(OFFSET_LIMIT, int(offset)))}
