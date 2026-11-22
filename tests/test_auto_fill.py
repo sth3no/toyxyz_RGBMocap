@@ -206,7 +206,7 @@ class DescribeTest(unittest.TestCase):
         k = auto_fill.text_key('A person waves.');self.assertEqual(len(k), 64);self.assertNotEqual(k, auto_fill.text_key('A person sits.'))
         with mock.patch.object(kimodo_runtime, 'text_identity', lambda: 'other'):self.assertNotEqual(auto_fill.text_key('A person waves.'), k)
         from mocap import kimodo_text
-        with mock.patch.object(kimodo_text, 'VERSION', 2):self.assertNotEqual(auto_fill.text_key('A person waves.'), k)
+        with mock.patch.object(kimodo_text, 'VERSION', kimodo_text.VERSION+1):self.assertNotEqual(auto_fill.text_key('A person waves.'), k)
         source = Path(self.tmp.name)/'kimodo_text.py';source.write_bytes(b'code')
         with mock.patch.object(auto_fill, 'TEXT_SOURCE', source):
             first = auto_fill.text_key('A person waves.');source.write_bytes(b'code changed');self.assertNotEqual(auto_fill.text_key('A person waves.'), first)
@@ -214,7 +214,7 @@ class DescribeTest(unittest.TestCase):
 
     def test_invalid_cache_is_read_again(self):
         done = self.folder/(auto_fill.text_key('A person waves.')+'.npy')
-        for bad in (np.zeros(4095, np.float32), vector('x').astype(np.float64), np.where(np.arange(4096) == 2, np.nan, 1).astype(np.float32), b'not an array'):
+        for bad in (np.zeros(4095, np.float32), np.zeros(4096, np.float32), vector('x').astype(np.float64), np.where(np.arange(4096) == 2, np.nan, 1).astype(np.float32), b'not an array'):
             self.folder.mkdir(parents=True, exist_ok=True)
             if isinstance(bad, bytes):done.write_bytes(bad)
             else:np.save(done, bad)
@@ -233,7 +233,8 @@ class DescribeTest(unittest.TestCase):
         for code, lines, message in ((1, [failed], 'Not enough free video memory to read the description.'), (1, [], auto_fill.STOPPED)):
             with self.assertRaises(auto_fill.Unavailable) as caught:auto_fill.describe('A person waves.', run=FakeText(lambda raw: None, code, lines))
             self.assertEqual(str(caught.exception), message);self.assertEqual(self.files(), [])
-        for answer in (lambda raw: None, lambda raw: np.zeros(12, np.float32), lambda raw: np.full(4096, np.inf, np.float32)):
+        # An all-zero vector too: the generation worker refuses it for a description, so it is never cached.
+        for answer in (lambda raw: None, lambda raw: np.zeros(12, np.float32), lambda raw: np.full(4096, np.inf, np.float32), lambda raw: np.zeros(4096, np.float32)):
             with self.assertRaises(auto_fill.Unavailable) as caught:auto_fill.describe('A person waves.', run=FakeText(answer))
             self.assertEqual(str(caught.exception), auto_fill.NO_FEATURE);self.assertEqual(self.files(), [])
 

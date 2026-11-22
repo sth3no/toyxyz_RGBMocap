@@ -2,7 +2,7 @@
 from pathlib import Path
 import json
 import numpy as np
-from .hidden_ranges import METHODS, OFFSET_LIMIT, SEED_LIMIT, TEXT_LIMIT, chains, choice_params, donor_take, gap_key, gap_label, method_issue
+from .hidden_ranges import METHODS, OFFSET_LIMIT, SEED_LIMIT, TEXT_LIMIT, chains, choice_params, donor_take, gap_key, gap_label, method_issue, printable
 
 SUPPORTED = ('initial', 'footmr_initial')
 NOT_READY = 'Reconstruct and prepare both neighbouring takes first.'
@@ -30,8 +30,8 @@ def _auto_issue(gap, auto_issue):return method_issue('auto', gap) or auto_issue
 
 
 def description(text):
-    """A description as saved: one line, cut to TEXT_LIMIT characters instead of refused."""
-    return ' '.join((text or '').split())[:TEXT_LIMIT].rstrip()
+    """A description as saved: as normalise_text, but cut to TEXT_LIMIT characters instead of refused."""
+    return ' '.join(printable(text or '').split())[:TEXT_LIMIT].rstrip()
 
 
 def _shown(choice, gap, people, ident, auto_issue=None, text_issue=None):

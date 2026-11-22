@@ -333,7 +333,7 @@ class AutoAssembleTest(unittest.TestCase):
 import contextlib,importlib.util,io,json,subprocess,tempfile
 from pathlib import Path
 from unittest import mock
-from mocap import auto_fill,kimodo_runtime,paths,people_store as ps,take_join
+from mocap import auto_fill,kimodo_runtime,kimodo_text,paths,people_store as ps,take_join
 FFMPEG=paths.ROOT/'tools/bin/ffmpeg.exe'
 TAKE=lambda a,b:f'p1/takes/{a:09d}_{b:09d}_scene_v1'
 DONOR='p2/takes/000000000_000000220_scene_v1'
@@ -652,7 +652,8 @@ class WriteTest(unittest.TestCase):
         q=calls[0];self.assertEqual(str(q['text']),'A person waves.');np.testing.assert_array_equal(q['text_feature'],feature)
         generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=3,end_pose_cm=1.25,seam_cm=[1.2,2.3])
         self.assertEqual(self.fill()['gaps'],[dict(first=100,end=110,method='auto',params=dict(seed=7,text='A person waves.'),
-            generator=dict(generator,text_encoder=kimodo_runtime.text_identity()))])
+            generator=dict(generator,text_encoder=kimodo_runtime.text_identity(),text_version=kimodo_text.VERSION))])
+        self.assertEqual(kimodo_text.VERSION,2)
         info=dict(type='info',stage='take_join',message='Frames 101–110 generated from the description "A person waves.": the captured poses next to the range '
             'were missed by 1.2 cm before it and 2.3 cm after it.')
         self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
@@ -664,6 +665,15 @@ class WriteTest(unittest.TestCase):
         self.assertEqual((code,len(calls),len(texts)),(0,3,2));self.assertEqual(str(calls[2]['text']),'');self.assertFalse(calls[2]['text_feature'].any())
         self.assertEqual(self.fill()['gaps'][0],dict(first=100,end=110,method='auto',params=dict(seed=7),generator=generator))
         self.assertEqual(events[1]['message'],'Frames 101–110 generated: the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
+    def test_description_is_shown_as_typed_in_the_console(self):
+        # The Console renders rich text: tags in a description must show as typed, not as markup or an image.
+        calls,texts=[],[];typed='A person <b>waves</b> & <img src="x">.';self.automatic(text=typed)
+        def describe(text,**kw):texts.append(text);return np.full(4096,.5,np.float32)
+        with self.generator(calls),mock.patch.object(auto_fill,'describe',describe):code,events=self.join()
+        self.assertEqual(code,0,events);self.assertEqual(texts,[typed]);self.assertEqual(str(calls[0]['text']),typed)
+        self.assertEqual(self.fill()['gaps'][0]['params']['text'],typed)
+        self.assertEqual(events[1]['message'],'Frames 101–110 generated from the description "A person &lt;b&gt;waves&lt;/b&gt; &amp; &lt;img src="x"&gt;.": '
+                         'the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
     def workers(self):
         """Real auto_fill.generate and auto_fill.describe in front of fake workers; returns the lists of generation and text runs."""
         runs,reads=[],[];generate,describe=auto_fill.generate,auto_fill.describe

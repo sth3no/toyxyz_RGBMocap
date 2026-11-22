@@ -24,6 +24,18 @@ class NormaliseTest(unittest.TestCase):
         text = 'Osoba "skáče" a mává — it\'s 3× faster'
         self.assertEqual(kt.normalise(text), text)
 
+    def test_control_characters_are_dropped(self):
+        self.assertEqual(kt.normalise('A\x00 person\x07 wa​ves\x1b.\x7f'), 'A person waves.')
+        self.assertEqual(kt.normalise('A\x0bperson\x85waves.'), 'A person waves.')        # whitespace controls are spaces
+        self.assertEqual(kt.normalise('x' * 200 + '\x00' * 10), 'x' * 200)                  # dropped before the limit
+
+    def test_info_line(self):
+        self.assertEqual(kt.info(WALK, WALK, 20.06, 1.684), 'Description read in 20.1 seconds; peak video memory 1.68 GiB.')
+        self.assertEqual(kt.info('a person walks forward', WALK, 19.1, 1.5),
+                         'Description read as "A person walks forward." in 19.1 seconds; peak video memory 1.50 GiB.')
+        self.assertEqual(kt.info('a <b>wave</b> & "hi"', 'A <b>wave</b> & "hi".', 1, 1),
+                         'Description read as "A &lt;b&gt;wave&lt;/b&gt; &amp; "hi"." in 1.0 seconds; peak video memory 1.00 GiB.')
+
     def test_only_spaces(self):
         self.assertEqual(kt.normalise(' \t\n '), ''); self.assertEqual(kt.normalise(''), '')
 
@@ -32,11 +44,11 @@ class NormaliseTest(unittest.TestCase):
 
     def test_files_and_version(self):
         from mocap.paths import MODELS
-        self.assertEqual(kt.VERSION, 1)
+        self.assertEqual(kt.VERSION, 2)   # 2: the description is tidied with Kimodo's sanitize_text before it is read
         self.assertEqual(kt.files(), {k: MODELS / 'kimodo_text' / k for k in ('llama', 'mntp', 'supervised')})
 
     def test_imports_without_torch(self):
-        code = ('import sys;sys.path.insert(0,sys.argv[1]);import mocap.kimodo_text as m;m.normalise(" a ");m.files();'
+        code = ('import sys;sys.path.insert(0,sys.argv[1]);import mocap.kimodo_text as m;m.normalise(" a ");m.files();m.info("a","A.",1,1);'
                 'print([k for k in ("torch","transformers","numpy","safetensors") if k in sys.modules])')
         p = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(ROOT)], capture_output=True, text=True, timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr); self.assertEqual(p.stdout.strip(), '[]')
@@ -109,9 +121,10 @@ class WorkerTest(unittest.TestCase):
         progress = [e for e in found if e['type'] == 'progress']; self.assertEqual((progress[-1]['current'], progress[-1]['total']), (32, 32))
         self.assertNotIn('FutureWarning', p.stderr)
         info = [e['message'] for e in found if e['type'] == 'info']; self.assertEqual(len(info), 1)
-        match = re.fullmatch(r'Description read in [0-9]+\.[0-9] seconds; peak video memory ([0-9]+\.[0-9]{2}) GiB\.', info[0]); self.assertTrue(match, info[0])
+        match = re.fullmatch(r'Description read( as "(.*)")? in [0-9]+\.[0-9] seconds; peak video memory ([0-9]+\.[0-9]{2}) GiB\.', info[0]); self.assertTrue(match, info[0])
         vector = np.load(out, allow_pickle=False); self.assertEqual((vector.shape, vector.dtype), ((4096,), np.float32)); self.assertTrue(np.isfinite(vector).all())
-        return vector, float(match[1])
+        self.read_as = match[2]
+        return vector, float(match[3])
 
     def test_walk(self):
         (p, out), _ = self.walk; vector, peak = self.check_success(p, out)
@@ -126,6 +139,12 @@ class WorkerTest(unittest.TestCase):
         with np.load(GATE, allow_pickle=False) as z:gate = z['features'][list(z['prompts']).index(WALK)]
         cosine = float(vector @ gate / np.linalg.norm(vector) / np.linalg.norm(gate))
         self.assertGreater(cosine, 0.9999)
+
+    def test_tidied_as_kimodo_does(self):
+        # Kimodo's own pipeline sanitises a prompt before its encoder: the canonical sentence and the typed one read alike.
+        walk, _ = self.check_success(*self.walk[0]); self.assertIsNone(self.read_as)
+        vector, _ = self.check_success(*self.encode('a person walks forward', 'lower'))
+        self.assertEqual(self.read_as, WALK); self.assertEqual(float(np.abs(vector - walk).max()), 0.0)
 
     def test_non_ascii_and_quotes(self):
         p, out = self.encode('Osoba "skáče" —\na person\tjumps, says “hi”.', 'czech', 'utf-8-sig')   # with a byte order mark, as Notepad may save

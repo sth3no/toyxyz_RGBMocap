@@ -6,11 +6,13 @@ read from the four Llama files just before it runs, both adapters are added (W +
 dropped after it ran. The Llama files are never mapped: each tensor is read by its header offsets with plain file reads
 (a mapping kept open keeps every page it touched in the process, and on Windows is charged to commit in full while
 open). Only the embedding rows of the prompt's tokens are read. Tokenizing, the prompt format and the pooling are
-LLM2Vec's own code. `normalise`, `files`, `tensors` and `read` are standard-library only;
-torch, transformers and Kimodo are imported by `main`, which runs in the ExMR runtime with the Kimodo overlay.
+LLM2Vec's own code. The description is first tidied with Kimodo's own `sanitize_text`, as Kimodo's pipeline does before
+its encoder. `normalise`, `info`, `files`, `tensors` and `read` are standard-library only; torch, transformers and Kimodo
+are imported by `main`, which runs in the ExMR runtime with the Kimodo overlay.
 """
 import argparse
 import contextlib
+import html
 import json
 import math
 import os
@@ -23,7 +25,7 @@ from .hidden_ranges import normalise_text as normalise
 from .paths import MODELS
 
 STAGE = 'take_join'
-VERSION = 1
+VERSION = 2  # 2: the description is read as Kimodo's sanitize_text leaves it
 NAME = 'meta-llama/Meta-Llama-3-8B-Instruct'  # LLM2Vec picks its prompt format by this name
 LLAMA_FILES = tuple(f'model-0000{n}-of-00004.safetensors' for n in range(1, 5))
 EMBEDDING = 'model.embed_tokens.weight'
@@ -32,6 +34,13 @@ NO_MEMORY = 'Not enough free video memory to read the description. Close other G
 WRONG_FILES = 'The description files are not the expected version. Get them again in Model Manager.'
 SIZES = dict(BF16=2, F16=2, F32=4)  # bytes per value of the safetensors dtypes read here
 EMPTY = 'The description is empty.'
+
+
+def info(typed, read, seconds, peak):
+    """The Console line of a reading; it names the sentence read when tidying changed it. The Console shows rich text, so
+    the sentence is escaped to show as typed."""
+    said = '' if read == typed else f' as "{html.escape(read, quote=False)}"'
+    return f'Description read{said} in {seconds:.1f} seconds; peak video memory {peak:.2f} GiB.'
 
 
 def files():
@@ -107,7 +116,11 @@ def _encode(text, emit):
     from transformers import AutoConfig, AutoTokenizer
     from kimodo.model.llm2vec.llm2vec import LLM2Vec
     from kimodo.model.llm2vec.models.bidirectional_llama import LlamaBiModel
+    from kimodo.sanitize import sanitize_text
     if not torch.cuda.is_available():raise RuntimeError(NO_CUDA)
+    # As Kimodo's own call does before its encoder (sanitize_texts): first letter capitalised, the rest lower-cased,
+    # a final period. A non-empty description never becomes empty.
+    typed, text = text, sanitize_text(text)
     torch.set_num_threads(threads);torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction(*torch.cuda.mem_get_info()))
     started, folders, device = time.monotonic(), files(), 'cuda'
     config = AutoConfig.from_pretrained(folders['mntp']);config._name_or_path = NAME;layers = config.num_hidden_layers
@@ -157,9 +170,9 @@ def _encode(text, emit):
         states = model(inputs_embeds=embeds, attention_mask=features['attention_mask'], use_cache=False).last_hidden_state
         vector = enc.get_pooling(features, states)[0].float().cpu().numpy()
     if vector.shape != (4096,) or not np.isfinite(vector).all():raise RuntimeError('The text encoder returned values that are not numbers.')
+    if not vector.any():raise RuntimeError('The text encoder returned an empty result.')  # the generation worker refuses it
     emit('progress', stage=STAGE, current=layers, total=layers, message='Description: read')
-    emit('info', stage=STAGE, message=f'Description read in {time.monotonic()-started:.1f} seconds; '
-                                      f'peak video memory {torch.cuda.max_memory_allocated()/2**30:.2f} GiB.')
+    emit('info', stage=STAGE, message=info(typed, text, time.monotonic()-started, torch.cuda.max_memory_allocated()/2**30))
     return vector
 
 

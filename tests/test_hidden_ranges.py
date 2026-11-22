@@ -115,6 +115,8 @@ class HiddenRangesTest(unittest.TestCase):
         for bad in(None,5,['a'],b'a','x'*201,'a '*101):
             with self.assertRaises(ValueError,msg=repr(bad)):h.choice_params({'method':'auto','seed':3,'text':bad})
         self.assertEqual(h.choice_params({'method':'smooth','text':'x'}),('smooth',{}))
+        self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':'A\x00 person\x1b waves.'}),('auto',{'seed':3,'text':'A person waves.'}))
+        self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':'\x00\x07'}),('auto',{'seed':3}))   # nothing left: no description
         takes=[T(0,100),T(390,500)]
         self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':3,'text':'A person waves.'}}),[takes])
         self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':3,'text':'x'*201}}),[])

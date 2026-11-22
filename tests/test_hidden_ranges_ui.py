@@ -172,6 +172,13 @@ class AutoRowsTest(unittest.TestCase):
         ui.choose(choices,'100_120','auto',seed=7,text='x'*300);self.assertEqual(choices['100_120']['text'],'x'*200)
         self.assertEqual(h.choice_params(choices['100_120']),('auto',{'seed':7,'text':'x'*200}))
         ui.choose(choices,'100_120','smooth',text='waves');self.assertEqual(choices['100_120'],{'method':'smooth'})   # other methods ignore it
+    def test_control_characters_are_not_saved(self):
+        # The stored choice is the text the join reads and the text worker is given.
+        choices={};ui.choose(choices,'100_120','auto',seed=7,text='A\x00 person\x07 wa​ves\x1b.')
+        self.assertEqual(choices['100_120']['text'],'A person waves.')
+        self.assertEqual(h.choice_params(choices['100_120'])[1]['text'],choices['100_120']['text'])
+        self.assertEqual(h.normalise_text(choices['100_120']['text']),choices['100_120']['text'])
+        self.assertEqual(ui.description('\x00\x01 '),'')
     def test_description_rows(self):
         TEXT='Get the text adapters.'
         r=self.rows({'100_120':dict(AUTO(),text='Waves.')})[0]

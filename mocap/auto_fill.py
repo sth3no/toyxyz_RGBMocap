@@ -127,10 +127,12 @@ def text_key(text):
 
 
 def _feature(path):
-    """The text feature stored at `path` when it is a complete one, else None."""
+    """The text feature stored at `path` when it is a complete one, else None. An all-zero one is not: the generation
+    worker refuses it for a description."""
     try:
         with open(path, 'rb') as handle:feature = np.load(handle, allow_pickle=False)
-        ok = isinstance(feature, np.ndarray) and feature.shape == (FEATURE,) and feature.dtype == np.float32 and np.isfinite(feature).all()
+        ok = isinstance(feature, np.ndarray) and feature.shape == (FEATURE,) and feature.dtype == np.float32 and np.isfinite(feature).all() \
+            and feature.any()
     except Exception:return None
     return feature if ok else None
 

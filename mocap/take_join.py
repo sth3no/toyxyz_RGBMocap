@@ -289,10 +289,13 @@ def _cm(metres):return round(float(metres)*100, 1)
 
 
 def _generator(report, g):
-    """The fill.json record of the generator of an automatic gap `g`, beside its params: a report, not an input."""
+    """The fill.json record of the generator of an automatic gap `g`, beside its params: a report, not an input. A described
+    range also records the text files and the text worker's version that read its description."""
     from .kimodo_runtime import identity, text_identity
+    from .kimodo_text import VERSION as text_version
     return dict(name='kimodo', identity=identity(), version=auto_fill.VERSION, end_pose_cm=round(float(report['end_pose_cm']), 2),
-                seam_cm=[round(float(x), 1) for x in report['seam_cm']], **(dict(text_encoder=text_identity()) if g['params'].get('text') else {}))
+                seam_cm=[round(float(x), 1) for x in report['seam_cm']],
+                **(dict(text_encoder=text_identity(), text_version=text_version) if g['params'].get('text') else {}))
 
 
 def _report(gaps, residuals, seams):
@@ -301,8 +304,9 @@ def _report(gaps, residuals, seams):
         if g['method'] == 'copy' and type(r) in (int, float):
             emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
         if g['method'] == 'auto' and isinstance(s, list) and len(s) == 2 and all(type(x) in (int, float) for x in s):
-            text = g['params'].get('text')
-            emit('info', stage=STAGE, message=AUTO_TEXT_INFO.format(g['first']+1, g['end'], text, *s) if text else AUTO_INFO.format(g['first']+1, g['end'], *s))
+            text = g['params'].get('text')  # the Console shows rich text: escaped, the description shows as typed
+            emit('info', stage=STAGE, message=AUTO_TEXT_INFO.format(g['first']+1, g['end'], html.escape(text, quote=False), *s) if text else
+                 AUTO_INFO.format(g['first']+1, g['end'], *s))
 
 
 def _donors(gaps, files):

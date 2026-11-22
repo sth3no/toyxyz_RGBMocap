@@ -6,9 +6,14 @@ SEED_LIMIT=999
 OFFSET_LIMIT=600
 TEXT_LIMIT=200  # characters of an automatic fill's description
 
+def printable(text):
+    """The text without control and other unprintable characters; whitespace is kept for the caller to collapse."""
+    return ''.join(c for c in text if c.isprintable() or c.isspace())
+
 def normalise_text(text):
-    """A description as one line: every run of whitespace, line breaks included, as one space; ValueError above TEXT_LIMIT characters."""
-    text=' '.join(text.split())
+    """A description as one line: unprintable characters dropped, every run of whitespace, line breaks included, as one
+    space; ValueError above TEXT_LIMIT characters."""
+    text=' '.join(printable(text).split())
     if len(text)>TEXT_LIMIT:raise ValueError(f'A description can have at most {TEXT_LIMIT} characters.')
     return text
 
