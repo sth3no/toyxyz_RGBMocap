@@ -20,10 +20,21 @@ behind an object. That use has not been measured with real footage yet, so
 treat the result as a draft to review. For dancers who do the same moves,
 **Copy from person** is usually closer to the truth.
 
-The captured poses on both sides are kept: the generated frames meet them to
-about 2 to 3 cm on average in the tests made, and the Console reports the
-figure for each range. The joined take marks the generated frames on the
-timeline, and export counts them as generated.
+The captured poses on both sides are kept, but the generated motion does not
+meet them exactly. In the product runs made (one 46-frame range of a dance,
+three variations) it missed the captured pose at the frame next to the range by
+7 to 8 cm and the five known frames on each side by 3.4 to 3.8 cm on average;
+the join then blends the difference out over the first and last frames of the
+range. The Console reports the two figures next to the range for each range,
+with a line such as `Frames 101–120 generated: the captured poses next to the
+range were missed by 7.8 cm before it and 7.1 cm after it.` The joined take marks the
+generated frames on the timeline, and export counts them as generated.
+
+When the generated motion misses a captured pose next to the range by more
+than 25 cm, the takes on the two sides do not fit together, for example because
+one of them ends with poses reconstructed from a covered view. The fill is then
+refused and nothing is written; an earlier joined take stays as it was. See
+[Troubleshooting](#troubleshooting).
 
 ## Setup
 
@@ -128,6 +139,18 @@ overlay; the app itself imports none of it.
   If it says `Get the Kimodo model in Model Manager to use automatic fill.`,
   download or import the eight rows in Model Manager. A row marked **Missing** after a copy should
   be imported again.
+- `Automatic fill could not connect the motion on both sides of frames
+  137–166: the generated motion misses the captured poses next to the range by
+  103 cm. The takes before and after it do not fit together. Check the frames
+  next to the range, reconstruct those takes again, or choose Do not fill.`
+  means that the generated motion missed a captured pose next to the range by
+  more than 25 cm. The two takes then usually place the person far apart or
+  facing different ways, often because the frames just before or just after
+  the range were reconstructed from a partly covered view. Look at those
+  frames, reconstruct those takes again, or choose **Do not fill** for the
+  range. Nothing is written,
+  and an earlier joined take stays as it was. The generated range is kept in
+  the cache, so filling again with the same takes refuses at once.
 - `Automatic fill requires a CUDA GPU.` means the worker could not use an
   NVIDIA GPU. `Not enough free video memory for automatic fill.` means other
   programs hold the memory.

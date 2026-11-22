@@ -237,15 +237,16 @@ class CopyAssembleTest(unittest.TestCase):
             np.testing.assert_array_equal(mixed['params']['initial'][k][:100],v[:100]);np.testing.assert_array_equal(mixed['params']['initial'][k][130:],v[130:])
 
 REST=np.linspace(-.5,.5,66).reshape(22,3)
-def straight(calls,end_pose=1.25,drop=0,nan=False,**response):
+def straight(calls,end_pose=1.25,drop=0,nan=False,seam=(1.2,2.3),without=(),**response):
     """A fake generator: the given known rows on each side and a straight line across the hidden frames."""
     def generate(req):
         calls.append(req);n=req['frames'];c0,c1=min(5,len(req['before_pelvis'])),min(5,len(req['after_pelvis']))
         t=(np.arange(1,n+1)/(n+1))[:,None];line=lambda b,a:np.vstack([b[-c0:],b[-1]+(a[0]-b[-1])*t,a[:c1]])[drop:]
-        out=dict(version=1,context=np.array([c0,c1]),orient=line(req['before_orient'],req['after_orient']),pose=line(req['before_pose'],req['after_pose']),
-                 pelvis=line(req['before_pelvis'],req['after_pelvis']),contacts=(np.arange(c0+n+c1-drop)[:,None]+np.arange(4))%3==0,end_pose_cm=np.float64(end_pose))
+        out=dict(version=2,context=np.array([c0,c1]),orient=line(req['before_orient'],req['after_orient']),pose=line(req['before_pose'],req['after_pose']),
+                 pelvis=line(req['before_pelvis'],req['after_pelvis']),contacts=(np.arange(c0+n+c1-drop)[:,None]+np.arange(4))%3==0,end_pose_cm=np.float64(end_pose),
+                 seam_cm=np.array(seam,np.float64))
         if nan:out['pose'][c0+2,5]=np.nan
-        return {**out,**response}
+        return {k:v for k,v in {**out,**response}.items() if k not in without}
     return generate
 def auto(a,b,calls,seed=7,**kw):return dict(gap(a,b),method='auto',params=dict(seed=seed),generate=straight(calls,**kw),body=dict(rest=REST,sole=.02))
 
@@ -258,7 +259,7 @@ class AutoAssembleTest(unittest.TestCase):
         calls=[];out=self.join(calls);self.assertEqual(len(calls),1);q=calls[0];J=out['params']['initial']
         shapes=dict(before_orient=(45,3),before_pose=(45,63),before_pelvis=(45,3),after_orient=(45,3),after_pose=(45,63),after_pelvis=(45,3),rest=(22,3))
         for k,s in shapes.items():self.assertEqual(np.shape(q[k]),s,k)
-        self.assertEqual((q['version'],q['frames'],q['seed'],q['fps']),(1,20,7,30.));self.assertEqual(float(q['sole']),.02)
+        self.assertEqual((q['version'],q['frames'],q['seed'],q['fps']),(2,20,7,30.));self.assertEqual(float(q['sole']),.02)
         np.testing.assert_array_equal(q['rest'],REST)
         np.testing.assert_allclose(q['before_pelvis'],J['transl'][55:100]+P0,atol=1e-12);np.testing.assert_allclose(q['after_pelvis'],J['transl'][120:165]+P0,atol=1e-12)
         np.testing.assert_allclose(q['before_orient'],J['global_orient'][55:100],atol=1e-12);np.testing.assert_allclose(q['after_pose'],J['body_pose'][120:165],atol=1e-12)
@@ -266,7 +267,8 @@ class AutoAssembleTest(unittest.TestCase):
         from mocap.gap_fill import GENERATED
         calls=[];out=self.join(calls);q=calls[0];J=out['params']['initial'];t=(np.arange(1,21)/21)[:,None]
         self.assertTrue((out['mask'][100:120]==GENERATED).all());self.assertTrue((out['mask'][:100]==0).all() and (out['mask'][120:]==0).all())
-        self.assertEqual(out['reports'],[dict(end_pose_cm=1.25)]);self.assertIs(type(out['reports'][0]['end_pose_cm']),float)
+        self.assertEqual(out['reports'],[dict(end_pose_cm=1.25,seam_cm=[1.2,2.3])]);self.assertIs(type(out['reports'][0]['end_pose_cm']),float)
+        self.assertEqual([type(x) for x in out['reports'][0]['seam_cm']],[float,float])
         for k,v in self.a['params']['initial'].items():np.testing.assert_array_equal(J[k][:100],v)   # captured rows at and before the boundary
         np.testing.assert_allclose(J['transl'][[99,120]]+P0,np.r_[q['before_pelvis'][-1:],q['after_pelvis'][:1]],atol=1e-12)
         # The boundary rows of the line are the captured poses, so the fill is the line itself.
@@ -291,8 +293,18 @@ class AutoAssembleTest(unittest.TestCase):
         self.assertEqual(len(calls[0]['before_pelvis']),4);self.assertEqual(len(calls[0]['after_pelvis']),45)
         self.assertEqual(out['params']['initial']['body_pose'].shape,(200,63));self.assertTrue(np.isfinite(out['params']['initial']['body_pose']).all())
     def test_bad_response(self):
-        for kw in(dict(drop=1),dict(nan=True),dict(version=2),dict(context=np.array([4,5])),dict(end_pose=np.nan)):
+        for kw in(dict(drop=1),dict(nan=True),dict(version=1),dict(context=np.array([4,5])),dict(end_pose=np.nan),dict(without=('seam_cm',)),
+                  dict(seam=(1.,np.nan)),dict(seam=(1.,2.,3.)),dict(seam=1.)):
             with self.assertRaisesRegex(ValueError,'^Generated motion does not match the hidden range$',msg=kw):self.join([],**kw)
+    def test_seam_limit(self):
+        from mocap import take_join
+        self.assertEqual(take_join.AUTO_SEAM_LIMIT_CM,25.)
+        self.assertEqual(self.join([],seam=(25.,25.))['reports'][0]['seam_cm'],[25.,25.])   # at the limit: written
+        for seam,worst in(((25.1,3.),25.1),((3.,80.4),80.4)):
+            with self.assertRaises(take_join.Refused) as caught:self.join([],seam=seam)
+            self.assertEqual(str(caught.exception),'Automatic fill could not connect the motion on both sides of frames 101–120: the generated motion misses '
+                f'the captured poses next to the range by {worst:.0f} cm. The takes before and after it do not fit together. Check the frames next to the range, '
+                'reconstruct those takes again, or choose Do not fill.')
     def test_gap_without_generator(self):
         g=auto(self.a,self.b,[]);del g['generate']
         with self.assertRaisesRegex(ValueError,'^Automatic fill needs a motion generator$'):assemble([self.a,self.b],[g])
@@ -519,8 +531,8 @@ class WriteTest(unittest.TestCase):
         np.testing.assert_allclose(q['rest'],np.full((2,5),.2)@self.template,atol=1e-12);self.assertAlmostEqual(q['sole'],self.template[:,1].min(),places=12)
         fill=json.loads((J/'fill.json').read_text(encoding='utf-8'))
         self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='auto',params=dict(seed=7),
-            generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=auto_fill.VERSION,end_pose_cm=1.25))])
-        info=dict(type='info',stage='take_join',message=f'Frames 101–110 generated: the captured poses on both sides were met within {1.25:.1f} cm.')
+            generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=2,end_pose_cm=1.25,seam_cm=[1.2,2.3]))])
+        info=dict(type='info',stage='take_join',message='Frames 101–110 generated: the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
         self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
         self.assertEqual(list(np.load(J/'fill_mask.npy')[95:115]),[0]*5+[3]*10+[0]*5)
         person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
@@ -529,6 +541,37 @@ class WriteTest(unittest.TestCase):
         self.automatic(seed=8);person=ps.load_people(self.root)['people'][0];self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
         with self.generator(calls):code,events=self.join()
         self.assertEqual((code,len(calls)),(0,2));self.assertIs(events[-1]['cached'],False);self.assertEqual(calls[1]['seed'],8)
+    def test_report_is_rounded(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1';self.automatic()
+        gen=straight([],end_pose=1.23456,seam=(7.86,3.04))
+        with mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:gen(request)):code,events=self.join()
+        self.assertEqual(code,0,events);g=json.loads((J/'fill.json').read_text(encoding='utf-8'))['gaps'][0]['generator']
+        self.assertEqual((g['end_pose_cm'],g['seam_cm']),(1.23,[7.9,3.0]))
+        self.assertEqual(events[1]['message'],'Frames 101–110 generated: the captured poses next to the range were missed by 7.9 cm before it and 3.0 cm after it.')
+    def test_seam_beyond_the_limit_is_refused(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1';self.automatic()
+        with self.generator([]):self.assertEqual(self.join()[0],0)
+        runs,seam=[],[(3.,25.1)];real=auto_fill.generate
+        def run(command):
+            args=dict(zip(command[1::2],command[2::2]));runs.append(command)
+            with np.load(args['--request'],allow_pickle=False) as z:request={k:z[k] for k in z.files}
+            np.savez(args['--response'],**straight([],seam=seam[0])(request));return 0,[]
+        patches=[mock.patch.object(kimodo_runtime,'issue',lambda:None),mock.patch.object(kimodo_runtime,'command',lambda args:['kimodo',*map(str,args)]),
+                 mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:real(folder,request,run=run,**kw))]
+        for p in patches:p.start();self.addCleanup(p.stop)
+        message=('Automatic fill could not connect the motion on both sides of frames 101–110: the generated motion misses the captured poses next to the range '
+                 'by 25 cm. The takes before and after it do not fit together. Check the frames next to the range, reconstruct those takes again, or choose Do not fill.')
+        cache=self.root/'p1/auto_fill';taken=lambda:{p:v for p,v in self.snapshot().items() if cache not in p.parents}   # all but the cache
+        self.automatic(seed=8);before=taken()
+        for count in(1,1):   # the second Fill is served from the cache and refuses at once
+            code,events=self.join();self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message=message)]));self.assertEqual(len(runs),count)
+            self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(taken(),before);self.assertEqual([p.suffix for p in cache.iterdir()],['.npz'])
+        person=ps.load_people(self.root)['people'][0];self.assertEqual(len(person['joins']),1)
+        self.automatic(seed=7);person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))   # the earlier take is kept
+        code,events=self.join();self.assertEqual(code,0);self.assertIs(events[-1]['cached'],True)
+        seam[0]=(25.,25.);self.automatic(seed=9);code,events=self.join()   # at the limit
+        self.assertEqual((code,len(runs)),(0,2),events);self.assertIs(events[-1]['cached'],False)
+        self.assertEqual(json.loads((J/'fill.json').read_text(encoding='utf-8'))['gaps'][0]['generator']['seam_cm'],[25.,25.])
     def test_automatic_range_is_served_from_the_cache(self):
         import torch
         state=ps.load_people(self.root);person=state['people'][0]

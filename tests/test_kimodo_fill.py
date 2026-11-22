@@ -27,7 +27,7 @@ def walk(frames=GAP, before=SIDE, after=SIDE, seed=0):
         orient = rng.normal(0, .01, (len(t), 3)); pelvis = np.c_[np.full(len(t), .2), np.full(len(t), height), t * step]
         return orient, pose, pelvis
     b, a = side(np.arange(-before, 0) + 1), side(np.arange(frames + 1, frames + 1 + after))
-    return dict(version=np.int64(1), before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
+    return dict(version=np.int64(2), before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
                 rest=REST.copy(), sole=np.float64(SOLE), frames=np.int64(frames), seed=np.int64(3), fps=np.float64(30.))
 
 
@@ -91,14 +91,16 @@ class PlanTest(unittest.TestCase):
         self.assertTrue(str(e.exception).endswith('.'))
         r = walk(); del r['rest']
         with self.assertRaises(ValueError):kf.plan(r)
+        with self.assertRaisesRegex(ValueError, '^The automatic fill request has an unsupported version.$'):kf.plan(dict(walk(), version=np.int64(1)))
         with self.assertRaises(ValueError):kf.plan(dict(walk(), before_pose=np.zeros((45, 60))))
 
 
 class FinishTest(unittest.TestCase):
     def test_known_rows_come_back(self):
         r = walk(); p = kf.plan(r); o = synthetic_output(p); out = kf.finish(r, p, o)
-        self.assertEqual(int(out['version']), 1); np.testing.assert_array_equal(out['context'], [5, 5])
+        self.assertEqual(int(out['version']), 2); np.testing.assert_array_equal(out['context'], [5, 5])
         for k, w in (('orient', 3), ('pose', 63), ('pelvis', 3)):self.assertEqual(out[k].shape, (70, w))
+        self.assertEqual(out['seam_cm'].shape, (2,)); self.assertEqual(out['seam_cm'].dtype, np.float64); self.assertLess(np.abs(out['seam_cm']).max(), 1e-3)
         for k in ('orient', 'pose', 'pelvis'):
             np.testing.assert_allclose(out[k][:5], r['before_' + k][-5:], atol=1e-6); np.testing.assert_allclose(out[k][65:], r['after_' + k][:5], atol=1e-6)
         self.assertLess(float(out['end_pose_cm']), 1e-3)
@@ -111,6 +113,19 @@ class FinishTest(unittest.TestCase):
         for k, name in zip(order[:30], sc.SOMA30):names[k] = name
         out = kf.finish(r, p, dict(o, global_rot_mats=K, names=names))
         for k in ('orient', 'pose', 'pelvis'):np.testing.assert_allclose(out[k], base[k], atol=1e-12)
+
+    def test_seam_is_read_at_the_two_boundary_rows(self):
+        r = walk(); p = kf.plan(r); o = synthetic_output(p)
+        def moved(rows, step):                                     # the captured joints of some known frames moved by a known step
+            joints = p['joints'].copy(); joints[rows] += step; return kf.finish(r, dict(p, joints=joints), o)
+        out = moved([4], [.1, 0, 0])                               # the last known frame before the range, 10 cm
+        np.testing.assert_allclose(out['seam_cm'], [10, 0], atol=1e-6); self.assertAlmostEqual(float(out['end_pose_cm']), 1., places=6)   # 1 of 10 known frames
+        out = moved([5], [0, 0, -.3])                              # the first known frame after it, 30 cm
+        np.testing.assert_allclose(out['seam_cm'], [0, 30], atol=1e-6); self.assertAlmostEqual(float(out['end_pose_cm']), 3., places=6)
+        out = moved([0, 9], [0, .2, 0])                            # known frames away from the range
+        np.testing.assert_allclose(out['seam_cm'], [0, 0], atol=1e-6); self.assertAlmostEqual(float(out['end_pose_cm']), 4., places=6)
+        short = walk(before=3); p = kf.plan(short); o = synthetic_output(p); joints = p['joints'].copy(); joints[2] += [.05, 0, 0]
+        np.testing.assert_allclose(kf.finish(short, dict(p, joints=joints), o)['seam_cm'], [5, 0], atol=1e-6)   # a short side: its last frame
 
     def test_wrong_row_count(self):
         r = walk(); p = kf.plan(r); o = synthetic_output(p)
@@ -152,8 +167,12 @@ class WorkerTest(unittest.TestCase):
             path = self.dir / f'response{k}.npz'; p = self.run_worker(self.request, path)
             self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-3000:]); self.assertFalse(Path(str(path) + '.tmp').exists())
             self.assertFalse([e for e in events(p.stdout) if e['type'] == 'failed']); self.assertTrue(all(e.get('stage') == 'take_join' for e in events(p.stdout)))
+            progress = [e for e in events(p.stdout) if e['type'] == 'progress']; self.assertEqual((progress[-1]['current'], progress[-1]['total']), (100, 100))
+            info = [e['message'] for e in events(p.stdout) if e['type'] == 'info']; self.assertEqual(len(info), 1)
+            self.assertRegex(info[0], r'cm on average, [0-9.]+ cm before and [0-9.]+ cm after the range; peak video memory [0-9]+\.[0-9]{2} GiB\.$')
             with np.load(path, allow_pickle=False) as z:outs.append({k: z[k] for k in z.files})
-        o = outs[0]; self.assertEqual(int(o['version']), 1); np.testing.assert_array_equal(o['context'], [5, 5])
+        o = outs[0]; self.assertEqual(int(o['version']), 2); np.testing.assert_array_equal(o['context'], [5, 5])
+        self.assertEqual(o['seam_cm'].shape, (2,)); self.assertTrue(np.isfinite(o['seam_cm']).all()); self.assertLess(o['seam_cm'].max(), 25)
         for k, w in (('orient', 3), ('pose', 63), ('pelvis', 3)):self.assertEqual(o[k].shape, (70, w)); self.assertTrue(np.isfinite(o[k]).all())
         self.assertEqual(o['contacts'].shape, (70, 4)); self.assertEqual(o['contacts'].dtype, bool)
         self.assertLess(float(o['end_pose_cm']), 6); self.assertGreaterEqual(np.linalg.norm(o['pelvis'][64] - o['pelvis'][5]), 1.2)

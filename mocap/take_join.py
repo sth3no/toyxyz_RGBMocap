@@ -8,6 +8,7 @@ import os
 import sys
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
+from . import auto_fill
 from .gap_fill import COPIED, GENERATED, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
 from .hidden_ranges import typed as _typed
 
@@ -90,29 +91,37 @@ def _camera(a, b, G, pelvis, n):
     return incam
 
 
-AUTO_CONTEXT, AUTO_KNOWN = 45, 5  # captured frames sent on each side; known frames the generator uses on each side
+AUTO_CONTEXT = 45  # captured frames sent on each side
+# A generated range that misses the captured pose next to it by more than this is refused: the takes do not fit together.
+AUTO_SEAM_LIMIT_CM = 25.0
 MISMATCH = 'Generated motion does not match the hidden range'
+AUTO_MISSED = ('Automatic fill could not connect the motion on both sides of frames {first}–{last}: the generated motion misses the captured poses '
+               'next to the range by {worst:.0f} cm. The takes before and after it do not fit together. Check the frames next to the range, '
+               'reconstruct those takes again, or choose Do not fill.')
 
 
 def _auto(a, b, g, pelvis):
     n, A, B = g['end']-g['first'], a['params']['initial'], b['params']['initial']
     nb, na = min(AUTO_CONTEXT, len(A['transl'])), min(AUTO_CONTEXT, len(B['transl']))
-    request = dict(version=1, before_orient=A['global_orient'][-nb:].copy(), before_pose=A['body_pose'][-nb:].copy(), before_pelvis=A['transl'][-nb:]+pelvis,
+    request = dict(version=auto_fill.VERSION, before_orient=A['global_orient'][-nb:].copy(), before_pose=A['body_pose'][-nb:].copy(), before_pelvis=A['transl'][-nb:]+pelvis,
                    after_orient=B['global_orient'][:na].copy(), after_pose=B['body_pose'][:na].copy(), after_pelvis=B['transl'][:na]+pelvis,
                    rest=np.array(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.))
-    r = g['generate'](request);c0, c1 = min(AUTO_KNOWN, nb), min(AUTO_KNOWN, na);rows = c0+n+c1
+    r = g['generate'](request);c0, c1 = min(auto_fill.KNOWN, nb), min(auto_fill.KNOWN, na);rows = c0+n+c1
     try:
         arrays = {k: np.asarray(r[k], np.float64) for k in ('orient', 'pose', 'pelvis')};contacts = np.asarray(r['contacts']);end_pose = float(r['end_pose_cm'])
-        ok = r['version'] == 1 and np.array_equal(np.asarray(r['context']), [c0, c1]) and contacts.shape == (rows, 4) and contacts.dtype == bool and np.isfinite(end_pose) and \
+        seam = np.asarray(r['seam_cm'], np.float64)
+        ok = r['version'] == auto_fill.VERSION and np.array_equal(np.asarray(r['context']), [c0, c1]) and contacts.shape == (rows, 4) and contacts.dtype == bool and \
+            np.isfinite(end_pose) and seam.shape == (2,) and np.isfinite(seam).all() and \
             all(v.shape == (rows, w) and np.isfinite(v).all() for v, w in zip(arrays.values(), (3, 63, 3)))
     except (KeyError, TypeError, ValueError, IndexError):ok = False
     if not ok:raise ValueError(MISMATCH)
+    if seam.max() > AUTO_SEAM_LIMIT_CM:raise Refused(AUTO_MISSED.format(first=g['first']+1, last=g['end'], worst=seam.max()))
     # Response rows c0-1 ... c0+n are the boundary frames and the range; generated_fill works on pelvis positions.
     cut = slice(c0-1, c0+n+1);generated = dict(global_orient=arrays['orient'][cut], body_pose=arrays['pose'][cut], transl=arrays['pelvis'][cut])
     at = lambda p, sign: dict(p, transl=p['transl']+sign*pelvis)
     params = {kind: at(generated_fill(at(p, 1), at(b['params'][kind], 1), generated, [k for k in p if k != 'transl']), -1) for kind, p in a['params'].items()}
     return dict(params=params, incam=_camera(a, b, params['initial'], pelvis, n), logits=contact_logits(contacts[c0:c0+n], a['logits'][-1], b['logits'][0]),
-                mask=GENERATED, report=dict(end_pose_cm=end_pose))
+                mask=GENERATED, report=dict(end_pose_cm=end_pose, seam_cm=[float(x) for x in seam]))
 
 
 FILLS = {'smooth': _smooth, 'copy': _copy, 'auto': _auto}
@@ -176,7 +185,7 @@ UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this vers
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
 DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
 COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
-AUTO_INFO = 'Frames {}–{} generated: the captured poses on both sides were met within {:.1f} cm.'
+AUTO_INFO = 'Frames {}–{} generated: the captured poses next to the range were missed by {:.1f} cm before it and {:.1f} cm after it.'
 AUTO_RATE = 'Automatic fill needs 30 fps takes; this scene has {}.'
 
 
@@ -275,17 +284,18 @@ def _cm(metres):return round(float(metres)*100, 1)
 
 def _generator(report):
     """The fill.json record of the generator of an automatic gap, beside its params: a report, not an input."""
-    from .auto_fill import VERSION
     from .kimodo_runtime import identity
-    return dict(name='kimodo', identity=identity(), version=VERSION, end_pose_cm=float(report['end_pose_cm']))
+    return dict(name='kimodo', identity=identity(), version=auto_fill.VERSION, end_pose_cm=round(float(report['end_pose_cm']), 2),
+                seam_cm=[round(float(x), 1) for x in report['seam_cm']])
 
 
-def _report(gaps, residuals, ends):
-    """Console lines telling how much each copied path had to be bent and how closely each generated range met its sides; in cm."""
-    for g, r, e in zip(gaps, residuals, ends):
+def _report(gaps, residuals, seams):
+    """Console lines telling how much each copied path had to be bent and how far each generated range missed the frames next to it; in cm."""
+    for g, r, s in zip(gaps, residuals, seams):
         if g['method'] == 'copy' and type(r) in (int, float):
             emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
-        if g['method'] == 'auto' and type(e) in (int, float):emit('info', stage=STAGE, message=AUTO_INFO.format(g['first']+1, g['end'], e))
+        if g['method'] == 'auto' and isinstance(s, list) and len(s) == 2 and all(type(x) in (int, float) for x in s):
+            emit('info', stage=STAGE, message=AUTO_INFO.format(g['first']+1, g['end'], *s))
 
 
 def _donors(gaps, files):
@@ -435,7 +445,6 @@ def run(root, ident, result, projects):
         try:a, b = leg(first), leg(donor)
         except (KeyError, IndexError, ValueError):return 1.
         return float(a/b) if np.isfinite(a) and np.isfinite(b) and a > 1e-6 and b > 1e-6 else 1.
-    from . import auto_fill
     from .people_store import safe_child
     plans, loaded, base = [], {}, base_result(result)
     cache = safe_child(root, person['preview'])/'auto_fill'
@@ -468,13 +477,13 @@ def run(root, ident, result, projects):
             projects.append(str(sources))
             try:
                 recorded = json.loads((sources/'fill.json').read_text(encoding='utf-8'))['gaps']
-                residuals, ends = [g.get('residual_cm') for g in recorded], [(g.get('generator') or {}).get('end_pose_cm') for g in recorded]
-            except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = ends = []
+                residuals, seams = [g.get('residual_cm') for g in recorded], [(g.get('generator') or {}).get('seam_cm') for g in recorded]
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = seams = []
         else:
             projects.append(str(_write(root, ident, sources, chain_gaps, donors, joined, kinds, base, pipeline)))
             residuals = [None if r is None else _cm(r[base]) for r in joined['residuals']]
-            ends = [None if e is None else float(e['end_pose_cm']) for e in joined['reports']]
-        _report(chain_gaps, residuals, ends)
+            seams = [None if e is None else _generator(e)['seam_cm'] for e in joined['reports']]
+        _report(chain_gaps, residuals, seams)
     return all(joined is None for *_, joined in plans)
 
 

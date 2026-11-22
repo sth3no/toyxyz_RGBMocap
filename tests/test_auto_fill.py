@@ -12,14 +12,14 @@ def request(seed=7, frames=20, before=45, after=30):
     rng = np.random.default_rng(0)
     side = lambda n: (rng.normal(size=(n, 3)), rng.normal(size=(n, 63)), rng.normal(size=(n, 3)))
     b, a = side(before), side(after)
-    return dict(version=1, before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
+    return dict(version=2, before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
                 rest=rng.normal(size=(22, 3)), sole=-1.3, frames=frames, seed=seed, fps=30.)
 
 
-def response(req, rows=None, end_pose=.8):
+def response(req, rows=None, end_pose=.8, seam=(1.5, 2.5)):
     c0, c1 = min(5, len(req['before_pelvis'])), min(5, len(req['after_pelvis']));rows = c0+int(req['frames'])+c1 if rows is None else rows
-    return dict(version=np.int64(1), context=np.array([c0, c1], np.int64), orient=np.zeros((rows, 3)), pose=np.full((rows, 63), .1),
-                pelvis=np.ones((rows, 3)), contacts=np.zeros((rows, 4), bool), end_pose_cm=np.float64(end_pose))
+    return dict(version=np.int64(2), context=np.array([c0, c1], np.int64), orient=np.zeros((rows, 3)), pose=np.full((rows, 63), .1),
+                pelvis=np.ones((rows, 3)), contacts=np.zeros((rows, 4), bool), end_pose_cm=np.float64(end_pose), seam_cm=np.array(seam, np.float64))
 
 
 class FakeRun:
@@ -43,6 +43,17 @@ class KeyTest(unittest.TestCase):
             changed = dict(r, **{name: r[name].copy()});changed[name][3, 1] += 1e-9
             self.assertNotEqual(k, auto_fill.key(changed, 'id'), name)
         self.assertNotEqual(k, auto_fill.key(dict(r, sole=-1.2), 'id'));self.assertNotEqual(k, auto_fill.key(dict(r, frames=21), 'id'))
+        with mock.patch.object(auto_fill, 'VERSION', 1):self.assertNotEqual(k, auto_fill.key(r, 'id'))   # a version-1 cache entry is never found
+
+    def test_identity_holds_the_workers_code(self):
+        with tempfile.TemporaryDirectory() as name:
+            files = [Path(name)/'kimodo_fill.py', Path(name)/'soma_convert.py']
+            for f in files:f.write_bytes(b'code of '+f.name.encode())
+            with mock.patch.object(auto_fill, 'SOURCES', tuple(files)):
+                first = auto_fill.identity();self.assertTrue(first.startswith(kimodo_runtime.identity()+':'), first)
+                for f in files:
+                    f.write_bytes(f.read_bytes()+b' changed');self.assertNotEqual(auto_fill.identity(), first, f.name);first = auto_fill.identity()
+        self.assertEqual([f.name for f in auto_fill.SOURCES], ['kimodo_fill.py', 'soma_convert.py']);self.assertTrue(all(f.is_file() for f in auto_fill.SOURCES))
 
 
 class GenerateTest(unittest.TestCase):
@@ -50,7 +61,7 @@ class GenerateTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.folder = Path(self.tmp.name)/'person'/'auto_fill'
         for name, value in (('issue', lambda: None), ('command', lambda args: ['kimodo', *map(str, args)])):
             patch = mock.patch.object(kimodo_runtime, name, value);patch.start();self.addCleanup(patch.stop)
-        self.request = request();self.done = self.folder/(auto_fill.key(self.request, kimodo_runtime.identity())+'.npz')
+        self.request = request();self.done = self.folder/(auto_fill.key(self.request, auto_fill.identity())+'.npz')
 
     def files(self):return sorted(p.name for p in self.folder.iterdir()) if self.folder.exists() else []
 
@@ -58,7 +69,7 @@ class GenerateTest(unittest.TestCase):
         run = FakeRun();lines = []
         out = auto_fill.generate(self.folder, self.request, run=run, echo=lines.append)
         self.assertEqual(len(run.calls), 1);self.assertEqual(self.files(), [self.done.name])
-        self.assertEqual(out['pose'].shape, (30, 63));self.assertEqual(float(out['end_pose_cm']), .8)
+        self.assertEqual(out['pose'].shape, (30, 63));self.assertEqual(float(out['end_pose_cm']), .8);np.testing.assert_array_equal(out['seam_cm'], [1.5, 2.5])
         sent = run.requests[0];self.assertEqual(set(sent), set(self.request))
         for k, v in self.request.items():np.testing.assert_array_equal(sent[k], v)
         again = auto_fill.generate(self.folder, self.request, run=run)
@@ -73,7 +84,9 @@ class GenerateTest(unittest.TestCase):
 
     def test_no_usable_motion(self):
         for answer in (lambda r: None, lambda r: response(r, rows=29), lambda r: dict(response(r), contacts=np.zeros((30, 4))),
-                       lambda r: dict(response(r), end_pose_cm=np.float64(np.nan)), lambda r: {k: v for k, v in response(r).items() if k != 'pelvis'}):
+                       lambda r: dict(response(r), end_pose_cm=np.float64(np.nan)), lambda r: {k: v for k, v in response(r).items() if k != 'pelvis'},
+                       lambda r: {k: v for k, v in response(r).items() if k != 'seam_cm'}, lambda r: response(r, seam=(1., np.nan)),
+                       lambda r: response(r, seam=(1., 2., 3.)), lambda r: dict(response(r), version=np.int64(1))):
             with self.assertRaises(auto_fill.Unavailable) as caught:auto_fill.generate(self.folder, self.request, run=FakeRun(answer))
             self.assertEqual(str(caught.exception), 'Automatic fill returned no usable motion.');self.assertEqual(self.files(), [])
 
@@ -81,6 +94,27 @@ class GenerateTest(unittest.TestCase):
         self.folder.mkdir(parents=True);np.savez(self.done, **response(self.request, rows=25))
         run = FakeRun();out = auto_fill.generate(self.folder, self.request, run=run)
         self.assertEqual(len(run.calls), 1);self.assertEqual(out['orient'].shape, (30, 3));self.assertEqual(self.files(), [self.done.name])
+
+    def test_version_1_cache_is_not_trusted(self):
+        self.folder.mkdir(parents=True);old = {k: v for k, v in response(self.request).items() if k != 'seam_cm'};old['version'] = np.int64(1)
+        np.savez(self.done, **old);run = FakeRun();out = auto_fill.generate(self.folder, self.request, run=run)
+        self.assertEqual(len(run.calls), 1);self.assertEqual(int(out['version']), 2);self.assertEqual(self.files(), [self.done.name])
+
+    def test_cleanup_failure_keeps_the_result(self):
+        real = Path.unlink
+        def unlink(path, missing_ok=False):
+            if path.name.endswith(('.request.npz', '.partial.npz.tmp')):raise PermissionError(13, 'in use', str(path))
+            return real(path, missing_ok=missing_ok)
+        with mock.patch.object(Path, 'unlink', unlink):out = auto_fill.generate(self.folder, self.request, run=FakeRun())
+        self.assertEqual(out['pose'].shape, (30, 63));self.assertTrue(self.done.is_file())
+
+    def test_working_files_that_cannot_be_written(self):
+        def refuse(*args, **kw):raise PermissionError(13, 'Access is denied', 'auto_fill')
+        for target in ((Path, 'mkdir'), (np, 'savez')):
+            run = FakeRun()
+            with mock.patch.object(*target, refuse), self.assertRaises(auto_fill.Unavailable) as caught:auto_fill.generate(self.folder, self.request, run=run)
+            self.assertTrue(str(caught.exception).startswith('Automatic fill could not write its working files: '), str(caught.exception))
+            self.assertIn('Access is denied', str(caught.exception));self.assertEqual(run.calls, []);self.assertEqual(self.files(), [])
 
     def test_leftovers_of_a_killed_run(self):
         self.folder.mkdir(parents=True);stem = self.done.name[:-4]
@@ -98,6 +132,14 @@ class GenerateTest(unittest.TestCase):
         script = "print('@@MOCAP@@{\"type\": \"progress\", \"message\": \"step\"}', flush=True);print('@@MOCAP@@{\"type\": \"failed\", \"message\": \"No GPU.\"}');raise SystemExit(1)"
         echoed = [];code, lines = auto_fill._run([sys.executable, '-c', script], echoed.append)
         self.assertEqual(code, 1);self.assertEqual(len(lines), 2);self.assertEqual(echoed, lines[:1])
+
+    def test_echo_failure_stops_the_worker(self):
+        import time
+        script = "import time;print('@@MOCAP@@{\"type\": \"progress\"}', flush=True);time.sleep(60)"
+        def echo(line):raise KeyboardInterrupt
+        started = time.monotonic()
+        with self.assertRaises(KeyboardInterrupt):auto_fill._run([sys.executable, '-c', script], echo)
+        self.assertLess(time.monotonic()-started, 30)
 
     def test_imports_without_torch(self):
         import subprocess

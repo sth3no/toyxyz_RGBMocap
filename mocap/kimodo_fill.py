@@ -16,7 +16,7 @@ import numpy as np
 from . import soma_convert as sc
 
 STAGE = 'take_join'
-VERSION, CONTEXT, MAX_FRAMES, MAX_SIDE, FPS, STEPS, SEEDS = 1, 5, 290, 45, 30., 100, 1000
+VERSION, CONTEXT, MAX_FRAMES, MAX_SIDE, FPS, STEPS, SEEDS = 2, 5, 290, 45, 30., 100, 1000
 MODEL_KEY = 'kimodo-soma-rp-v1.2'
 SMOOTH, SMOOTH_MIN = 30, 5  # frames next to the range the smooth root is read from; fewest frames Kimodo's smoother handles
 SIDES = dict(orient=3, pose=63, pelvis=3)
@@ -84,9 +84,10 @@ def finish(request, plan, output):
     if K.shape[0] != rows or hips.shape != (rows, 3) or contacts.shape != (rows, 6):raise ValueError('Kimodo returned motion of an unexpected length.')
     orient, pose, pelvis = sc.to_smplx(K, hips, plan['fit'], plan['floor'], names=output['names'])
     J = sc.smplx_fk(r['rest'], orient, pose, pelvis)[1]
-    end = np.linalg.norm(J[plan['known']]-plan['joints'], axis=2).mean()*100
+    # Per known frame the mean distance over the 22 joints; the seam is the last known frame before the range and the first after it.
+    known = np.linalg.norm(J[plan['known']]-plan['joints'], axis=2).mean(axis=1)*100;c0 = plan['context'][0]
     return dict(version=np.int64(VERSION), context=np.array(plan['context'], np.int64), orient=orient, pose=pose, pelvis=pelvis,
-                contacts=contacts[:, CONTACTS].astype(bool), end_pose_cm=np.float64(end))
+                contacts=contacts[:, CONTACTS].astype(bool), end_pose_cm=np.float64(known.mean()), seam_cm=known[[c0-1, c0]])
 
 
 class NoText:
@@ -130,7 +131,9 @@ def _generate(request, seed, emit):
     emit('progress', stage=STAGE, current=0, total=STEPS, message='Automatic fill: loading the Kimodo model')
     started = time.monotonic();model = load_model(MODEL_KEY, device='cuda', text_encoder=NoText())
     skeleton = model.skeleton;neutral = torch.as_tensor(skeleton.neutral_joints).detach().double().cpu().numpy()
+    parents = torch.as_tensor(skeleton.joint_parents).detach().cpu().numpy()
     if sum(x.numel() for x in model.parameters()) != PARAMETERS or list(skeleton.bone_order_names) != sc.SOMA30 or \
+            not np.array_equal(parents, sc.SOMA30_PARENTS) or \
             neutral.shape != sc.SOMA_NEUTRAL.shape or np.abs(neutral-sc.SOMA_NEUTRAL).max() > 1e-5:raise RuntimeError(WRONG_MODEL)
     loaded = time.monotonic()-started
     T = lambda x: torch.tensor(np.asarray(x), dtype=torch.float32, device='cuda')
@@ -140,14 +143,16 @@ def _generate(request, seed, emit):
         for k, i in enumerate(indices):
             if k % 10 == 0:emit('progress', stage=STAGE, current=k, total=len(indices), message=f'Automatic fill: generating, step {k+1} of {len(indices)}')
             yield i
+        emit('progress', stage=STAGE, current=len(indices), total=len(indices), message='Automatic fill: generated')
     torch.manual_seed(seed);started = time.monotonic()
     out = model('', p['frames'], num_denoising_steps=STEPS, constraint_lst=[[fb]], first_heading_angle=p['heading'],
                 post_processing=False, num_samples=1, progress_bar=steps)
     out = {k: out[k][0].detach().cpu().numpy() for k in ('global_rot_mats', 'root_positions', 'foot_contacts')}
-    generated = time.monotonic()-started
-    response = finish(request, p, dict(out, names=list(model.output_skeleton.bone_order_names)))
+    generated, peak = time.monotonic()-started, torch.cuda.max_memory_allocated()/2**30
+    response = finish(request, p, dict(out, names=list(model.output_skeleton.bone_order_names)));before, after = response['seam_cm']
     emit('info', stage=STAGE, message=f"Automatic fill: model loaded in {loaded:.1f} seconds, {p['frames']} frames generated in {generated:.1f} seconds, "
-                                      f"known poses kept to {float(response['end_pose_cm']):.2f} cm on average.")
+                                      f"known poses kept to {float(response['end_pose_cm']):.2f} cm on average, {before:.1f} cm before and {after:.1f} cm "
+                                      f"after the range; peak video memory {peak:.2f} GiB.")
     return response
 
 

@@ -988,9 +988,25 @@ then get the eight Kimodo files in **Model Manager** (1.13 GB; **Download All**
 skips them). It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
 range takes roughly 10 to 15 seconds on an RTX 5060 Ti, including starting the
 generator. Until setup is complete, **Automatic** is greyed out and its tooltip
-says what is missing. The Console reports how closely each generated range met
-the captured poses, with a line such as `Frames 101–120 generated: the captured
-poses on both sides were met within 2.4 cm.` See the [Kimodo guide](models/KIMODO.md).
+says what is missing. The generated motion does not meet the captured poses
+exactly: in the product runs made it missed the pose at the frame next to the
+range by 7 to 8 cm (3.4 to 3.8 cm on average over the five known frames on each
+side), and the join blends the difference out at both ends. The Console reports
+the two figures next to each range, with a line such as `Frames 101–120
+generated: the captured poses next to the range were missed by 7.8 cm before it
+and 7.1 cm after it.` See the [Kimodo guide](models/KIMODO.md).
+
+If the generated motion misses a captured pose next to the range by more than
+25 cm, the takes on the two sides do not fit together, and the fill is refused
+with a message such as `Automatic fill could not connect the motion on both
+sides of frames 137–166: the generated motion misses the captured poses next to
+the range by 103 cm. The takes before and after it do not fit together. Check
+the frames next to the range, reconstruct those takes again, or choose Do not
+fill.` This usually means that the frames just before or just after the range
+were reconstructed from a partly covered view, so the two takes place the
+person far apart or facing different ways. Nothing is written and an earlier
+joined take stays as it was; filling again with the same takes refuses at once,
+because the generated range is kept.
 
 The result is one new joined take that covers the takes and the chosen gaps. The
 scene, **Apply Correction**, export and retargeting use it instead of the source
