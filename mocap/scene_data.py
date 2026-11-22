@@ -184,6 +184,9 @@ class SceneDataLoader(QThread):
         if state is None:raise ValueError('People group unavailable')
         projects=take_projects(root,state,kind)
         if not projects:return PeopleScene(root,dict(floor=0.))
+        # A source take whose joined take is in use is drawn when it has the result and is not reported when it lacks it.
+        from .people_store import replaced_projects
+        replaced={safe_child(root,p) for person in state['people'] for p in replaced_projects(root,person,kind)}
         from .scene_floor import read_config,current_resolution
         from .paths import MODELS
         needs_floor=read_config(root) is not None and current_resolution(root) is None and (MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz').exists()
@@ -211,7 +214,8 @@ class SceneDataLoader(QThread):
                 manifest=json.loads((project/'project.json').read_text(encoding='utf-8'))
                 raw_kind=kind
                 if not result_is_current(project,raw_kind,ignore_contacts=True) or not artifacts_current(project,raw_kind):
-                    scene.warnings.append(f'Person {ident}: {raw_kind} result unavailable');continue
+                    if project not in replaced:scene.warnings.append(f'Person {ident}: {raw_kind} result unavailable')
+                    continue
                 camera=read_camera(project)
                 if not np.allclose(camera['K'],reference['K'],atol=1e-4):
                     scene.warnings.append(f'Person {ident}: camera intrinsics differ');continue

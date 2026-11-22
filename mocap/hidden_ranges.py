@@ -29,6 +29,24 @@ def donor_take(takes,gap,offset):
         if isinstance(t,dict) and type(t.get('first')) is int and type(t.get('end')) is int and t['first']<=lo and t['end']>=hi:found=t
     return found
 
+def donor_offsets(takes,gap):
+    """Offsets, as merged (lowest, highest) spans, at which one take covers the gap and a frame on each side."""
+    spans=[]
+    for t in takes if isinstance(takes,list) else []:
+        if not (isinstance(t,dict) and type(t.get('first')) is int and type(t.get('end')) is int):continue
+        lo,hi=max(-OFFSET_LIMIT,t['first']-gap['first']+1),min(OFFSET_LIMIT,t['end']-gap['end']-1)
+        if lo<=hi:spans.append((lo,hi))
+    out=[]
+    for lo,hi in sorted(spans):
+        if out and lo<=out[-1][1]+1:out[-1]=(out[-1][0],max(hi,out[-1][1]))
+        else:out.append((lo,hi))
+    return out
+
+def offset_hint(spans,most=3):
+    """The spans nearest to no shift, as the sentence that follows a refused offset."""
+    near=sorted(sorted(spans,key=lambda s:0 if s[0]<=0<=s[1] else min(abs(s[0]),abs(s[1])))[:most])
+    return ' Offsets that work: '+', '.join(str(lo) if lo==hi else f'{lo} to {hi}' for lo,hi in near)+'.'
+
 def method_issue(method,gap,choice=None,people=None,ident=None):
     if method=='none':return None
     if method=='copy':
@@ -38,7 +56,10 @@ def method_issue(method,gap,choice=None,people=None,ident=None):
         donor=next((x for x in people or [] if isinstance(x,dict) and x.get('id')==p['person']),None)
         if donor is None or p['person']==ident:return ask
         takes=donor.get('takes');name=donor.get('name') or f"Person {p['person']}"
-        if donor_take(takes if isinstance(takes,list) else [],gap,p['offset']) is None:return f'{name} has no captured motion covering this range with this offset.'
+        if donor_take(takes if isinstance(takes,list) else [],gap,p['offset']) is None:
+            spans=donor_offsets(takes,gap)
+            if not spans:return f'{name} has no captured take long enough to cover this range.'
+            return f'{name} has no captured motion covering this range with this offset.'+offset_hint(spans)
         return None
     if method!='smooth':raise ValueError(f'Unknown method: {method}')
     n=gap['end']-gap['first']

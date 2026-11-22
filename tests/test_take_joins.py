@@ -202,4 +202,10 @@ class TakeJoinsTest(unittest.TestCase):
         for bad in('x',5,{'a':1},[None],[{'project':1,'files':{}}]):
             self.write_fill(donors=bad);self.assertFalse(self.current(),bad)
             self.assertEqual(ps.active_takes(self.root,self.person),self.person['takes'])
+    def test_replaced_projects(self):
+        self.assertEqual(ps.replaced_projects(self.root,self.person),{S(0,100),S(120,200)})
+        self.assertEqual(ps.replaced_projects(self.root,self.person,'corrected_initial'),{S(0,100),S(120,200)})
+        self.assertEqual(ps.replaced_projects(self.root,self.person,'htd_refined'),set())   # the join lacks that result
+        del self.person['gap_fill'];self.assertEqual(ps.replaced_projects(self.root,self.person),set())
+        self.assertEqual(ps.replaced_projects(self.root,dict(id=1,takes=[])),set())
 if __name__=='__main__':unittest.main()

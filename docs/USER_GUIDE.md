@@ -967,7 +967,9 @@ captured motion at both ends, over more frames when the poses differ more.
 Contact timings in the range are the other person's. It is unavailable unless that person has one captured take of
 their own covering the range plus one frame on each side at the offset; the row
 then shows `<name> has no captured motion covering this range with this
-offset.` (or `Choose a person to copy from.`) and **Fill hidden ranges** is
+offset.` followed by the offsets that do work, such as `Offsets that work: -99
+to -21, 21 to 79.` (or `<name> has no captured take long enough to cover this
+range.`, or `Choose a person to copy from.`) and **Fill hidden ranges** is
 disabled. Joined takes are never used as the source.
 
 The result is one new joined take that covers the takes and the chosen gaps. The
@@ -985,9 +987,11 @@ A joined take is used only while it is current. If a source take is
 reconstructed again, the other person of a copy is reconstructed again, or the
 person, **Mirror** or **Offset** of a copy is changed, the joined take is out of
 date: the selector shows
-**Fill hidden ranges** as its status and the source takes are used again. Click
+**Fill hidden ranges** as its status, the source takes are used again and the
+view moves to one of them. Click
 **Fill hidden ranges** to write a new joined take. Choosing **Do not fill**
-again also returns to the separate takes; the joined take is kept.
+again also returns to the separate takes; the joined take is kept on disk but
+is no longer listed in the selector.
 
 A joined take is used for the results it provides: the result it was made from,
 the results that one is built on, and their corrected variants. For other

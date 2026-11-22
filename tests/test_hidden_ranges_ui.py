@@ -83,8 +83,8 @@ class CopyRowsTest(unittest.TestCase):
         self.assertEqual(self.rows({'100_120':COPY(person=9)})[0]['issue'],'Choose a person to copy from.')
     def test_offset_outside_donor(self):
         r=self.rows({'100_120':COPY(offset=200)})[0]
-        self.assertEqual((r['method'],r['offset'],r['issue']),('copy',200,'Ben has no captured motion covering this range with this offset.'))
-        self.assertEqual(self.rows({'100_120':COPY(person=3)})[0]['issue'],'Person 3 has no captured motion covering this range with this offset.')
+        self.assertEqual((r['method'],r['offset'],r['issue']),('copy',200,'Ben has no captured motion covering this range with this offset. Offsets that work: -99 to 179.'))
+        self.assertEqual(self.rows({'100_120':COPY(person=3)})[0]['issue'],'Person 3 has no captured motion covering this range with this offset. Offsets that work: 51 to 179.')
     def test_copy_has_no_length_limit(self):
         r=self.rows({'200_260':COPY()})[1]
         self.assertEqual((r['method'],r['issue']),('copy',None));self.assertIn('60',r['smooth_issue'])
@@ -113,13 +113,13 @@ class CopyRowsTest(unittest.TestCase):
 class PendingAndReadinessTest(unittest.TestCase):
     def test_pending_offset_is_checked_without_saving(self):
         g=h.gaps(TAKES);choices={'100_120':COPY(offset=200)};keep=json.dumps(choices)
-        self.assertEqual(ui.pending_state(g,choices,{},None,PEOPLE,1),({'100_120':'Ben has no captured motion covering this range with this offset.','200_260':None},False))
+        self.assertEqual(ui.pending_state(g,choices,{},None,PEOPLE,1),({'100_120':'Ben has no captured motion covering this range with this offset. Offsets that work: -99 to 179.','200_260':None},False))
         self.assertEqual(ui.pending_state(g,choices,{'100_120':(2,False,0)},None,PEOPLE,1),({'100_120':None,'200_260':None},True))
         self.assertEqual(json.dumps(choices),keep)                                   # nothing saved
         self.assertFalse(ui.pending_state(g,choices,{'100_120':(2,False,0)},'reason',PEOPLE,1)[1])
         both={'100_120':COPY(),'200_260':COPY()}
         self.assertEqual(ui.pending_state(g,both,{'200_260':(2,False,100)},None,PEOPLE,1),
-                         ({'100_120':None,'200_260':'Ben has no captured motion covering this range with this offset.'},False))
+                         ({'100_120':None,'200_260':'Ben has no captured motion covering this range with this offset. Offsets that work: -199 to 39.'},False))
         self.assertEqual(ui.pending_state(g,both,{'200_260':(None,False,0)},None,PEOPLE,1)[0]['200_260'],'Choose a person to copy from.')
     def test_donor_take_not_ready(self):
         from unittest import mock
@@ -156,5 +156,44 @@ class MaskTest(unittest.TestCase):
             state={'people':[{'id':1,'joins':[{'project':'takes/j'}]}]}
             self.assertEqual(ui.export_lines(root,state,[(str(take),None,None,str(root/'Anna_filled.fbx'))]),
                              ['Anna_filled: 3 of 4 frames are filled across hidden ranges (1 interpolated, 2 copied from another person).'])
+
+class TakeInUseTest(unittest.TestCase):
+    """Which take the view shows, and which joined takes the selector lists, after a hidden range choice changes."""
+    def setUp(self):
+        import test_take_joins as tj
+        self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
+        self.root,self.state,self.person=tj.build(self.tmp.name);self.S,self.J=tj.S,tj.J
+    def show(self,project,frame=None,kind='initial'):return ui.take_to_show(self.root,self.person,kind,self.root/project,frame)
+    def test_stays_on_a_take_in_use(self):
+        self.assertIsNone(self.show(self.J,50))
+        del self.person['gap_fill'];self.assertIsNone(self.show(self.S(0,100),50))
+    def test_leaves_a_source_the_join_replaced(self):
+        self.assertEqual(self.show(self.S(0,100),50),self.J)
+    def test_leaves_a_join_switched_off(self):
+        del self.person['gap_fill']
+        self.assertEqual(self.show(self.J,10),self.S(0,100));self.assertEqual(self.show(self.J,150),self.S(120,200))
+        self.assertEqual(self.show(self.J,105),self.S(0,100));self.assertEqual(self.show(self.J,110),self.S(120,200))  # inside the gap: the nearer take
+        self.assertEqual(self.show(self.J),self.S(120,200));self.assertEqual(self.show(self.J,5000),self.S(120,200))
+    def test_leaves_a_join_that_lacks_the_result(self):
+        self.assertEqual(self.show(self.J,10,'htd_refined'),self.S(0,100))
+    def test_other_folders_and_bad_records_stay(self):
+        self.assertIsNone(self.show('p1',10));self.assertIsNone(self.show('elsewhere',10))
+        self.assertIsNone(ui.take_to_show(self.root,dict(id=1,takes='bad',joins=[5]),'initial',self.root/self.J,1))
+    def unlisted(self,people=None,kind='initial'):return ui.unlisted_joins(self.root,self.person,kind,people)
+    def test_join_in_use_is_listed(self):
+        self.assertEqual(self.unlisted(),set())
+    def test_join_switched_off_is_not_listed(self):
+        del self.person['gap_fill'];self.assertEqual(self.unlisted(),{self.J})
+    def test_out_of_date_join_that_fill_would_rewrite_is_listed(self):
+        (self.root/self.S(120,200)/'hmr4d_results.pt').write_bytes(b'different longer content')
+        self.assertEqual(ui.take_to_show(self.root,self.person,'initial',self.root/self.J,10),self.S(0,100))
+        self.assertEqual(self.unlisted(),set())
+        donor=dict(id=2,name='Ben',takes=[T(0,300)])
+        self.person['gap_fill']={'100_120':COPY()};self.assertEqual(self.unlisted([self.person,donor]),set())
+        self.person['gap_fill']={'100_120':COPY(offset=300)};self.assertEqual(self.unlisted([self.person,donor]),{self.J})
+        self.person['gap_fill']={'100_120':{'method':'copy','mirror':False,'offset':0}};self.assertEqual(self.unlisted([self.person,donor]),{self.J})
+    def test_bad_records_never_raise(self):
+        self.assertEqual(ui.unlisted_joins(self.root,dict(id=1,takes=[]),'initial'),set())
+        self.assertEqual(ui.unlisted_joins(self.root,dict(id=1,takes='bad',joins=[5,{}]),'initial'),set())
 
 if __name__=='__main__':unittest.main()

@@ -1,7 +1,7 @@
 """Plain decisions behind the Hidden ranges panel; no Qt, so they test in the shared runtime."""
 from pathlib import Path
 import numpy as np
-from .hidden_ranges import METHODS, OFFSET_LIMIT, donor_take, gap_key, gap_label, method_issue
+from .hidden_ranges import METHODS, OFFSET_LIMIT, chains, donor_take, gap_key, gap_label, method_issue
 
 SUPPORTED = ('initial', 'footmr_initial')
 NOT_READY = 'Reconstruct and prepare both neighbouring takes first.'
@@ -88,6 +88,30 @@ def choose(choices, key, method, person=None, mirror=False, offset=0):
     else:
         choices[key] = {'method': 'copy', **({} if person is None else {'person': int(person)}),
                         'mirror': bool(mirror), 'offset': max(-OFFSET_LIMIT, min(OFFSET_LIMIT, int(offset)))}
+
+
+def take_to_show(root, person, kind, project, frame=None):
+    """Take in use to move the view to when the loaded take of this person is no longer in use; None to stay."""
+    from .people_store import active_takes, owned_projects, safe_child
+    try:
+        project = Path(project).resolve()
+        if not any(safe_child(root, p) == project for p in owned_projects(person)):return None
+        active = active_takes(root, person, kind)
+        if not active or any(safe_child(root, t['project']) == project for t in active):return None
+        if frame is None:return active[-1]['project']
+        away = lambda t: max(t['first']-frame, frame-(t['end']-1), 0)
+        return min(reversed(active), key=away)['project']
+    except (ValueError, KeyError, TypeError, AttributeError, OSError):return None
+
+
+def unlisted_joins(root, person, kind, people=None):
+    """Joined takes the take selector leaves out: not in use, and not what Fill hidden ranges would write again."""
+    from .people_store import active_takes
+    try:
+        used = {t['project'] for t in active_takes(root, person, kind) if t.get('join')}
+        wanted = [[t['project'] for t in chain] for chain in chains(person['takes'], person.get('gap_fill') or {}, people or [], person.get('id'))]
+        return {j['project'] for j in person.get('joins') or [] if j['project'] not in used and j.get('sources') not in wanted}
+    except (ValueError, KeyError, TypeError, AttributeError, OSError):return set()
 
 
 def read_mask(project):

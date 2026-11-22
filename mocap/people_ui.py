@@ -520,13 +520,19 @@ class PeopleWorkspace:
         try:
             self.person_takes.clear()
             takes=person.get('takes',[])+(person.get('joins') or []) if person else []
+            # A joined take that is switched off is kept on disk but not offered.
+            unlisted=set()
+            if self.people_state and person and person.get('joins'):
+                from .hidden_ranges_state import unlisted_joins
+                unlisted={safe_child(self.people_root,p) for p in unlisted_joins(self.people_root,person,self.active_result,self.people_state['people'])}
             for choice in self.take_choices([person] if person else []):
+                if choice.joined and choice.project in unlisted:continue
                 index=self.person_takes.count()
                 self.person_takes.addItem(f'{choice.frames} · {choice.status}'+(' · filled' if choice.joined else ''),
                                           choice.project.relative_to(self.people_root.resolve()).as_posix())
                 self.person_takes.setItemData(index, choice.label, Qt.ToolTipRole)
                 if choice.project==self.project:self.person_takes.setCurrentIndex(index)
-            self.person_takes.setVisible(len(takes)>1)
+            self.person_takes.setVisible(len(takes)-len(unlisted)>1)
         finally:self.person_takes.blockSignals(False)
         self.refresh_hidden_ranges(person)
 
@@ -554,8 +560,15 @@ class PeopleWorkspace:
             self.status.setText('Cannot save the hidden range choice: '+str(error))
             self.refresh_hidden_ranges(self.current_person());return
         self.people_state=state
-        # A choice can switch a joined take on or off, so the takes in use change.
-        self.populate_person_takes();self.request_people_scene(force=True);self.update_readiness()
+        # A choice can switch a joined take on or off, so the takes in use change; the view follows to one in use.
+        from .hidden_ranges_state import take_to_show
+        target=None
+        if self.project and not (self.busy or self.contact_saving):
+            frame=round(self.source_offset*self.info['fps'])+self.slider.value() if self.info else None
+            target=take_to_show(self.people_root,person,self.active_result,self.project,frame)
+        if target is not None:self.activate_person(self.active_person_id,safe_child(self.people_root,target))
+        else:self.populate_person_takes()
+        self.request_people_scene(force=True);self.update_readiness()
 
     def fill_hidden_ranges(self):
         person=self.current_person()

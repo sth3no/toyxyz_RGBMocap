@@ -69,9 +69,9 @@ class HiddenRangesPanel(QWidget):
         offset = QSpinBox();offset.setRange(-OFFSET_LIMIT, OFFSET_LIMIT);offset.setSuffix(' f');offset.setValue(row['offset'])
         offset.setAccessibleName('Offset, '+row['label'])
         offset.setToolTip("Copy the other person's motion from earlier (negative) or later (positive) frames.")
-        line = QHBoxLayout();line.setSpacing(6);line.addWidget(mirror);line.addStretch(1)
-        line.addWidget(QLabel('Offset'));line.addWidget(offset)
-        layout.addWidget(person);layout.addLayout(line)
+        # Mirror and Offset each get a row: side by side they are cut off in a narrow People panel.
+        line = QHBoxLayout();line.setSpacing(6);line.addWidget(QLabel('Offset'));line.addWidget(offset, 1)
+        layout.addWidget(person);layout.addWidget(mirror);layout.addLayout(line)
         for widget in (person, mirror, offset):widget.setEnabled(enabled)
         emit = lambda *_: self.choice_changed.emit(row['key'], 'copy', person.currentData(), mirror.isChecked(), offset.value())
         person.currentIndexChanged.connect(emit);mirror.toggled.connect(emit)

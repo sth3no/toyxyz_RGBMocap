@@ -194,6 +194,15 @@ def active_takes(root, person, kind=None):
     return sorted(out, key=lambda t: t['first'])
 
 
+def replaced_projects(root, person, kind=None):
+    """Source takes a current join stands in for."""
+    takes = person.get('takes', [])
+    if not person.get('joins') or not isinstance(takes, list):
+        return set()
+    used = {t['project'] for t in active_takes(root, person, kind)}
+    return {t['project'] for t in takes if t['project'] not in used}
+
+
 def owned_projects(person):
     return [t['project'] for t in person.get('takes', [])] + [j['project'] for j in person.get('joins') or []]
 

@@ -53,13 +53,29 @@ class HiddenRangesTest(unittest.TestCase):
         self.assertEqual(h.donor_take([T(60,160),T(50,150)],g,0),T(50,150))
         self.assertIsNone(h.donor_take([T(0,90)],g,0))
         self.assertIsNone(h.donor_take([],g,0))
+    def test_donor_offsets(self):
+        g=dict(first=100,end=120)
+        self.assertEqual(h.donor_offsets([T(0,100),T(120,200),T(225,313)],g),[(-99,-21),(21,79),(126,192)])
+        self.assertEqual(h.donor_offsets([T(0,300),T(50,150)],g),[(-99,179)])                 # overlapping takes merge
+        self.assertEqual(h.donor_offsets([T(0,1000)],g),[(-99,600)])                          # clipped to the offset limit
+        self.assertEqual(h.donor_offsets([T(100,121)],g),[]);self.assertEqual(h.donor_offsets([T(0,22)],g),[(-99,-99)])
+        self.assertEqual(h.donor_offsets('bad',g),[]);self.assertEqual(h.donor_offsets([None,{'first':'a'}],g),[])
+        for lo,hi in h.donor_offsets([T(0,100),T(120,200)],g):                                # every hinted offset has a donor take
+            for off in(lo,hi):self.assertIsNotNone(h.donor_take([T(0,100),T(120,200)],g,off),off)
+            for off in(lo-1,hi+1):self.assertIsNone(h.donor_take([T(0,100),T(120,200)],g,off),off)
+    def test_offset_hint(self):
+        self.assertEqual(h.offset_hint([(-99,-21),(21,79)]),' Offsets that work: -99 to -21, 21 to 79.')
+        self.assertEqual(h.offset_hint([(5,5)]),' Offsets that work: 5.')
+        self.assertEqual(h.offset_hint([(-500,-400),(-99,-21),(21,79),(126,192),(300,310)]),' Offsets that work: -99 to -21, 21 to 79, 126 to 192.')
     def test_method_issue_copy(self):
         g=dict(first=100,end=120);people=[dict(id=1,name='Person 1',takes=[T(0,200)]),dict(id=2,name="Person 2",takes=[T(0,91)])]
         c=lambda **k:dict(method='copy',**k)
         ask='Choose a person to copy from.'
         self.assertEqual(h.method_issue('copy',g),ask)
         for ch in(c(),c(person=1),c(person=9),None,{}):self.assertEqual(h.method_issue('copy',g,ch,people,1),ask,ch)
-        self.assertEqual(h.method_issue('copy',g,c(person=2),people,1),'Person 2 has no captured motion covering this range with this offset.')
+        self.assertEqual(h.method_issue('copy',g,c(person=2),people,1),'Person 2 has no captured motion covering this range with this offset. Offsets that work: -99 to -30.')
+        short=[people[0],dict(id=2,name='Person 2',takes=[T(100,121)])]
+        self.assertEqual(h.method_issue('copy',g,c(person=2),short,1),'Person 2 has no captured take long enough to cover this range.')
         self.assertIsNone(h.method_issue('copy',g,c(person=2,offset=-30),people,1))
         self.assertIsNone(h.method_issue('copy',g,c(person=1),people,2))
         self.assertIsNone(h.method_issue('smooth',g));self.assertIsNone(h.method_issue('none',g))
