@@ -116,7 +116,7 @@ Use **Model Manager** for the selected model and add-ons. Automatic download may
 | `Setup_PromptHMR.cmd` | Optional independent PromptHMR runtime | Same build tools, separate provider license review; MAMMA/SDF not required |
 | `Setup_GEMX.cmd` | Optional GEM-X Windows runtime | Reuses the pinned ExMR CPython and compatible CUDA DLLs, keeps its own inference packages, verifies CUDA. No compiler required. |
 | `Setup_SAM31.cmd` | Optional SAM 3.1 Find person tracker for ExMR, FlowHMR and GVHMR on Windows | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA with native bfloat16. Uses pinned wheels and a separate overlay. |
-| `Setup_Kimodo.cmd` | Optional Kimodo overlay for Automatic fill of hidden ranges (GVHMR, ExMR) | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA. Fetches Kimodo at a pinned revision and six pinned packages into `runtime_kimodo/` (about 15 MB); the model is a separate Model Manager download. See [the Kimodo guide](models/KIMODO.md). |
+| `Setup_Kimodo.cmd` | Optional Kimodo overlay for Automatic fill of hidden ranges (GVHMR, ExMR) | Base ExMR profile, Git, internet, upstream terms review and NVIDIA CUDA. Fetches Kimodo at a pinned revision, twelve pinned packages and `antlr4-python3-runtime` (built from source) into `runtime_kimodo/` (about 140 MB). The app runs the same script as its `kimodo_setup` job (Model Manager, **Install Runtime**), so the app can stay open; the model and description files are separate Model Manager rows. See [the Kimodo guide](models/KIMODO.md). |
 | `update.cmd` | Source update and base runtime verification | Close the app and preserve tracked edits; it does not install the optional runtimes |
 
 ### GEM-X support
@@ -754,7 +754,7 @@ person's takes, so it enters the shared floor inputs, and creating, removing or
 deactivating one changes the shared-floor signature. It never becomes the scene
 reference camera. `take_join.assemble` dispatches per gap through `FILLS`: `smooth`, `copy` and
 `auto`; a later method plugs in there with its own fill function and `params`.
-The Automatic files below are new too and are hashed into no cache identity.
+The Automatic files below are new too and are hashed into no cache identity. Automatic fill is **Experimental**: keep the note `Experimental support. Generated motion is plausible, not what the person did.` wherever it is introduced.
 
 Copy from person (`gap_fill.copy_fill`, `take_join._copy`): the donor is read
 in its own world (world params only, `transl` turned into pelvis positions with
@@ -784,19 +784,21 @@ Automatic fill (`take_join._auto`, `mocap/auto_fill.py`,
 `mocap/kimodo_runtime.py`, `kimodo_worker_boot.py`, `mocap/kimodo_fill.py`,
 `mocap/soma_convert.py`; setup in `Setup_Kimodo.cmd` and `tools/setup_kimodo.py`;
 user-facing behavior and licences in [the Kimodo guide](models/KIMODO.md)). The
-choice is `{'method': 'auto', 'seed': 0..999}` (`hidden_ranges.choice_params`,
-`SEED_LIMIT`); a range is limited to `AUTO_MAX_FRAMES` (290, so 290 + 2 x 5 known
+choice is `{'method': 'auto', 'seed': 0..999}`, plus `'text'` when the range has a description (`hidden_ranges.choice_params`,
+`SEED_LIMIT`, `TEXT_LIMIT` = 200 characters, `normalise_text` makes it one line; an empty text is left out, so a choice without one is the choice of the earlier version); a range is limited to `AUTO_MAX_FRAMES` (290, so 290 + 2 x 5 known
 frames = the generator's 300) and the take rate to 30 fps. `_auto` sends up to
 45 captured frames from each side (`AUTO_CONTEXT`) as a request of arrays
 (SMPL-X `orient`, `pose`, pelvis, the body `rest` and `sole`, `frames`, `seed`,
-`fps`) to `auto_fill.generate`, which looks for `<key>.npz` in the folder
+`fps`, and `text` and `text_feature`, an empty string and 4096 zeros without a description) to `auto_fill.generate`, which looks for `<key>.npz` in the folder
 `auto_fill` of the person's preview folder before starting a worker. The key
-hashes `auto_fill.VERSION` (the protocol version, 2), every request array and
+hashes `auto_fill.VERSION` (the protocol version, 3; `kimodo_fill.VERSION` is 3 too), every request array and
 the generator identity (`auto_fill.identity()`: `kimodo_runtime.identity()`,
 which is the Kimodo revision, profile version and the hash of the model file,
 followed by the SHA-256 of `mocap/kimodo_fill.py` and `mocap/soma_convert.py`
 read at call time), so a change of the worker's code generates every range
-again; responses cached under version 1 are never found. On a miss it writes
+again; responses cached under an older version are never found. Without a
+description the request content and Kimodo's call (empty prompt, default
+guidance) are those of version 2; only the key differs. On a miss it writes
 `<key>.request.npz`, starts the worker
 (`kimodo_runtime.command` runs `kimodo_worker_boot.py` in the ExMR Python,
 which activates the `exmr` profile and then adds `runtime_kimodo/` to
@@ -850,6 +852,63 @@ runtime, and otherwise builds a new overlay in `.setup` and swaps it in, leaving
 a `kimodo-backup-*` folder. Do not delete `runtime_kimodo/`, its backups or the
 Kimodo model files without the user's authorization. Real runs and their results
 belong in [VALIDATION.md](VALIDATION.md), not here.
+
+Descriptions (`mocap/kimodo_text.py`, `auto_fill.describe`, `TEXT_CACHE`). Kimodo
+conditions on one 4096-number vector per prompt, so the text encoder runs in its
+own process and the generation worker needs no `transformers`. `describe(text)`
+looks for `<data folder>/cache/kimodo_text/<key>.npy` (`HOME/cache/kimodo_text`,
+shared by every project; the key hashes the text, `kimodo_runtime.text_identity()`
+= revision, profile version and the SHA-256 of the adapter and Llama files,
+`kimodo_text.VERSION` and the SHA-256 of `kimodo_text.py`), and on a miss runs
+`kimodo_worker_boot.py text --prompt-file <key>.prompt.txt --out <key>.partial.npy`
+in the ExMR Python with the overlay, then publishes the `.npy` after checking
+its shape (4096), dtype and finiteness; leftovers of a killed run are removed.
+`take_join` reads each distinct description once per run and sends it as the
+request's `text_feature`; `kimodo_fill.conditioning` gives Kimodo the text with
+`cfg_weight=[TEXT_WEIGHT, CONSTRAINT_WEIGHT]` = `[4.0, 2.0]` and the vector in
+place of its encoder. The encoder is Llama 3 8B Instruct with LLM2Vec's two LoRA
+adapters; it fits neither the GPU nor the free RAM, so the worker builds it
+empty, reads each layer's weights by safetensors header offsets with plain file
+reads (no mapping; on Windows a mapping is charged to commit in full), adds both
+adapters, runs the layer and drops it. Measured: 18 to 25 seconds, 1.7 GiB of
+video memory and about 1.5 GiB of RAM per new description. `fill.json` stores
+`params.text` and, in `generator`, `text_encoder` (`text_identity()`) for a
+described range only. The Console says `Frames A–B generated from the
+description "..."` instead of the plain line. The text worker's failures are
+`failed` events (`A description requires a CUDA GPU.`, `Not enough free video
+memory to read the description...`, `The description files are not the expected
+version...`).
+
+Setup from the app. `kimodo_runtime.setup_command()` is the job's command
+(`tools/setup_kimodo.py --from-app`, in the ExMR Python; the app holds the lock,
+so the script takes none and emits progress, `failed` or `complete` events with
+the stage `kimodo_setup`, five steps); `gui.STAGES['kimodo_setup']` and
+`MODEL_JOB_STAGES` show it in Model Manager, whose Kimodo panel (`kimodo_panel`,
+`install_kimodo`, **Install Runtime** / **Reinstall Runtime**) is on the GVHMR
+and ExMR tabs. `PROFILE_VERSION` is 2 (the runtime receipt `runtime.json`
+holds it; version 1 runtimes count as not installed and are rebuilt, the old
+folder moved to `.setup/kimodo-backup-*`). The Hidden ranges panel's **Set up…**
+(`setup_requested`) opens Model Manager; `kimodo_runtime.text_issue()` stops only
+an Automatic row that has a description. `Setup_Kimodo.cmd` still works with
+the app closed and takes the app lock.
+
+Model groups (`models.GROUPS`, `LEADERS`; a group shows as its leader's row and
+**Auto Download** of a leader fetches the others first): `kimodo` (eight files of
+`nvidia/Kimodo-SOMA-RP-v1.2`, 1.13 GB, stage `kimodo_fill`), `kimodo_text` (eight
+files of the two LLM2Vec adapter repositories at pinned revisions, 345 MB, in
+`models/kimodo_text/mntp` and `supervised`) and `kimodo_llama` (the four
+`model-0000N-of-00004.safetensors` of `meta-llama/Meta-Llama-3-8B-Instruct`,
+16.06 GB, in `models/kimodo_text/llama`). The stage `kimodo_text` needs the second
+and third groups. The Llama files are gated by Meta: there is no download URL;
+`MANUAL_INSTRUCTIONS['kimodo_llama']` explains it, and the one **Import...** pick
+of any of the four runs `models.import_llama`, which checks sizes and SHA-256 and
+the free disk space, copies to staging and publishes all four or none. The app
+never reads, stores or sends a Hugging Face token or password; do not add one.
+No file that is hashed into a reconstruction cache identity (`worker.py` and the
+like) was changed for descriptions. `kimodo_fill.py` was, and its hash is in the
+range cache key, so ranges generated before descriptions are generated again once.
+Do not delete the Llama files, the text cache or `runtime_kimodo/` without the
+user's authorization.
 
 Continue as and Separate again (`mocap/person_merge.py`, Qt-free; handlers
 `continue_person_as` and `separate_person` and the right-click menu in

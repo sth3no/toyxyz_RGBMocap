@@ -162,7 +162,24 @@ application's use of the vendored Kimodo MotionCorrection backend does not by
 itself imply use of the Kimodo motion generator. The optional Automatic fill of
 hidden ranges does use it (Kimodo with the Kimodo-SOMA-RP-v1.2 model, see
 [the Kimodo guide](models/KIMODO.md)); cite NVIDIA's Kimodo release if you use
-that feature.
+that feature. Its optional text Description uses LLM2Vec, below.
+
+## LLM2Vec (Description for Automatic fill)
+
+[Paper](https://arxiv.org/abs/2404.05961) · [Adapters](https://huggingface.co/McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp)
+
+```bibtex
+@article{behnamghader2024llm2vec,
+  title={LLM2Vec: Large Language Models Are Secretly Powerful Text Encoders},
+  author={BehnamGhader, Parishad and Adlakha, Vaibhav and Mosbach, Marius and Bahdanau, Dzmitry and Chapados, Nicolas and Reddy, Siva},
+  journal={arXiv preprint arXiv:2404.05961},
+  year={2024}
+}
+```
+
+Kimodo reads a Description with LLM2Vec built on Meta Llama 3 8B Instruct
+(Meta Llama 3 Community License, gated, imported by the user). Cite LLM2Vec
+and Kimodo if you use a described fill.
 
 
 ## GeoCalib (PEAR Camera Align and MAMMA background gravity)

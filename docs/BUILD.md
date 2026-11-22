@@ -190,13 +190,20 @@ high-FPS clip, and Default discovery after switching back.
 
 ## Optional Kimodo runtime
 
-`Setup_Kimodo.cmd` installs a separate `runtime_kimodo/` overlay on the pinned
-ExMR environment for Automatic fill of hidden ranges; see the
+Model Manager's **Install Runtime** (the `kimodo_setup` job, `tools/setup_kimodo.py
+--from-app`) or `Setup_Kimodo.cmd` with the app closed installs a separate
+`runtime_kimodo/` overlay on the pinned ExMR environment for the Experimental
+Automatic fill of hidden ranges; see the
 [Kimodo guide](models/KIMODO.md). Keep its dependencies and the pinned Kimodo
 revision in `tools/setup_kimodo.py` and `mocap/kimodo_runtime.py`, and the worker
 route through `kimodo_worker_boot.py`. The overlay holds Kimodo's code, fetched
-at the pinned revision, and six packages with pinned hashes; the model files are
-verified separately in Model Manager. Keep the overlay, the model files and
+at the pinned revision, twelve packages with pinned hashes (among them
+`transformers`, `peft` and `huggingface_hub` 1.33.0 for descriptions, which shadow
+the runtime's copies inside the Kimodo worker only) and
+`antlr4-python3-runtime` built from source; `PROFILE_VERSION` in
+`mocap/kimodo_runtime.py` is raised when the package set changes. The model,
+adapter and Llama files are verified separately in Model Manager; the Llama 3
+weights are gated by Meta and imported by the user, never bundled or downloaded. Keep the overlay, the model files and
 experiment outputs out of the source package, and keep Kimodo's licence and
 attributions (`KIMODO_LICENSE`, `KIMODO_ATTRIBUTIONS.MD`) with the overlay.
 

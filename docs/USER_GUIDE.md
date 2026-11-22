@@ -920,7 +920,7 @@ an estimate and can leave residual sliding or penetration.
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. Right-click also offers **Continue as** and **Separate again** when the tracker found one human as two people; see [One person found as two](#one-person-found-as-two). |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
-| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic** (generated motion, optional). **Fill hidden ranges** writes one joined take. |
+| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic (Experimental)** (generated motion, optional, can take a description). **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -972,9 +972,9 @@ to -21, 21 to 79.` (or `<name> has no captured take long enough to cover this
 range.`, or `Choose a person to copy from.`) and **Fill hidden ranges** is
 disabled. Joined takes are never used as the source.
 
-**Automatic** generates the motion of the range from the captured poses just
-before and just after it, with NVIDIA Kimodo. **The result is plausible motion,
-not what the person did.** On a group dance it was further from the real motion
+**Automatic (Experimental)** generates the motion of the range from the captured poses just
+before and just after it, with NVIDIA Kimodo. **Experimental support. Generated
+motion is plausible, not what the person did.** On a group dance it was further from the real motion
 than a plain blend of the two end poses, so it is not a way to recover a
 dance. It is meant for ranges in which a person keeps moving or travels, for
 example while walking behind an object. On the one walking clip measured (a
@@ -985,31 +985,53 @@ line at constant speed from where the person was last seen to where they are
 seen again, so a person who stopped, turned a corner or went around something
 behind the cover is still moved straight; without this the generated person
 tended to stand and then hurry (see [How it works](models/KIMODO.md#how-it-works)).
-It has no text prompt in this version
-and generates no fingers: they blend between the two sides. A range may have up
+It generates no fingers: they blend between the two sides. A range may have up
 to 290 frames. **Variation** is a number from 0 to 999: another number gives
 another motion. Generated ranges are kept in the folder `auto_fill` inside the
 person's preview folder, so the same number gives the same motion again while
 the takes joined before the range stay the same. Filling or unfilling an earlier
 range of the same person changes the chain of joined takes; the later
-**Automatic** ranges are then generated again and may differ. Automatic needs a
-separate setup: close the app, run `Setup_Kimodo.cmd`,
-then get the eight Kimodo files in **Model Manager** (1.13 GB; their rows are
-marked **(Optional)** and **Download All** skips them). Auto Download on the
-Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU
+**Automatic** ranges are then generated again and may differ.
+
+**Description.** Under **Variation**, the optional **Description** field says what the person does
+in the range: one short action in English, in the third person, such as `A person raises
+both arms above the head.` (200 characters at most, one line). Single actions
+showed in the measurements, for example a wrist 23 cm above the head in a
+60-frame test range where the same range without a description kept it 59 cm
+below; "first this, then that" and actions that fight the straight path mostly
+did not show in a 3-second range, and nobody has looked at a described fill by
+eye yet. A description does not make the motion closer to what the person did.
+Reading a new description takes 18 to 25 seconds (a peak of 1.7 GiB of video
+memory and about 1.5 GiB of RAM on an RTX 5060 Ti) and is then kept for every
+project. Empty means no description, and the range is generated as without the
+field.
+
+**Set up inside the app.** Nothing needs the app closed. Choose **Automatic
+(Experimental)**: if something is missing, the row says what and **Set up…**
+opens **Model Manager**. On the **GVHMR** or **ExMR** tab, click **Install
+Runtime** (about 140 MB, 63 seconds in the measured run), then get the rows
+(**Download All** skips them): **Kimodo Motion Generation** (1.13 GB, eight
+files, **Auto Download**) and, only for descriptions, **Kimodo Text Adapters**
+(345 MB, eight files, **Auto Download**) and **Llama 3 8B Instruct Weights for
+Descriptions** (16.06 GB, four files). Meta gates the Llama 3 weights: sign in
+at Hugging Face, accept Meta's Llama 3 Community License, download the four
+`model-0000N-of-00004.safetensors` files into one folder and click **Import...**
+on the row, choosing any one of them; the app imports all four. The app never asks for or stores a
+Hugging Face token or password. `Setup_Kimodo.cmd` with the app closed remains
+an alternative way to install the runtime. It needs an NVIDIA GPU
 with about 2 GB of free video memory (measured on an RTX 5060 Ti: a peak of
 1.17 GiB for a 290-frame range, plus the 600 to 700 MiB that Resource Safety
 keeps free). On that GPU a range of 46 frames took 13 to 18 seconds and a range
 of 91 frames 21 to 24 seconds including
 starting the generator, and a 290-frame range about 40 seconds while other
-programs used the GPU. Until setup is complete, **Automatic** is greyed out and its tooltip
-says what is missing. The generated motion does not meet the captured poses
+programs used the GPU. The generated motion does not meet the captured poses
 exactly: in the product runs made it missed the pose at the frame next to the
 range by 1 to 8 cm (2 to 4 cm on average over the five known frames on each
 side), and the join blends the difference out at both ends. The Console reports
 the two figures next to each range, with a line such as `Frames 101–120
 generated: the captured poses next to the range were missed by 7.8 cm before it
-and 7.1 cm after it.` See the [Kimodo guide](models/KIMODO.md).
+and 7.1 cm after it.` (with a description it names it: `generated from the
+description "..."`). See the [Kimodo guide](models/KIMODO.md).
 
 If the generated motion misses a captured pose next to the range by more than
 25 cm, the takes on the two sides do not fit together, and the fill is refused

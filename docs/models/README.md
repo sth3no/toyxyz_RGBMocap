@@ -13,7 +13,7 @@ saved selection. Only implemented tools appear in the list.
 | PromptHMR | One video; fixed or optional moving camera; jointly reconstructed people; SMPL-X | Not generated | [PromptHMR](PROMPTHMR.md) |
 | GEM-X | One fixed-camera video; one primary person; SOMA Native77 | Included | [GEM-X](GEMX.md) |
 | PEAR | Experimental real-time tracking from webcam or video input; one person, one or multiple fixed views; may be unstable | Included | [PEAR](PEAR.md) |
-| Kimodo (optional add-on) | Not a reconstruction model: **Automatic** fill of hidden ranges for GVHMR and ExMR; generated motion, not what the person did | Blend between the two sides | [Kimodo](KIMODO.md) |
+| Kimodo (optional add-on) | Not a reconstruction model: **Automatic (Experimental)** fill of hidden ranges for GVHMR and ExMR, optionally with a short text description; generated motion, not what the person did | Blend between the two sides | [Kimodo](KIMODO.md) |
 
 One-video input does not mean one-person output. ExMR, FlowHMR and GVHMR can
 process checked people independently after **Find person**. Without discovery,
@@ -60,8 +60,11 @@ MAMMA uses synchronized views in a separate multi-view workflow.
    base and needs no local native build. The optional SAM 3.1 **Find person**
    tracker for ExMR, FlowHMR and GVHMR uses [Setup_SAM31.cmd](SAM31.md#setup)
    and a separate Model Manager download. The optional **Automatic** fill of
-   hidden ranges for ExMR and GVHMR uses [Setup_Kimodo.cmd](KIMODO.md#setup)
-   and eight Model Manager files that **Download All** skips.
+   hidden ranges for ExMR and GVHMR (Experimental) is set up inside the app
+   ([Install Runtime](KIMODO.md#setup) in Model Manager; `Setup_Kimodo.cmd` is the
+   alternative with the app closed) with Model Manager rows that **Download All**
+   skips: the motion model, and for descriptions the text adapters and Meta's
+   gated Llama 3 weights.
 3. Run `RGBMoCap.cmd`, select the model and use **Model Manager**. Follow each
    row's exact download/import instructions. Some files require registration
    and license acceptance; Google Drive downloads may need manual import.
