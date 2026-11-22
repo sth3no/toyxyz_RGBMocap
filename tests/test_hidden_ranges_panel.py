@@ -37,6 +37,27 @@ class NarrowPanelTest(unittest.TestCase):
             self.assertGreaterEqual(mirror.width(),mirror.sizeHint().width())
             self.assertGreaterEqual(offset.width(),offset.sizeHint().width())
         finally:panel.close()
+    def test_rows_scroll_instead_of_overlapping_in_a_short_column(self):
+        app=application()
+        from PySide6.QtWidgets import QLabel,QScrollArea
+        from mocap.hidden_ranges import gaps
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        people=[dict(id=1,name='Person 1',takes=[T(0,100),T(120,200),T(225,313)]),dict(id=2,name='Person 2',takes=[T(0,100),T(120,200),T(225,313)])]
+        copy=dict(method='copy',person=2,mirror=False,offset=0)                    # both rows show the long refusal
+        panel=HiddenRangesPanel()
+        panel.show_gaps(gaps(people[0]['takes']),{'100_120':copy,'200_225':copy},30,None,people,1)
+        panel.setFixedSize(150,230);panel.show();app.processEvents();app.processEvents()   # what the default window leaves for it
+        shot=os.environ.get('RGB_MOCAP_TEST_SHOT_SHORT')
+        if shot:panel.grab().save(shot)
+        try:
+            self.assertGreaterEqual(panel.fill.geometry().bottom(),0);self.assertLessEqual(panel.fill.geometry().bottom(),panel.height())
+            area=panel.findChild(QScrollArea);self.assertIsNotNone(area)
+            shown=[w for w in panel._widgets if w.isVisible()]
+            for w in shown:self.assertGreaterEqual(w.height(),w.minimumSizeHint().height(),w)
+            for a,b in zip(shown,shown[1:]):self.assertLessEqual(a.geometry().bottom(),b.geometry().top(),(a,b))
+            mirror=panel.findChild(QCheckBox);person=panel._widgets[2].findChild(QComboBox)
+            self.assertLess(person.geometry().bottom(),mirror.geometry().top()+1)
+        finally:panel.close()
 
 
 @unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
@@ -79,6 +100,27 @@ class ChoiceGlueTest(unittest.TestCase):
     def test_a_running_job_keeps_the_loaded_take(self):
         self.choose(self.host(self.J,busy=True),'none')
         self.assertEqual(self.calls,[('populate',),('scene',True)])
+    def ready(self,host,generation=7):
+        from collections import OrderedDict
+        from mocap.people_ui import PeopleWorkspace
+        host.scene_loader=SimpleNamespace(generation=7);host.scene_cache=OrderedDict();host._scene_key=('root','initial')
+        host.motion_view=SimpleNamespace(set_people_scene=lambda scene:None)
+        for name in('sync_shared_floor_controls','sync_scene_visibility'):setattr(host,name,lambda:None)
+        host.restore_workspace_camera=lambda consume=False:None
+        host.apply_preview=lambda:self.calls.append(('preview',))
+        scene=SimpleNamespace(close=lambda:None)
+        PeopleWorkspace.people_scene_ready(host,generation,scene)
+    def test_a_choice_refreshes_the_loaded_take_once_the_scene_is_ready(self):
+        # The shared floor is resolved again while the scene loads; only then is a corrected take current again.
+        host=self.host(self.J,preview_data=object(),_hidden_refresh=False)
+        self.choose(host,'smooth');self.calls.clear()
+        self.ready(host,generation=6);self.assertEqual(self.calls,[])               # a superseded load keeps the request
+        self.ready(host);self.assertEqual(self.calls,[('preview',),('populate',)])
+        self.calls.clear();self.ready(host);self.assertEqual(self.calls,[])           # an ordinary scene load does not
+    def test_no_preview_is_applied_without_a_loaded_take(self):
+        host=self.host(self.J,preview_data=None,_hidden_refresh=False)
+        self.choose(host,'smooth');self.calls.clear()
+        self.ready(host);self.assertEqual(self.calls,[('populate',)])
     def listed(self,host):
         from mocap.people_ui import PeopleWorkspace
         from mocap.take_selection import TakeChoice

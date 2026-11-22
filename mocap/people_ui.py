@@ -127,6 +127,7 @@ class PeopleWorkspace:
         self._people_return_id = None
         self._people_return_project=None
         self._join_result=None
+        self._hidden_refresh=False
         from .scene_data import SceneDataLoader
         self.scene_data=None;self._scene_key=None
         self.scene_cache=OrderedDict()
@@ -176,6 +177,12 @@ class PeopleWorkspace:
         self.sync_scene_visibility()
 
         self.restore_workspace_camera(consume=True)
+        if self._hidden_refresh:
+            # A hidden range choice changes the takes the shared floor is resolved from. The floor is resolved again
+            # while this scene loads, so a corrected take and the take statuses are current only now.
+            self._hidden_refresh=False
+            if self.preview_data is not None:self.apply_preview()
+            self.populate_person_takes();self.update_readiness()
 
     def sync_shared_floor_controls(self):
         if self.people_root is None:
@@ -568,6 +575,7 @@ class PeopleWorkspace:
             target=take_to_show(self.people_root,person,self.active_result,self.project,frame)
         if target is not None:self.activate_person(self.active_person_id,safe_child(self.people_root,target))
         else:self.populate_person_takes()
+        self._hidden_refresh=True
         self.request_people_scene(force=True);self.update_readiness()
 
     def fill_hidden_ranges(self):
@@ -576,7 +584,7 @@ class PeopleWorkspace:
         self._people_batch=True;self._people_inference_jobs=[];self._people_post_jobs=[]
         # Stay on the current take unless the worker records a joined take.
         self._people_return_id=person['id'];self._people_return_project=self.project
-        self._join_result=self.active_result
+        self._join_result=self.active_result;self._hidden_refresh=True
         self.start_jobs([('take_join',['--project',str(self.people_root),'--person-id',str(person['id']),'--result',self.active_result])])
 
     def log_filled_exports(self,files):

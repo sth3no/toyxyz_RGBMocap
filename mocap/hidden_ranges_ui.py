@@ -1,10 +1,32 @@
 """Hidden ranges controls under the take selector; the decisions live in hidden_ranges_state."""
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
+    QScrollArea, QFrame, QSizePolicy)
 from .hidden_ranges import OFFSET_LIMIT
 from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
 
 MANUAL_NOTE = 'Manual contact-lock edits on the source takes are not carried into the joined take.'
+
+
+class RangeRows(QScrollArea):
+    """The rows take the height they need and scroll when the People column is shorter; a plain layout squeezes them into each other."""
+    def __init__(self):
+        super().__init__()
+        self.setWidgetResizable(True);self.setFrameShape(QFrame.NoFrame);self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.setStyleSheet('QScrollArea,QScrollArea>QWidget>QWidget{background:transparent}')
+        box = QWidget();self.rows = QVBoxLayout(box);self.rows.setContentsMargins(0, 0, 0, 0);self.rows.setSpacing(3);self.setWidget(box)
+
+    def content_height(self):
+        box, width = self.widget(), max(1, self.viewport().width())
+        return box.heightForWidth(width) if box.hasHeightForWidth() else box.sizeHint().height()
+
+    def sizeHint(self):return QSize(super().sizeHint().width(), self.content_height())
+
+    def minimumSizeHint(self):return QSize(0, min(self.content_height(), 72))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event);self.updateGeometry()  # wrapped labels change height with the width
 
 
 class HiddenRangesPanel(QWidget):
@@ -16,7 +38,7 @@ class HiddenRangesPanel(QWidget):
         super().__init__()
         layout = QVBoxLayout(self);layout.setContentsMargins(0, 4, 0, 0);layout.setSpacing(3)
         layout.addWidget(QLabel('Hidden ranges'))
-        self.rows = QVBoxLayout();self.rows.setSpacing(3);layout.addLayout(self.rows)
+        self.area = RangeRows();self.rows = self.area.rows;layout.addWidget(self.area)
         self.reason = QLabel();self.reason.setObjectName('muted');self.reason.setWordWrap(True)
         self.fill = QPushButton('Fill hidden ranges')
         self.fill.setToolTip('Join the takes around the selected hidden ranges into one new take. The source takes are kept.')
@@ -55,6 +77,7 @@ class HiddenRangesPanel(QWidget):
             for widget in widgets:self.rows.addWidget(widget);self._widgets.append(widget)
         self.fill.setEnabled(can_fill(rows, disabled_reason))
         self.reason.setText(disabled_reason or '');self.reason.setVisible(bool(disabled_reason))
+        self.area.updateGeometry()
         self.setVisible(bool(rows))
 
     def _copy_controls(self, row, enabled):
@@ -87,7 +110,7 @@ class HiddenRangesPanel(QWidget):
         gaps, choices, reason, people, ident = self._shown
         issues, ok = pending_state(gaps, choices, self._pending, reason, people, ident)
         for key, label in self._issues.items():label.setText(issues.get(key) or '');label.setVisible(bool(issues.get(key)))
-        self.fill.setEnabled(ok)
+        self.fill.setEnabled(ok);self.area.updateGeometry()
 
     def _fill_clicked(self):
         # An offset still being edited is saved first, so the worker never reads a stale one.
