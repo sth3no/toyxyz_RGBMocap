@@ -91,6 +91,11 @@ class BasicsTest(ChapterCase):
         self.assertIn('appears in the 3D view once reconstructed', self.text('people'))
         self.assertIn('Reconstruct 3D creates what is missing', self.text('review'))
 
+    def test_models_step_says_what_to_do_when_a_download_fails(self):
+        text = self.text('models')
+        self.assertIn('Manual Download', text);self.assertIn('Import', text)
+        self.assertIn('is not needed while that option is off', text);self.assertIn('HTD Refine', text)
+
     def test_models_step_is_skipped_when_nothing_is_missing(self):
         step = self.step('models')
         self.assertTrue(step.skip(self.w));self.assertTrue(step.done(self.w, set()))

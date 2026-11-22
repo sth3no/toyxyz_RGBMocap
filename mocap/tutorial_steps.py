@@ -90,8 +90,9 @@ BASICS = Chapter('basics', 'From video to export', (
          'generally fast. ? Model Guide compares motion quality, finger support, speed and memory use.',
          lambda w: [w.model_choice, w.model_help]),
     Step('models', 'Prepare the model files',
-         'The selected model needs its files before it can run. Open Model Manager, download or import the missing files and '
-         'close the dialog. This step ends when the list here shows every required file as ready.',
+         'The selected model needs its files before it can run. Open Model Manager and click Download All. If a download '
+         'fails, use Manual Download and Import on that row. A file of an optional refinement, such as HTD Refine, is not '
+         'needed while that option is off. This step ends when every required file is ready.',
          lambda w: [w.models_group], done=models_ready, skip=models_ready, waiting='Waiting for the model files…'),
     Step('video', 'Open a video',
          'Choose File → Open Video…, or drop a video file into the window. The original video is never modified.',
