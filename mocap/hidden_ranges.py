@@ -1,6 +1,12 @@
+import html
 SMOOTH_MAX_FRAMES=30
 METHODS=('none','smooth','copy')
 OFFSET_LIMIT=600
+
+def typed(text):
+    """`text` for a message, so that the Console and the status line show it as typed. Both read a line with a tag or
+    `&lt;` in it as rich text and any other line as it is, so only such text is escaped, inside a tag that settles it."""
+    return '<span>'+html.escape(text,quote=False)+'</span>' if '<' in text or '&lt;' in text else text
 
 def gaps(takes):
     out=[];prev=None

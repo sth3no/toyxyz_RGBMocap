@@ -1,5 +1,6 @@
 """Plain decisions behind the Hidden ranges panel; no Qt, so they test in the shared runtime."""
 from pathlib import Path
+import json
 import numpy as np
 from .hidden_ranges import METHODS, OFFSET_LIMIT, chains, donor_take, gap_key, gap_label, method_issue
 
@@ -88,6 +89,13 @@ def choose(choices, key, method, person=None, mirror=False, offset=0):
     else:
         choices[key] = {'method': 'copy', **({} if person is None else {'person': int(person)}),
                         'mirror': bool(mirror), 'offset': max(-OFFSET_LIMIT, min(OFFSET_LIMIT, int(offset)))}
+
+
+def scene_frame(root, start, fps, index):
+    """Scene frame of frame `index` of a take that starts `start` seconds into the source video; None when the scene cannot be read.
+    Take frame ranges count from the scene's own start, which is not the video's when the scene was prepared from a trim."""
+    try:return round((start-json.loads((Path(root)/'project.json').read_text(encoding='utf-8'))['start'])*fps)+index
+    except (OSError, ValueError, KeyError, TypeError):return None
 
 
 def take_to_show(root, person, kind, project, frame=None):

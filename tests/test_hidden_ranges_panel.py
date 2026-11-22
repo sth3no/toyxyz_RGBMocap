@@ -68,6 +68,7 @@ class ChoiceGlueTest(unittest.TestCase):
         application()
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root,self.state,self.person=tj.build(self.tmp.name);self.root=self.root.resolve();self.S,self.J=tj.S,tj.J
+        (self.root/'project.json').write_text(json.dumps(dict(start=0.,fps=30)),encoding='utf-8')
         self.calls=[]
     def host(self,loaded,frame=150,**extra):
         from mocap import people_store as ps
@@ -88,6 +89,13 @@ class ChoiceGlueTest(unittest.TestCase):
     def test_switching_the_fill_off_leaves_the_joined_take(self):
         saved=self.choose(self.host(self.J,150),'none')
         self.assertNotIn('gap_fill',saved)
+        self.assertEqual(self.calls,[('activate',1,self.root/self.S(120,200)),('scene',True)])
+    def test_a_scene_prepared_from_a_trimmed_video_keeps_the_take_under_the_playhead(self):
+        (self.root/'project.json').write_text(json.dumps(dict(start=10.,fps=30)),encoding='utf-8')   # the scene starts 10 s into the video
+        self.choose(self.host(self.J,50,source_offset=10.),'none')                                      # and the joined take with the scene
+        self.assertEqual(self.calls,[('activate',1,self.root/self.S(0,100)),('scene',True)])
+        self.calls.clear();self.choose(self.host(self.S(0,100),50,source_offset=10.),'smooth');self.calls.clear()
+        self.choose(self.host(self.J,150,source_offset=10.),'none')
         self.assertEqual(self.calls,[('activate',1,self.root/self.S(120,200)),('scene',True)])
     def test_switching_the_fill_back_on_returns_to_the_joined_take(self):
         self.choose(self.host(self.J,10),'none');self.calls.clear()
@@ -140,5 +148,55 @@ class ChoiceGlueTest(unittest.TestCase):
         self.choose(self.host(self.J),'none')
         items,_=self.listed(self.host(self.S(0,100)))
         self.assertEqual(items,['Frames 1–100 · Ready','Frames 121–200 · Ready'])
+
+
+@unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
+class ClickAfterEditTest(unittest.TestCase):
+    """An edited field is saved when a click elsewhere takes its focus; saving shows the ranges again, and that click still counts."""
+    def setUp(self):
+        self.app=application()
+        from mocap.hidden_ranges import gaps
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        self.panel=panel=HiddenRangesPanel();self.addCleanup(panel.close);self.saved=[]
+        choices={'100_120':dict(method='copy',person=2,mirror=False,offset=0)}
+        show=lambda:panel.show_gaps(gaps(PEOPLE[0]['takes']),choices,30,None,PEOPLE,1)
+        def save(key,method,person,mirror,offset,*more):   # what the People panel does with a choice
+            self.saved.append((key,method,person,mirror,offset));choices[key]=dict(method=method,person=person,mirror=mirror,offset=offset);show()
+        panel.choice_changed.connect(save);show();panel.resize(260,320);panel.show()
+        from PySide6.QtTest import QTest
+        QTest.qWaitForWindowExposed(panel);panel.windowHandle().requestActivate();QTest.qWaitForWindowActive(panel,2000)   # the fields need the keyboard focus
+    def edit_offset(self):
+        offset=self.panel.findChild(QSpinBox);offset.setFocus();self.app.processEvents();self.assertIs(self.app.focusWidget(),offset)
+        offset.setValue(1)
+    def test_a_click_on_mirror_after_editing_the_offset_is_not_swallowed(self):
+        from PySide6.QtCore import QPoint,Qt
+        from PySide6.QtTest import QTest
+        self.edit_offset();mirror=self.panel.findChild(QCheckBox)
+        QTest.mouseClick(mirror,Qt.LeftButton,Qt.NoModifier,QPoint(8,mirror.height()//2));QTest.qWait(120)
+        self.assertEqual(self.saved,[('100_120','copy',2,False,1),('100_120','copy',2,True,1)])
+        self.assertTrue(self.panel.findChild(QCheckBox).isChecked());self.assertEqual(self.panel.findChild(QSpinBox).value(),1)
+    def test_rows_wait_for_the_mouse_and_are_replaced_once_it_is_up(self):
+        from PySide6.QtCore import QPoint,Qt
+        from PySide6.QtTest import QTest
+        self.edit_offset();old=self.panel.findChild(QSpinBox)
+        QTest.mousePress(self.panel,Qt.LeftButton,Qt.NoModifier,QPoint(2,2));self.panel.fill.setFocus();QTest.qWait(120)
+        self.assertEqual(self.saved,[('100_120','copy',2,False,1)]);self.assertIs(self.panel.findChild(QSpinBox),old)   # still the rows under the mouse
+        QTest.mouseRelease(self.panel,Qt.LeftButton,Qt.NoModifier,QPoint(2,2));QTest.qWait(120)
+        self.assertIsNot(self.panel.findChild(QSpinBox),old);self.assertEqual(self.panel.findChild(QSpinBox).value(),1)
+    def test_without_the_mouse_the_rows_are_replaced_at_once(self):
+        self.edit_offset();old=self.panel.findChild(QSpinBox);self.panel.fill.setFocus()   # Tab
+        self.assertEqual(self.saved,[('100_120','copy',2,False,1)]);self.assertIsNot(self.panel.findChild(QSpinBox),old)
+
+
+@unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
+class ConsoleNameTest(unittest.TestCase):
+    def test_a_person_name_is_shown_as_typed(self):
+        application()
+        from PySide6.QtWidgets import QTextEdit
+        from mocap.take_join import COPY_INFO,DONOR_NOT_READY,_typed
+        for name in('Anna','Anna <b>','Tom & Jerry','a > b','a &lt; b','x <i>y</i> & z'):
+            for line in(COPY_INFO.format(101,120,'{}',1.,.05),'Processing failed. '+DONOR_NOT_READY):
+                console=QTextEdit();console.append(line.format(_typed(name)))   # the Console; the status line reads text the same way
+                self.assertEqual(console.toPlainText(),line.format(name))
 
 if __name__=='__main__':unittest.main()

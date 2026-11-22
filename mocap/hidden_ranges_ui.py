@@ -1,6 +1,6 @@
 """Hidden ranges controls under the take selector; the decisions live in hidden_ranges_state."""
-from PySide6.QtCore import Qt, Signal, QSize
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
+from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
     QScrollArea, QFrame, QSizePolicy)
 from .hidden_ranges import OFFSET_LIMIT
 from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
@@ -45,18 +45,34 @@ class HiddenRangesPanel(QWidget):
         self.fill.clicked.connect(self._fill_clicked)
         self.manual = QLabel(MANUAL_NOTE);self.manual.setObjectName('muted');self.manual.setWordWrap(True);self.manual.hide()
         for widget in (self.reason, self.fill, self.manual):layout.addWidget(widget)
-        self._widgets, self._pending, self._issues, self._shown = [], {}, {}, None;self.hide()
+        self._widgets, self._pending, self._issues, self._shown, self._rows = [], {}, {}, None, ([], False)
+        self._later = QTimer(self);self._later.setInterval(30);self._later.timeout.connect(self._rebuild);self.hide()
 
     def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None):
+        self._shown, self._pending = (gaps, choices, disabled_reason, people, ident), {}
+        rows = gap_rows(gaps, choices, fps, people, ident)
+        # An unsupported project, camera or result must not record choices.
+        self._rows = (rows, editable(disabled_reason))
+        self.fill.setEnabled(can_fill(rows, disabled_reason))
+        self.reason.setText(disabled_reason or '');self.reason.setVisible(bool(disabled_reason))
+        if not rows:self.hide()
+        # An edited field is saved when a click elsewhere takes its focus, and saving shows the ranges again.
+        # Replacing the rows under that click, or under an open list, would swallow it, so they wait for the mouse.
+        if self._held():self._later.start()
+        else:self._rebuild()
+
+    @staticmethod
+    def _held():return QApplication.mouseButtons() != Qt.NoButton or QApplication.activePopupWidget() is not None
+
+    def _rebuild(self):
+        if self._held():return
+        self._later.stop()
         for widget in self._widgets:
             # Children too: a focused spin box would otherwise report editingFinished while it is removed.
             for w in (widget, *widget.findChildren(QWidget)):w.blockSignals(True)
             widget.setParent(None);widget.deleteLater()
-        self._widgets, self._pending, self._issues = [], {}, {}
-        self._shown = (gaps, choices, disabled_reason, people, ident)
-        rows = gap_rows(gaps, choices, fps, people, ident)
-        # An unsupported project, camera or result must not record choices.
-        enabled = editable(disabled_reason)
+        self._widgets, self._issues = [], {}
+        rows, enabled = self._rows
         for row in rows:
             label, combo = QLabel(row['label']), QComboBox()
             combo.setAccessibleName('Hidden range '+row['label'])
@@ -72,11 +88,10 @@ class HiddenRangesPanel(QWidget):
             if row['method'] == 'copy':widgets.append(self._copy_controls(row, enabled))
             if row['issue'] or row['method'] == 'copy':  # A copy row's issue follows the unsaved offset.
                 issue = QLabel(row['issue'] or '');issue.setObjectName('muted');issue.setWordWrap(True)
+                issue.setTextFormat(Qt.PlainText)  # it may name a person
                 if not row['issue']:issue.hide()
                 widgets.append(issue);self._issues[row['key']] = issue
             for widget in widgets:self.rows.addWidget(widget);self._widgets.append(widget)
-        self.fill.setEnabled(can_fill(rows, disabled_reason))
-        self.reason.setText(disabled_reason or '');self.reason.setVisible(bool(disabled_reason))
         self.area.updateGeometry()
         self.setVisible(bool(rows))
 

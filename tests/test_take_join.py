@@ -407,6 +407,12 @@ class WriteTest(unittest.TestCase):
         self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
         self.assertIs(self.join()[1][-1]['cached'],False)
         person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_donor_name_that_reads_as_markup_is_reported_as_typed(self):
+        state=ps.load_people(self.root);state['people'][1]['name']='Anna <b>';ps.save_people(self.root,state);self.choose()
+        code,events=self.join();self.assertEqual(code,0,events)
+        self.assertIn(' copied from <span>Anna &lt;b&gt;</span>: ',events[1]['message'])
+        for text in('Anna','Tom & Jerry','a > b'):self.assertEqual(take_join._typed(text),text)
+        self.assertEqual(take_join._typed('a &lt; b'),'<span>a &amp;lt; b</span>')
     def test_copy_from_unreadable_or_short_donor_is_refused(self):
         import torch
         D=self.root/DONOR/'hmr4d_results.pt';self.choose();good=D.read_bytes()

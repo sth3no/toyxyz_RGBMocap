@@ -569,10 +569,10 @@ class PeopleWorkspace:
             self.refresh_hidden_ranges(self.current_person());return
         self.people_state=state
         # A choice can switch a joined take on or off, so the takes in use change; the view follows to one in use.
-        from .hidden_ranges_state import take_to_show
+        from .hidden_ranges_state import scene_frame,take_to_show
         target=None
         if self.project and not (self.busy or self.contact_saving):
-            frame=round(self.source_offset*self.info['fps'])+self.slider.value() if self.info else None
+            frame=scene_frame(self.people_root,self.source_offset,self.info['fps'],self.slider.value()) if self.info else None
             target=take_to_show(self.people_root,person,self.active_result,self.project,frame)
         if target is not None:self.activate_person(self.active_person_id,safe_child(self.people_root,target))
         else:self.populate_person_takes()
