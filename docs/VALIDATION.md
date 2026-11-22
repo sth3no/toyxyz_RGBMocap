@@ -1,5 +1,54 @@
 # Source package validation
 
+## Hidden ranges for results with fingers (2026-11-22)
+
+Hidden ranges now work when the selected GVHMR result has fingers (HandFlow
+on). HTD-refined results stay unsupported: HTD Refine could not be run here,
+because its PVA-Net file is missing and Google Drive refused the app's download
+with its public download limit.
+
+- Automated tests, the whole `tests` folder in one process with the GUI
+  runtime, in the install with its models: 552 tests, 2 skipped, no
+  failures or errors. `tools/check_source.py` reports no errors.
+- Real data: the tennis project with two covered ranges; person 1's three
+  takes (frames 1-100, 121-200, 226-313) were reconstructed with HandFlow
+  through the real window, in the app's Low Memory mode (in Automatic mode
+  Resource Safety stopped HandFlow at 2.09 and 2.47 GiB of free RAM against a
+  reserve of 2.49). The four missing HandFlow files were downloaded by Model
+  Manager.
+- Real window without a screen (`QT_QPA_PLATFORM=offscreen`), RTX 5060 Ti,
+  result `corrected_handflow_initial`:
+  - **Fill hidden ranges** with **Smooth join** over frames 101-120 and
+    **Automatic (Experimental)**, variation 3, over frames 201-225: Fill Hidden
+    Ranges 36.00 s, Motion Correction 4.94 s, Export 8.23 s. On the final code,
+    again with variation 4: 22.36 s, 5.19 s, 9.00 s.
+  - The joined take read back from disk: its finger result has both hand
+    keys over all 313 frames; its body is identical to the joined body result;
+    the finger rows of all captured frames are identical to the three source
+    takes; the receipt passes the app's own check; the corrected result keeps
+    the fingers unchanged; the exported BVH has 30 finger joints and none of
+    them is frozen inside either range.
+  - Inside the two ranges the largest step of a finger joint is 4.8 and 3.0
+    degrees per frame (the captured frames have per-frame maxima with a median
+    of about 3 degrees and single-frame jumps of up to 79 degrees), and no
+    finger joint leaves the range of its captured poses.
+  - **Copy from person** with a person without fingers (offset 30): the panel
+    showed `Person 2 has no finger motion for this result. Reconstruct that
+    person with HandFlow.` and **Fill hidden ranges** was disabled.
+- Copied fingers, computed in memory on those real takes, not through the
+  window: 268 copies (67 offsets, with and without **Mirror**, both hands) of
+  person 1's own third take into frames 101-120. A first version carried a
+  one-frame outlier of the finger track into the following frames (one finger
+  went 78 degrees backwards for about seven frames; up to 72 degrees outside
+  its captured poses). After the fix the copied fingers stay within 18.7
+  degrees of the captured poses at most (median 0.0, nine tenths under 7.7),
+  no more than the copied frames themselves do (22.9).
+- Not run: a copy with fingers from a second person through the window
+  (reconstructing person 2 with HandFlow was stopped by Resource Safety at 1.07
+  GiB of free RAM); **Mirror** with fingers through the window; a FootMR result
+  with fingers on real data (tests only); FBX export of a joined take with
+  fingers; **Hand Lock** correction on one; and nobody looked at a screen.
+
 ## Hidden ranges on the upstream with appearance settings (2026-11-22)
 
 The hidden ranges steps were moved onto upstream `7c5fea2` (starting settings
