@@ -177,5 +177,116 @@ class BasicsTest(ChapterCase):
         self.assertEqual(rect.topLeft(), self.w.menuBar().mapTo(self.w, self.w.menuBar().actionGeometry(self.w.menuBar().actions()[0]).topLeft()))
 
 
+T = lambda a, b: dict(project=f'p/takes/{a:09d}_{b:09d}_scene_v1', first=a, end=b)
+PEOPLE = [dict(id=1, name='Person 1', takes=[T(0, 100), T(120, 200)]), dict(id=2, name='Person 2', takes=[T(0, 300)])]
+PREPARATION = ('need_video', 'find', 'gap', 'reason')
+
+
+class HiddenRangesChapterTest(ChapterCase):
+    chapter = steps.HIDDEN
+
+    def gaps(self, choices=None, reason=None):
+        from mocap.hidden_ranges import gaps
+        self.w.hidden_ranges.show_gaps(gaps(PEOPLE[0]['takes']), choices or {}, 30, reason, PEOPLE, 1)
+        APP.processEvents()
+
+    def test_chapter_is_registered_second(self):
+        self.assertEqual(list(steps.CHAPTERS), ['basics', 'hidden_ranges'])
+        self.assertEqual((steps.HIDDEN.key, steps.HIDDEN.title), ('hidden_ranges', 'Hidden ranges'))
+
+    def test_route_order(self):
+        self.assertEqual([s.key for s in steps.HIDDEN.steps], [*PREPARATION, 'takes', 'smooth', 'copy', 'automatic', 'fill', 'after', 'same_person'])
+
+    def test_every_text_is_plain_and_short(self):
+        self.gaps(reason='Reconstruct and prepare both neighbouring takes first.')
+        for step in steps.HIDDEN.steps:
+            with self.subTest(step=step.key):
+                text = self.text(step.key)
+                self.assertTrue(step.title and text);self.assertLessEqual(len(text), 330);self.assertNotIn('<', text)
+
+    def test_every_target_is_a_control_or_a_rectangle(self):
+        for step in steps.HIDDEN.steps:
+            with self.subTest(step=step.key):
+                targets = step.targets(self.w)
+                self.assertTrue(targets);self.assertTrue(all(isinstance(t, (QWidget, QRect)) for t in targets))
+
+    def test_honest_wording_of_automatic(self):
+        for phrase in ('Experimental', 'plausible, not what the person did', 'Set up…'):self.assertIn(phrase, self.text('automatic'))
+        self.assertEqual(self.step('automatic').title, 'Automatic (Experimental)')
+
+    def test_after_step_says_other_people_may_need_apply_correction(self):
+        self.assertIn("other people's takes may ask for Apply Correction again", self.text('after'))
+
+    def test_smooth_step_names_its_limit(self):
+        self.assertIn('up to 30 frames', self.text('smooth'))
+
+    def test_a_hidden_panel_is_neither_shown_nor_usable(self):
+        self.assertFalse(steps.panel_shown(self.w));self.assertFalse(steps.hidden_ranges_usable(self.w));self.assertEqual(steps.panel_reason(self.w), '')
+        self.assertEqual([self.step(key).skip(self.w) for key in PREPARATION], [False, False, False, False])
+
+    def test_a_shown_panel_with_a_reason_is_not_usable(self):
+        self.gaps(reason='Hidden ranges need a fixed camera in this version.')
+        self.assertTrue(steps.panel_shown(self.w));self.assertFalse(steps.hidden_ranges_usable(self.w))
+        self.assertEqual(steps.panel_reason(self.w), 'Hidden ranges need a fixed camera in this version.')
+        self.assertEqual([self.step(key).skip(self.w) for key in PREPARATION], [True, True, True, False])
+
+    def test_preparation_is_skipped_when_the_panel_is_usable(self):
+        self.gaps()
+        self.assertTrue(steps.hidden_ranges_usable(self.w))
+        self.assertEqual([self.step(key).skip(self.w) for key in PREPARATION], [True, True, True, True])
+
+    def test_reason_step_quotes_the_panel_and_ends_when_the_reason_is_gone(self):
+        self.gaps(reason='Reconstruct and prepare both neighbouring takes first.')
+        self.assertIn('“Reconstruct and prepare both neighbouring takes first.”', self.text('reason'))
+        self.assertFalse(self.step('reason').done(self.w, set()))
+        self.gaps()
+        self.assertTrue(self.step('reason').done(self.w, set()))
+
+    def test_reason_step_asks_for_the_person_again_when_the_panel_went_away(self):
+        self.assertEqual(self.text('reason'), 'Hidden ranges is shown for the selected person. Select the person who gets covered again.')
+
+    def test_need_video_is_skipped_once_a_video_is_open(self):
+        self.w.video_readable, self.w.info = True, {'fps': 30}
+        self.assertTrue(self.step('need_video').skip(self.w));self.assertFalse(self.step('find').skip(self.w))
+
+    def test_find_step_is_skipped_when_the_button_is_hidden(self):
+        self.w.find_person_button.hide()
+        self.assertTrue(self.step('find').skip(self.w))
+
+    def test_gap_step_ends_when_the_panel_appears(self):
+        self.assertFalse(self.step('gap').done(self.w, set()))
+        self.gaps(reason='x')
+        self.assertTrue(self.step('gap').done(self.w, set()))
+
+    def test_smooth_step_ends_when_a_method_is_chosen(self):
+        self.gaps()
+        self.assertFalse(steps.method_chosen(self.w));self.assertFalse(self.step('smooth').done(self.w, set()))
+        self.gaps({'100_120': dict(method='smooth')})
+        self.assertTrue(steps.method_chosen(self.w));self.assertTrue(self.step('smooth').done(self.w, set()))
+
+    def test_fill_step_ends_when_the_joined_take_is_current(self):
+        self.w.person_takes.addItem('1–100 · Ready');self.w.person_takes.addItem('1–200 · Ready · filled')
+        self.assertFalse(self.step('fill').done(self.w, set()))
+        self.w.person_takes.setCurrentIndex(1)
+        self.assertTrue(self.step('fill').done(self.w, set()))
+
+    def test_need_video_mentions_the_sample_clip_only_when_it_exists(self):
+        self.assertNotIn('sample clip', self.text('need_video'))
+        with tempfile.TemporaryDirectory() as folder:
+            clip = Path(folder) / 'sample.mp4';clip.write_bytes(b'x')
+            with patch.object(steps, 'SAMPLE', clip):
+                self.assertTrue(self.text('need_video').endswith(' Or use the sample clip.'))
+        self.assertIs(self.step('need_video').action, steps.sample_action)
+
+    def test_live_preview_blocks_the_chapter(self):
+        self.assertIsNone(steps.HIDDEN.blocked(self.w))
+        self.w._pear_active = True
+        self.assertIn('Stop PEAR', steps.HIDDEN.blocked(self.w))
+
+    def test_find_click_is_the_only_event(self):
+        events = steps.HIDDEN.events(self.w)
+        self.assertEqual(set(events), {'find'});self.assertIs(events['find'][0], self.w.find_person_button.clicked)
+
+
 if __name__ == '__main__':
     unittest.main()
