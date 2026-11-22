@@ -21,7 +21,7 @@ class PersonMergeUiTest(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=tm.build(self.tmp.name)
         self.loaded=[];self.requested=[]
     def host(self,project=None,model='gvhmr',busy=False):
-        status=SimpleNamespace(text='');status.setText=lambda t:setattr(status,'text',t)
+        status=SimpleNamespace(value='');status.setText=lambda t:setattr(status,'value',t);status.text=lambda:status.value
         host=SimpleNamespace(busy=busy,contact_saving=False,people_root=self.root,people_state=self.ps.load_people(self.root),
             model_choice=SimpleNamespace(currentData=lambda:model),info=None,project=project,active_result='gvhmr',status=status,
             load_project=self.loaded.append,_hidden_refresh=False,
@@ -60,7 +60,7 @@ class PersonMergeUiTest(unittest.TestCase):
         self.W.continue_person_as(h,3,1)
         self.assertEqual(self.loaded,[anna]);self.assertEqual([p['id'] for p in h.people_state['people']],[1,2])
         self.assertTrue(h._hidden_refresh);self.assertEqual(self.requested,[True,'ready'])
-        self.assertEqual(h.status.text,'Cover now continues as Anna. Right-click Anna and choose Separate again to undo.')
+        self.assertEqual(h.status.text(),'Cover now continues as Anna. Right-click Anna and choose Separate again to undo.')
     def test_joining_the_person_whose_take_is_open(self):
         cover=self.path(7,121,136);h=self.host(project=cover)
         self.W.continue_person_as(h,3,1);self.assertEqual(self.loaded,[cover])
@@ -72,24 +72,36 @@ class PersonMergeUiTest(unittest.TestCase):
     def test_refusal_goes_to_the_status_bar(self):
         h=self.host();before=self.tm.snapshot(self.root)
         self.W.continue_person_as(h,2,1)
-        self.assertEqual(h.status.text,'Ben and Anna are both visible in 254 frames, so they cannot be the same person.')
+        self.assertEqual(h.status.text(),'Ben and Anna are both visible in 254 frames, so they cannot be the same person.')
         self.assertEqual(self.loaded,[]);self.assertEqual(self.requested,[]);self.assertEqual(len(h.people_state['people']),3)
         self.tm.assert_same(self,before,self.tm.snapshot(self.root))
     def test_an_error_is_reported_with_its_cause(self):
         h=self.host()
         with mock.patch('mocap.person_merge.continue_as',side_effect=OSError('disk full')):self.W.continue_person_as(h,3,1)
-        self.assertEqual(h.status.text,'Cannot change the people of this scene: disk full');self.assertEqual(self.loaded,[])
+        self.assertEqual(h.status.text(),'Cannot change the people of this scene: disk full');self.assertEqual(self.loaded,[])
+    def test_a_take_that_cannot_be_opened_is_reported(self):
+        h=self.host(project=self.path(1,0,120))
+        def refuse(path):h.status.setText('Cannot open project: broken');return False
+        h.load_project=refuse
+        self.W.continue_person_as(h,3,1)
+        self.assertEqual([p['id'] for p in h.people_state['people']],[1,2]);self.assertEqual(self.requested,[]);self.assertFalse(h._hidden_refresh)
+        self.assertEqual(h.status.text(),'Cover now continues as Anna. Right-click Anna and choose Separate again to undo. Cannot open project: broken')
+    def test_person_row_tooltip_is_shared(self):
+        import inspect
+        from mocap import people_ui
+        self.assertIn('Right-click to rename, or to join this person with another one.',people_ui.person_tooltip('Anna',5))
+        self.assertEqual(inspect.getsource(people_ui).count('Right-click to rename'),1)   # sync_people and set_person_name both use person_tooltip
     def test_separate_reloads_and_reports(self):
         h=self.host(project=self.path(1,0,120));self.W.continue_person_as(h,3,1);self.loaded.clear();self.requested.clear()
         self.W.separate_person(h,1,3)
-        self.assertEqual(len(h.people_state['people']),3);self.assertEqual(h.status.text,'Cover is a separate person again.')
+        self.assertEqual(len(h.people_state['people']),3);self.assertEqual(h.status.text(),'Cover is a separate person again.')
         self.assertEqual(len(self.loaded),1);self.assertTrue(h._hidden_refresh);self.assertEqual(self.requested,[True,'ready'])
     def test_busy_does_nothing(self):
         before=self.tm.snapshot(self.root)
         for kw in({'busy':True},{'contact_saving':True},{'people_state':None}):
             h=self.host();h.__dict__.update(kw)
             self.W.continue_person_as(h,3,1);self.W.separate_person(h,1,3)
-            self.assertEqual(h.status.text,'')
+            self.assertEqual(h.status.text(),'')
         self.assertEqual(self.loaded,[]);self.tm.assert_same(self,before,self.tm.snapshot(self.root))
     def test_sync_people_finishes_an_interrupted_operation(self):
         from mocap import person_merge as m
@@ -99,10 +111,10 @@ class PersonMergeUiTest(unittest.TestCase):
         self.assertEqual(len(self.ps.load_people(self.root)['people']),2);self.assertFalse((self.root/m.PENDING).exists())
         (self.root/m.PENDING).write_text('{',encoding='utf-8')
         self.W.recover_people_merge(h,self.root)
-        self.assertEqual(h.status.text,m.UNREADABLE)
-        h.status.text=''
+        self.assertEqual(h.status.text(),m.UNREADABLE)
+        h.status.value=''
         (self.root/m.PENDING).unlink();self.W.recover_people_merge(h,self.root)   # no pending file: nothing happens
-        self.assertEqual(h.status.text,'')
+        self.assertEqual(h.status.text(),'')
 
 
 if __name__=='__main__':unittest.main()

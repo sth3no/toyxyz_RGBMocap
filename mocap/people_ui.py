@@ -50,6 +50,10 @@ class PersonColorDelegate(QStyledItemDelegate):
         painter.restore()
 
 
+def person_tooltip(name,observations):
+    return tooltip_text(f"{name} | {observations} observed frames\nCheck to reconstruct and show; select to edit. Right-click to rename, or to join this person with another one.")
+
+
 class PeopleList(QListWidget):
     characterMenuRequested=Signal(str,object)
     colorRequested=Signal(int)
@@ -436,7 +440,7 @@ class PeopleWorkspace:
                 item.setFlags(item.flags()|Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked if person.get('checked') else Qt.Unchecked)
                 item.setIcon(self.person_icon(person))
-                item.setToolTip(tooltip_text(f"{person['name']} | {person['observations']} observed frames\nCheck to reconstruct and show; select to edit. Right-click to rename, or to join this person with another one."))
+                item.setToolTip(person_tooltip(person['name'],person['observations']))
                 self.people_list.addItem(item)
                 if person['id']==ident:self.people_list.setCurrentItem(item)
             self.populate_person_takes()
@@ -725,7 +729,8 @@ class PeopleWorkspace:
         takes=active_takes(self.people_root,target,self.active_result)
         shown=Path(self.project).resolve() if self.project else None
         path=shown if shown in owned else safe_child(self.people_root,takes[-1]['project'] if takes else target['preview'])
-        self.load_project(path)
+        if self.load_project(path) is False:   # it reports why in the status bar; the merge itself is done
+            self.status.setText(f"{done} {self.status.text()}".rstrip());return
         self._hidden_refresh=True
         self.request_people_scene(force=True);self.update_readiness()
         self.status.setText(done)
@@ -752,7 +757,7 @@ class PeopleWorkspace:
                 item=self.people_list.item(row)
                 if item.data(Qt.UserRole)==ident:
                     item.setText(name)
-                    item.setToolTip(tooltip_text(f"{name} | {person.get('observations',0)} observed frames\nCheck to extract and show; select to edit. Right-click to rename."))
+                    item.setToolTip(person_tooltip(name,person.get('observations',0)))
         finally:self._people_syncing=False
         active=self.current_person()
         self.slider.person_name=active['name'] if active else None
