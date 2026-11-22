@@ -81,10 +81,11 @@ under `.setup`, which you may delete.
    the takes joined before the range stay the same. Filling or unfilling an
    earlier range of the same person changes the chain of joined takes: the
    later **Automatic** ranges are then generated again and may differ.
-2. Click **Fill hidden ranges**. The first range of a run takes about 10 to 15
-   seconds on an RTX 5060 Ti including starting the worker (12.6 seconds for 70
-   frames, measured once); a range that was generated before comes from the
-   cache without starting the worker.
+2. Click **Fill hidden ranges**. On an RTX 5060 Ti a range of 46 frames took
+   14 to 18 seconds in the product joins, including starting the worker; a
+   range of 290 frames, the longest, took about 40 seconds while other programs
+   were using the GPU. A range that was generated before comes from the cache
+   without starting the worker.
 3. Click **Apply Correction** for the joined take, as for any joined take.
    Other people of the scene ask for **Apply Correction** again, as after the
    other methods.
@@ -103,9 +104,13 @@ existing joined take out of date; fill with another **Variation** to regenerate.
 - Fingers are not generated. They blend between the two sides.
 - There is no text prompt in this version. Kimodo is given the poses on both
   sides and nothing else.
-- It needs an NVIDIA GPU with about **1.2 GB** of free video memory on top of
-  what is in use. If the memory is not there, the fill stops with a message and
-  nothing is written; close other GPU work and try again.
+- It needs an NVIDIA GPU with about **2 GB** of free video memory on top of
+  what is in use. Measured on an RTX 5060 Ti, the generator's peak was 1.17 GiB
+  for a 290-frame range and 1.12 GiB for a 60-frame range; with **Resource
+  Safety** on, another 600 to 700 MiB is kept free for other programs. If the
+  memory is not there, the fill stops with a message and nothing is written;
+  close other GPU work and try again. The worker's Console line gives the peak
+  of each run.
 - Kimodo's own post-processing is not used.
 
 ## How it works

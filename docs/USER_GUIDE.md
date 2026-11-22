@@ -989,9 +989,12 @@ range of the same person changes the chain of joined takes; the later
 separate setup: close the app, run `Setup_Kimodo.cmd`,
 then get the eight Kimodo files in **Model Manager** (1.13 GB; their rows are
 marked **(Optional)** and **Download All** skips them). Auto Download on the
-Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU with about 1.2 GB of free video memory. A
-range takes roughly 10 to 15 seconds on an RTX 5060 Ti, including starting the
-generator. Until setup is complete, **Automatic** is greyed out and its tooltip
+Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU
+with about 2 GB of free video memory (measured on an RTX 5060 Ti: a peak of
+1.17 GiB for a 290-frame range, plus the 600 to 700 MiB that Resource Safety
+keeps free). On that GPU a range of 46 frames took 14 to 18 seconds including
+starting the generator, and a 290-frame range about 40 seconds while other
+programs used the GPU. Until setup is complete, **Automatic** is greyed out and its tooltip
 says what is missing. The generated motion does not meet the captured poses
 exactly: in the product runs made it missed the pose at the frame next to the
 range by 7 to 8 cm (3.4 to 3.8 cm on average over the five known frames on each
