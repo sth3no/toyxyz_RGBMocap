@@ -295,14 +295,20 @@ class AutoAssembleTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'^Generated motion does not match the hidden range$',msg=kw):self.join([],**kw)
     def test_gap_without_generator(self):
         g=auto(self.a,self.b,[]);del g['generate']
-        with self.assertRaises(ValueError):assemble([self.a,self.b],[g])
+        with self.assertRaisesRegex(ValueError,'^Automatic fill needs a motion generator$'):assemble([self.a,self.b],[g])
+        g=auto(self.a,self.b,[]);g['params']={}
+        with self.assertRaisesRegex(ValueError,'^Automatic fill needs a motion generator$'):assemble([self.a,self.b],[g])
+    def test_generator_gets_a_copy_of_the_rest_joints(self):
+        rest=REST.copy();g=auto(self.a,self.b,[]);g['body']=dict(rest=rest,sole=.02);inner=g['generate']
+        def generate(req):req['rest'][:]=0;return inner(req)
+        g['generate']=generate;assemble([self.a,self.b],[g]);np.testing.assert_array_equal(rest,REST)
     def test_other_methods_report_nothing(self):
         a,b=source(0,100),source(120,200,W=WB,pelvis=PB)
         self.assertEqual(assemble([a,b],[gap(a,b)])['reports'],[None]);self.assertEqual(assemble([a,b],[copied(a,b)])['reports'],[None])
 import contextlib,importlib.util,io,json,subprocess,tempfile
 from pathlib import Path
 from unittest import mock
-from mocap import paths,people_store as ps,take_join
+from mocap import auto_fill,kimodo_runtime,paths,people_store as ps,take_join
 FFMPEG=paths.ROOT/'tools/bin/ffmpeg.exe'
 TAKE=lambda a,b:f'p1/takes/{a:09d}_{b:09d}_scene_v1'
 DONOR='p2/takes/000000000_000000220_scene_v1'
@@ -317,33 +323,36 @@ class WriteTest(unittest.TestCase):
         import torch
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);root=self.root=Path(self.tmp.name)/'scene'
         models=Path(self.tmp.name)/'models';(models/'body_models/smplx').mkdir(parents=True)
-        rng=np.random.default_rng(0);template=rng.normal(size=(5,3));self.pelvis=np.full(5,.2)@template
+        rng=np.random.default_rng(0);template=self.template=rng.normal(size=(5,3));self.pelvis=np.full(5,.2)@template
         np.savez(models/'body_models/smplx/SMPLX_NEUTRAL.npz',J_regressor=np.full((2,5),.2),v_template=template,shapedirs=rng.normal(size=(5,3,10))*.01)
         patch=mock.patch.object(paths,'MODELS',models);patch.start();self.addCleanup(patch.stop)
         root.mkdir();subprocess.run([str(FFMPEG),'-v','error','-f','lavfi','-i','testsrc=size=64x48:rate=30','-frames:v','220',
             '-pix_fmt','yuv420p','-c:v','libx264',str(root/'input.mp4')],check=True,creationflags=0x08000000)
         (root/'project.json').write_text(json.dumps(dict(frames=220,fps=30,start=0.,end=220/30,width=64,height=48,pipeline=dict(model=self.MODEL),exmr_options=dict(static_camera=True),stages={})),encoding='utf-8')
         if self.MODEL=='exmr':np.save(root/'exmr_camera.npy',np.tile(np.eye(3,dtype=np.float32),(220,1,1)))
-        K=np.array([[80,0,32],[0,80,24],[0,0,1]],np.float32);takes=[]
-        for (a,b),W,walk in(((0,100),WA,None),((110,200),WB,None),((0,220),WD,WALK)):
-            d=root/(TAKE(a,b) if walk is None else DONOR);d.mkdir(parents=True);s=source(a,b,W=W,pelvis=self.pelvis,walk=walk);n=b-a
-            if walk is not None:self.donor=s
-            if self.MODEL=='exmr':(d/'exmr_camera_sources.json').write_text(json.dumps(dict(root='../../..',root_stat=stamp(root/'exmr_camera.npy'),
-                first=a,reference_rotation=np.eye(3).tolist(),first_rotation=np.eye(3).tolist())),encoding='utf-8')
-            np.savez_compressed(d/'tracking.npz',boxes=s['boxes'].astype(np.float32),observed=s['observed'],K=K)
-            t=lambda p:{k:torch.from_numpy(v.astype(np.float32)) for k,v in p.items()}
-            torch.save(dict(smpl_params_global=t(s['params']['initial']),smpl_params_incam=t(s['incam']),
-                net_outputs=dict(static_conf_logits=torch.from_numpy(s['logits'].astype(np.float32))[None]),source_model=self.MODEL),d/'hmr4d_results.pt')
-            foot={**s['params']['initial'],'body_pose':s['params']['initial']['body_pose']+.01}
-            torch.save(dict(smpl_params_global=t(foot),source='initial'),d/'footmr_initial.pt')
-            (d/'footmr_initial_sources.json').write_text(json.dumps({k:stamp(d/k) for k in('footmr_initial.pt','hmr4d_results.pt','tracking.npz')}),encoding='utf-8')
-            (d/'project.json').write_text(json.dumps(dict(frames=n,fps=30,start=a/30,end=b/30,timeline=dict(start=a/30,step=1/30,frames=n),
-                people_root='../../..',person_id=1 if walk is None else 2,person_preview=False,person_frames=[a,b],pipeline=dict(model=self.MODEL,result='initial'),stages=dict(gvhmr='done'))),encoding='utf-8')
-            takes.append(dict(project=TAKE(a,b) if walk is None else DONOR,first=a,end=b))
+        takes=[self.take(a,b,W,walk) for (a,b),W,walk in(((0,100),WA,None),((110,200),WB,None),((0,220),WD,WALK))]
         self.person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes[:2],gap_fill={'100_110':{'method':'smooth'}})
         other=dict(id=2,name='Anna',color='#3366aa',preview='p2',takes=takes[2:])
         ps.save_people(root,dict(version=ps.VERSION,input=ps.media_receipt(root),people=[self.person,other]))
         self.before={p:stamp(p) for p in root.rglob('*') if p.is_file()}
+    def take(self,a,b,W,walk=None):
+        """Writes one reconstructed take of person 1 (or, with `walk`, the donor take of person 2) and returns its people.json record."""
+        import torch
+        root=self.root;d=root/(TAKE(a,b) if walk is None else DONOR);d.mkdir(parents=True);s=source(a,b,W=W,pelvis=self.pelvis,walk=walk);n=b-a
+        K=np.array([[80,0,32],[0,80,24],[0,0,1]],np.float32)
+        if walk is not None:self.donor=s
+        if self.MODEL=='exmr':(d/'exmr_camera_sources.json').write_text(json.dumps(dict(root='../../..',root_stat=stamp(root/'exmr_camera.npy'),
+            first=a,reference_rotation=np.eye(3).tolist(),first_rotation=np.eye(3).tolist())),encoding='utf-8')
+        np.savez_compressed(d/'tracking.npz',boxes=s['boxes'].astype(np.float32),observed=s['observed'],K=K)
+        t=lambda p:{k:torch.from_numpy(v.astype(np.float32)) for k,v in p.items()}
+        torch.save(dict(smpl_params_global=t(s['params']['initial']),smpl_params_incam=t(s['incam']),
+            net_outputs=dict(static_conf_logits=torch.from_numpy(s['logits'].astype(np.float32))[None]),source_model=self.MODEL),d/'hmr4d_results.pt')
+        foot={**s['params']['initial'],'body_pose':s['params']['initial']['body_pose']+.01}
+        torch.save(dict(smpl_params_global=t(foot),source='initial'),d/'footmr_initial.pt')
+        (d/'footmr_initial_sources.json').write_text(json.dumps({k:stamp(d/k) for k in('footmr_initial.pt','hmr4d_results.pt','tracking.npz')}),encoding='utf-8')
+        (d/'project.json').write_text(json.dumps(dict(frames=n,fps=30,start=a/30,end=b/30,timeline=dict(start=a/30,step=1/30,frames=n),
+            people_root='../../..',person_id=1 if walk is None else 2,person_preview=False,person_frames=[a,b],pipeline=dict(model=self.MODEL,result='initial'),stages=dict(gvhmr='done'))),encoding='utf-8')
+        return dict(project=TAKE(a,b) if walk is None else DONOR,first=a,end=b)
     def snapshot(self):return {p:p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
     def join(self,result='initial'):
         out,self.stderr=io.StringIO(),io.StringIO()
@@ -498,6 +507,63 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before);self.assertFalse(J.exists())
         self.choose(offset=200);before=self.snapshot();code,events=self.join()  # the donor no longer covers the range
         self.assertEqual((code,events[0]['message']),(1,'No hidden range is selected for filling.'));self.assertEqual(self.snapshot(),before)
+    def automatic(self,seed=7,**choices):
+        state=ps.load_people(self.root);state['people'][0]['gap_fill']={'100_110':{'method':'auto','seed':seed},**choices};ps.save_people(self.root,state)
+    def generator(self,calls):
+        gen=straight(calls);return mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:gen(request))
+    def test_automatic_join(self):
+        J=self.root/'p1/takes/000000000_000000200_fill_v1';calls=[];self.automatic()
+        with self.generator(calls):code,events=self.join()
+        self.assertEqual(code,0,events);self.assertEqual(len(calls),1);self.assertIs(events[-1]['cached'],False)
+        q=calls[0];self.assertEqual((q['fps'],q['seed'],q['frames']),(30.,7,10))
+        np.testing.assert_allclose(q['rest'],np.full((2,5),.2)@self.template,atol=1e-12);self.assertAlmostEqual(q['sole'],self.template[:,1].min(),places=12)
+        fill=json.loads((J/'fill.json').read_text(encoding='utf-8'))
+        self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='auto',params=dict(seed=7),
+            generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=auto_fill.VERSION,end_pose_cm=1.25))])
+        info=dict(type='info',stage='take_join',message=f'Frames 101–110 generated: the captured poses on both sides were met within {1.25:.1f} cm.')
+        self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
+        self.assertEqual(list(np.load(J/'fill_mask.npy')[95:115]),[0]*5+[3]*10+[0]*5)
+        person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+        with self.generator(calls):code,events=self.join()
+        self.assertEqual((code,len(calls)),(0,1));self.assertIs(events[-1]['cached'],True);self.assertEqual(events[1],info)   # reported again from fill.json
+        self.automatic(seed=8);person=ps.load_people(self.root)['people'][0];self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
+        with self.generator(calls):code,events=self.join()
+        self.assertEqual((code,len(calls)),(0,2));self.assertIs(events[-1]['cached'],False);self.assertEqual(calls[1]['seed'],8)
+    def test_automatic_range_is_served_from_the_cache(self):
+        import torch
+        state=ps.load_people(self.root);person=state['people'][0]
+        person['takes']=[person['takes'][0],self.take(110,150,WB),self.take(160,200,WC)];ps.save_people(self.root,state)
+        self.automatic(seed=3,**{'150_160':{'method':'smooth'}});runs=[];real=auto_fill.generate
+        def run(command):
+            args=dict(zip(command[1::2],command[2::2]));runs.append(command)
+            with np.load(args['--request'],allow_pickle=False) as z:request={k:z[k] for k in z.files}
+            np.savez(args['--response'],**straight([])(request));return 0,[]
+        patches=[mock.patch.object(kimodo_runtime,'issue',lambda:None),mock.patch.object(kimodo_runtime,'command',lambda args:['kimodo',*map(str,args)]),
+                 mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:real(folder,request,run=run,**kw))]
+        for p in patches:p.start();self.addCleanup(p.stop)
+        rows=lambda J:{k:v[100:110].numpy() for k,v in torch.load(J/'hmr4d_results.pt',weights_only=False)['smpl_params_global'].items()}
+        self.assertEqual(self.join()[0],0);self.assertEqual(len(runs),1);first=rows(self.root/'p1/takes/000000000_000000200_fill_v1')
+        self.assertEqual([p.suffix for p in (self.root/'p1/auto_fill').iterdir()],['.npz'])
+        self.automatic(seed=3);code,events=self.join();J=self.root/'p1/takes/000000000_000000150_fill_v1'
+        self.assertEqual((code,len(runs)),(0,1),events);self.assertIs(events[-1]['cached'],False)
+        self.assertEqual(next(e for e in events if e['type']=='takes_joined')['projects'],[str(J)])
+        for k,v in rows(J).items():np.testing.assert_array_equal(v,first[k],k)
+        person=ps.load_people(self.root)['people'][0];self.assertEqual([j['project'] for j in person['joins']],['p1/takes/000000000_000000150_fill_v1'])
+        self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+    def test_automatic_needs_30_fps(self):
+        for take in(TAKE(0,100),TAKE(110,200)):
+            p=self.root/take/'project.json';p.write_text(json.dumps(dict(json.loads(p.read_text(encoding='utf-8')),fps=25)),encoding='utf-8')
+        self.automatic();before=self.snapshot();calls=[]
+        with self.generator(calls):code,events=self.join()
+        self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message='Automatic fill needs 30 fps takes; this scene has 25.')]))
+        self.assertEqual((calls,self.stderr.getvalue()),([],''));self.assertEqual(self.snapshot(),before)
+    def test_unavailable_generator_is_refused(self):
+        def missing(folder,request,**kw):raise auto_fill.Unavailable(kimodo_runtime.SETUP)
+        self.automatic();before=self.snapshot()
+        with mock.patch.object(auto_fill,'generate',missing):code,events=self.join()
+        self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message=kimodo_runtime.SETUP)]))
+        self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before)
+        self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists());self.assertNotIn('joins',ps.load_people(self.root)['people'][0])
 class ExmrWriteTest(WriteTest):MODEL='exmr'
 def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
 def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))

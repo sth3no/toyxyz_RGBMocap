@@ -99,7 +99,7 @@ def _auto(a, b, g, pelvis):
     nb, na = min(AUTO_CONTEXT, len(A['transl'])), min(AUTO_CONTEXT, len(B['transl']))
     request = dict(version=1, before_orient=A['global_orient'][-nb:].copy(), before_pose=A['body_pose'][-nb:].copy(), before_pelvis=A['transl'][-nb:]+pelvis,
                    after_orient=B['global_orient'][:na].copy(), after_pose=B['body_pose'][:na].copy(), after_pelvis=B['transl'][:na]+pelvis,
-                   rest=np.asarray(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.))
+                   rest=np.array(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.))
     r = g['generate'](request);c0, c1 = min(AUTO_KNOWN, nb), min(AUTO_KNOWN, na);rows = c0+n+c1
     try:
         arrays = {k: np.asarray(r[k], np.float64) for k in ('orient', 'pose', 'pelvis')};contacts = np.asarray(r['contacts']);end_pose = float(r['end_pose_cm'])
@@ -128,7 +128,7 @@ def assemble(sources, gaps):
             d, n = g['donor'], g['end']-g['first']+2
             if not set(first['params']) <= set(d['params']) or len(d['logits']) != n or \
                     any(len(d['params'][k]['transl']) != n for k in first['params']):raise ValueError('Donor arrays do not match the hidden range')
-        if g['method'] == 'auto' and not (callable(g.get('generate')) and isinstance(g.get('body'), dict) and isinstance(g.get('params'), dict)):
+        if g['method'] == 'auto' and not (callable(g.get('generate')) and isinstance(g.get('body'), dict) and isinstance(g.get('params'), dict) and 'seed' in g['params']):
             raise ValueError('Automatic fill needs a motion generator')
     for s in sources:
         n = s['end']-s['first']
@@ -176,6 +176,8 @@ UNSUPPORTED = 'Hidden ranges support the initial and FootMR results in this vers
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
 DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
 COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
+AUTO_INFO = 'Frames {}–{} generated: the captured poses on both sides were met within {:.1f} cm.'
+AUTO_RATE = 'Automatic fill needs 30 fps takes; this scene has {}.'
 
 
 def emit(kind, **data):
@@ -242,6 +244,10 @@ def _check(root, ident, result):
         for a, b in zip(chain, chain[1:]):
             g = dict(first=a['end'], end=b['first']);method, params = hidden_ranges.choice_params(choices[hidden_ranges.gap_key(g)])
             gaps[-1].append(dict(g, method=method, params=params))
+            if method == 'auto':
+                rate, = rates
+                if rate != 30:raise Refused(AUTO_RATE.format(int(rate) if type(rate) is float and rate.is_integer() else rate))
+                gaps[-1][-1]['fps'] = float(rate)
             if method != 'copy':continue
             donor = next((p for p in people if p['id'] == params['person']), None)
             if donor is None:raise Refused('Choose a person to copy from.')
@@ -267,11 +273,19 @@ def _record(g):return dict(first=g['first'], end=g['end'], method=g['method'], p
 def _cm(metres):return round(float(metres)*100, 1)
 
 
-def _report(gaps, residuals):
-    """Console lines telling how much each copied path had to be bent; `residuals` are in cm."""
-    for g, r in zip(gaps, residuals):
+def _generator(report):
+    """The fill.json record of the generator of an automatic gap, beside its params: a report, not an input."""
+    from .auto_fill import VERSION
+    from .kimodo_runtime import identity
+    return dict(name='kimodo', identity=identity(), version=VERSION, end_pose_cm=float(report['end_pose_cm']))
+
+
+def _report(gaps, residuals, ends):
+    """Console lines telling how much each copied path had to be bent and how closely each generated range met its sides; in cm."""
+    for g, r, e in zip(gaps, residuals, ends):
         if g['method'] == 'copy' and type(r) in (int, float):
             emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
+        if g['method'] == 'auto' and type(e) in (int, float):emit('info', stage=STAGE, message=AUTO_INFO.format(g['first']+1, g['end'], e))
 
 
 def _donors(gaps, files):
@@ -298,7 +312,7 @@ def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
         if join['project'] != folder.relative_to(root).as_posix() or join.get('sources') != [t['project'] for t in chain]:continue
         fill = join_fill(root, person, join)
         if fill is None:return None
-        recorded = [{k: v for k, v in x.items() if k != 'residual_cm'} for x in fill['gaps']]  # A report, not an input.
+        recorded = [{k: v for k, v in x.items() if k not in ('residual_cm', 'generator')} for x in fill['gaps']]  # Reports, not inputs.
         if fill.get('kinds') != kinds or recorded != [_record(g) for g in gaps] or (fill.get('donors') or []) != donors:return None
         try:written = json.loads((folder/'project.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):return None
@@ -388,7 +402,8 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     atomic_json(target/'project.json', state)
     atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
-        gaps=[_record(g) if r is None else dict(_record(g), residual_cm=_cm(r[base])) for g, r in zip(gaps, joined['residuals'])], donors=donors))
+        gaps=[dict(_record(g), **({} if r is None else dict(residual_cm=_cm(r[base]))), **({} if e is None else dict(generator=_generator(e))))
+              for g, r, e in zip(gaps, joined['residuals'], joined['reports'])], donors=donors))
     pending.unlink()
     join = dict(project=target.relative_to(root).as_posix(), first=first, end=end, sources=[s['project'] for s in sources])
     state = load_people(root)  # The editor may have saved other fields meanwhile.
@@ -409,15 +424,23 @@ def run(root, ident, result, projects):
         regressor = data['J_regressor'][0];template = regressor@data['v_template']
         shapes = np.einsum('v,vci->ci', regressor, data['shapedirs'][..., :10])
         body22 = data['J_regressor'][:22];rest = body22@data['v_template'];rest_shapes = np.einsum('jv,vci->jci', body22, data['shapedirs'][..., :10])
+        vertices, vertex_shapes = data['v_template'], data['shapedirs'][..., :10]
     pelvis = lambda betas: template+shapes@np.asarray(betas, np.float64)[:10]
+    def shape(take):  # rest joints (pelvis at its rest position) and lowest rest surface height of the joined shape
+        b = np.asarray(take['params']['initial']['betas'][0], np.float64)[:10]
+        return dict(rest=rest+rest_shapes@b, sole=float((vertices[:, 1]+vertex_shapes[:, 1]@b).min()))
     def leg(take):  # rest pelvis height above the lowest rest joint
         y = (rest+rest_shapes@np.asarray(take['params']['initial']['betas'][0], np.float64)[:10])[:, 1];return y[0]-y.min()
     def height_scale(first, donor):
         try:a, b = leg(first), leg(donor)
         except (KeyError, IndexError, ValueError):return 1.
         return float(a/b) if np.isfinite(a) and np.isfinite(b) and a > 1e-6 and b > 1e-6 else 1.
+    from . import auto_fill
     from .people_store import safe_child
     plans, loaded, base = [], {}, base_result(result)
+    cache = safe_child(root, person['preview'])/'auto_fill'
+    echo = lambda line: print(line, flush=True)  # the worker's progress reaches the app unchanged
+    generate = lambda request: auto_fill.generate(cache, request, echo=echo)
     def donor(g):
         take = g['take']
         if take['project'] not in loaded:
@@ -435,18 +458,23 @@ def run(root, ident, result, projects):
         if kept is not None:plans.append((kept, chain_gaps, None, None));continue
         sources = [_load(root, t, kinds, names, pelvis) for t in chain]
         records = [dict(g, **{k: g['params'][k] for k in ('mirror', 'offset')}, donor=_donor_rows(donor(g), g), height_scale=height_scale(sources[0], donor(g)))
-                   if g['method'] == 'copy' else g for g in chain_gaps]
-        plans.append((sources, chain_gaps, _donors(chain_gaps, lambda t: loaded[t['project']]['files']), assemble(sources, records)))
+                   if g['method'] == 'copy' else dict(g, generate=generate, body=shape(sources[0])) if g['method'] == 'auto' else g for g in chain_gaps]
+        try:joined = assemble(sources, records)
+        except auto_fill.Unavailable as error:raise Refused(str(error)) from None
+        plans.append((sources, chain_gaps, _donors(chain_gaps, lambda t: loaded[t['project']]['files']), joined))
     for i, (sources, chain_gaps, donors, joined) in enumerate(plans):
         emit('progress', stage=STAGE, current=i, total=len(plans), message=f'Filling hidden ranges: joined take {i+1} of {len(plans)}')
         if joined is None:
             projects.append(str(sources))
-            try:residuals = [g.get('residual_cm') for g in json.loads((sources/'fill.json').read_text(encoding='utf-8'))['gaps']]
-            except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = []
+            try:
+                recorded = json.loads((sources/'fill.json').read_text(encoding='utf-8'))['gaps']
+                residuals, ends = [g.get('residual_cm') for g in recorded], [(g.get('generator') or {}).get('end_pose_cm') for g in recorded]
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = ends = []
         else:
             projects.append(str(_write(root, ident, sources, chain_gaps, donors, joined, kinds, base, pipeline)))
             residuals = [None if r is None else _cm(r[base]) for r in joined['residuals']]
-        _report(chain_gaps, residuals)
+            ends = [None if e is None else float(e['end_pose_cm']) for e in joined['reports']]
+        _report(chain_gaps, residuals, ends)
     return all(joined is None for *_, joined in plans)
 
 
