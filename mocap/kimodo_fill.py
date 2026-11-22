@@ -147,7 +147,8 @@ def _generate(request, seed, emit):
     from .paths import MODELS
     threads = configure_worker_cpu(STAGE)
     os.environ.update(CHECKPOINT_DIR=str(MODELS/MODEL_FOLDER), HF_HUB_OFFLINE='1')
-    # The real module imports transformers and peft, which are not installed and not needed without text.
+    # The real module imports transformers and peft, which this worker does not need: a description's vector is read
+    # beforehand by the text worker and given to Kimodo by GivenText.
     stand_in = types.ModuleType('kimodo.model.llm2vec');stand_in.LLM2VecEncoder = None;sys.modules['kimodo.model.llm2vec'] = stand_in
     import torch
     from kimodo.constraints import FullBodyConstraintSet, Root2DConstraintSet

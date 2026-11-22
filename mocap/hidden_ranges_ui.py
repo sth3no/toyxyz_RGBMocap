@@ -56,6 +56,8 @@ class HiddenRangesPanel(QWidget):
         self._widgets, self._pending, self._autos, self._issues, self._shown, self._rows = [], {}, {}, {}, None, ([], [], False)
         self._later = QTimer(self);self._later.setInterval(30);self._later.timeout.connect(self._rebuild);self.hide()
 
+    def _controls(self):return [w for widget in self._widgets for w in (widget, *widget.findChildren(QWidget))]
+
     def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None, auto_issue=None, text_issue=None):
         self._shown, self._pending = (gaps, choices, disabled_reason, people, ident, auto_issue, text_issue), {}
         rows = gap_rows(gaps, choices, fps, people, ident, auto_issue, text_issue)
@@ -76,6 +78,10 @@ class HiddenRangesPanel(QWidget):
     def _rebuild(self):
         if self._held():return
         self._later.stop()
+        # The rows are replaced while a control of them may have focus (committing Variation with Tab moves it to
+        # Description); the new control with the same accessible name gets it back, so typing goes on there.
+        focus = QApplication.focusWidget()
+        focused = focus.accessibleName() if focus is not None and any(focus is w for w in self._controls()) else ''
         for widget in self._widgets:
             # Children too: a focused spin box or description would otherwise report editingFinished while it is removed.
             for w in (widget, *widget.findChildren(QWidget)):w.blockSignals(True)
@@ -107,6 +113,8 @@ class HiddenRangesPanel(QWidget):
             for widget in widgets:self.rows.addWidget(widget);self._widgets.append(widget)
         self.area.updateGeometry()
         self.setVisible(bool(rows))
+        target = next((w for w in self._controls() if focused and w.accessibleName() == focused), None)
+        if target is not None and target.isEnabled():target.setFocus(Qt.OtherFocusReason)
 
     def _copy_controls(self, row, enabled):
         box = QWidget();layout = QVBoxLayout(box);layout.setContentsMargins(12, 0, 0, 0);layout.setSpacing(2)

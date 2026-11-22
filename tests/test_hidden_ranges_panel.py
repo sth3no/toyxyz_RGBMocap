@@ -191,6 +191,21 @@ class AutomaticChoiceTest(unittest.TestCase):
         panel=self.panel({'100_120':{'method':'auto','seed':3}});field=self.description(panel)
         field.setText('Waves.');panel.show_gaps(*panel._shown[:1],{'100_120':{'method':'auto','seed':3}},30,*panel._shown[2:])
         field.editingFinished.emit();self.assertEqual(self.emitted,[])
+    def test_focus_stays_on_the_same_control_after_the_rows_are_rebuilt(self):
+        # Committing Variation with Tab saves and rebuilds the rows; typing goes on in the Description field, not the scroll area.
+        app=application();panel=self.panel({'100_120':{'method':'auto','seed':3}})
+        def saved(*a):panel.show_gaps(*panel._shown[:1],{'100_120':{'method':'auto','seed':a[5],**({'text':a[6]} if a[6] else {})}},30,*panel._shown[2:])
+        panel.choice_changed.connect(saved)                                          # what the People panel does after saving
+        panel.show();panel.activateWindow();app.processEvents()
+        spin=self.variation(panel);spin.setFocus();app.processEvents();self.assertIs(app.focusWidget(),spin)
+        spin.setValue(7);self.description(panel).setFocus();app.processEvents()       # Tab: Variation ends editing
+        self.assertEqual(self.emitted,[('100_120','auto',None,False,0,7,'')])
+        field=self.description(panel);self.assertIs(app.focusWidget(),field)        # the rebuilt row's field
+        self.assertEqual(self.variation(panel).value(),7)
+        from PySide6.QtTest import QTest
+        QTest.keyClicks(field,'Waves.');self.assertEqual(field.text(),'Waves.')
+        panel.show_gaps(*panel._shown[:2],30,*panel._shown[2:]);app.processEvents()    # rebuilt again from outside
+        self.assertEqual(app.focusWidget().accessibleName(),'Description, Frames 101–120 (0.7 s)')
     def test_copy_rows_emit_a_trailing_zero(self):
         panel=self.panel({'100_120':dict(method='copy',person=2,mirror=False,offset=-30)})
         panel.findChild(QCheckBox).setChecked(True)
