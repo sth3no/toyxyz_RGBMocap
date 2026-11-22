@@ -977,8 +977,10 @@ before and just after it, with NVIDIA Kimodo. **The result is plausible motion,
 not what the person did.** On a group dance it was further from the real motion
 than a plain blend of the two end poses, so it is not a way to recover a
 dance. It is meant for ranges in which a person keeps moving or travels, for
-example while walking behind an object; that use has not been measured with
-real footage yet, so review the result. The pelvis is carried in a straight
+example while walking behind an object. On the one walking clip measured (a
+walker covered for 3 seconds) it walked through the range with planted feet,
+where a blend slides one frozen pose across the floor, but its poses were no
+closer to the real walk than the blend's, so review the result. The pelvis is carried in a straight
 line at constant speed from where the person was last seen to where they are
 seen again, so a person who stopped, turned a corner or went around something
 behind the cover is still moved straight; without this the generated person
@@ -997,12 +999,13 @@ marked **(Optional)** and **Download All** skips them). Auto Download on the
 Kimodo Motion Generation row fetches all eight files. It needs an NVIDIA GPU
 with about 2 GB of free video memory (measured on an RTX 5060 Ti: a peak of
 1.17 GiB for a 290-frame range, plus the 600 to 700 MiB that Resource Safety
-keeps free). On that GPU a range of 46 frames took 14 to 18 seconds including
+keeps free). On that GPU a range of 46 frames took 13 to 18 seconds and a range
+of 91 frames 21 to 24 seconds including
 starting the generator, and a 290-frame range about 40 seconds while other
 programs used the GPU. Until setup is complete, **Automatic** is greyed out and its tooltip
 says what is missing. The generated motion does not meet the captured poses
 exactly: in the product runs made it missed the pose at the frame next to the
-range by 7 to 8 cm (3.4 to 3.8 cm on average over the five known frames on each
+range by 1 to 8 cm (2 to 4 cm on average over the five known frames on each
 side), and the join blends the difference out at both ends. The Console reports
 the two figures next to each range, with a line such as `Frames 101–120
 generated: the captured poses next to the range were missed by 7.8 cm before it

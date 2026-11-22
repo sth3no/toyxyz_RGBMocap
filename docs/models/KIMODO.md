@@ -16,14 +16,21 @@ purpose, the generated motion was further from the real motion than a plain
 blend of the two end poses (mean pose error 10.6 cm against 9.0 cm). It was a
 person shifting weight and moving the arms, not a dance. Automatic is meant for
 ranges in which a person keeps moving or travels, for example while walking
-behind an object. That use has not been measured with real footage yet, so
-treat the result as a draft to review. For dancers who do the same moves,
-**Copy from person** is usually closer to the truth.
+behind an object. That use was measured on one clip: a walker covered for 91
+frames (3 seconds) while he came 1.6 m closer. The two variations made walked
+through the range with 5 and 3 foot strikes where the real walk has 5, and the
+toes slid at 13 to 30 cm/s while low, where a blend of the two end poses slides
+one frozen pose across the floor at 58 cm/s. The poses themselves were no
+closer to the real walk than the blend's (7.1 and 7.8 cm against 7.8 cm), and
+where the pelvis was in the room could not be checked on that clip. Treat the
+result as a draft to review. For dancers who do the same moves, **Copy from
+person** is usually closer to the truth.
 
 The captured poses on both sides are kept, but the generated motion does not
-meet them exactly. In the product runs made (one 46-frame range of a dance,
-three variations) it missed the captured pose at the frame next to the range by
-7 to 8 cm and the five known frames on each side by 3.4 to 3.8 cm on average;
+meet them exactly. In the product runs made it missed the captured pose at the
+frame next to the range by 1 to 8 cm and the five known frames on each side by
+2 to 4 cm on average (a 46-frame range of a dance: 4 to 8 cm next to the range;
+the 91-frame walking range: 3 cm before it and 1 to 2 cm after it);
 the join then blends the difference out over the first and last frames of the
 range. The Console reports the two figures next to the range for each range,
 with a line such as `Frames 101–120 generated: the captured poses next to the
@@ -82,9 +89,9 @@ under `.setup`, which you may delete.
    earlier range of the same person changes the chain of joined takes: the
    later **Automatic** ranges are then generated again and may differ.
 2. Click **Fill hidden ranges**. On an RTX 5060 Ti a range of 46 frames took
-   14 to 18 seconds in the product joins, including starting the worker; a
-   range of 290 frames, the longest, took about 40 seconds while other programs
-   were using the GPU. A range that was generated before comes from the cache
+   13 to 18 seconds and a range of 91 frames 21 to 24 seconds in the product
+   joins, including starting the worker; a range of 290 frames, the longest,
+   took about 40 seconds while other programs were using the GPU. A range that was generated before comes from the cache
    without starting the worker.
 3. Click **Apply Correction** for the joined take, as for any joined take.
    Other people of the scene ask for **Apply Correction** again, as after the
@@ -136,11 +143,11 @@ tended to stand and then hurry. That was measured on one walking clip, a walker
 hidden for 91 frames (3 seconds) while covering 1.6 m, with three variations:
 without the path the median pelvis speed was 0.06 to 0.20 m/s in the first
 third of the range and 0.60 to 0.79 m/s in the last, with 3 foot strikes where
-the real walk has 5; with it the speed stayed between 0.38 and 0.67 m/s in
-every third, with 3 to 5 foot strikes, and the poses were as close to the real
-ones as before (7.2 to 7.9 cm against 7.1 to 9.3 cm). The feet slid more while
-planted (19 to 22 cm/s against 5 to 16 cm/s); **Apply Correction** works on the
-joined take afterwards. On a dance range with 0.18 m of travel the path changed
+the real walk has 5; with it the median speed stayed between 0.38 and 0.67 m/s
+in every third, with 3 to 5 foot strikes, and the mean pose error against the
+real walk was 7.2 to 7.9 cm (7.1 to 9.3 cm without it). The toes slid more
+while low (19 to 22 cm/s against 5 to 16 cm/s); **Apply Correction** works on
+the joined take afterwards. On a dance range with 0.18 m of travel the path changed
 nothing measurable.
 
 ## Licences

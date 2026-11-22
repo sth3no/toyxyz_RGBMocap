@@ -1,5 +1,98 @@
 # Source package validation
 
+## Automatic fill of hidden ranges with Kimodo (2026-11-22)
+
+- Same machine (Windows 11, RTX 5060 Ti 16 GB). Kimodo revision `e1c219c9`,
+  model `nvidia/Kimodo-SOMA-RP-v1.2`.
+- Setup and model, run for real: `tools/setup_kimodo.py` built and installed
+  `runtime_kimodo` (15 MB) over the ExMR runtime and its check passed,
+  including CUDA; the eight model files were fetched one by one through the
+  app's `download` stage and their receipts written. `Setup_Kimodo.cmd` itself
+  (the prompt) and Auto Download on the model row fetching all eight files
+  were not run; the latter is covered by tests only.
+- Automated tests on the final code, shared runtime unless noted:
+  `test_soma_convert` 10, `test_gap_fill` 34, `test_take_join` 73 (1 skipped,
+  ExMR only), `test_take_joins` 33, `test_hidden_ranges` 17,
+  `test_hidden_ranges_ui` 41, `test_auto_fill` 14, `test_kimodo_runtime` 11,
+  `test_model_manager` 17 (1 skipped), `test_kimodo_fill` 18 including six
+  cases that start the real worker on the GPU with a synthetic walking
+  request, `test_hidden_ranges_panel` 20 (GUI runtime, offscreen). The whole
+  folder ran 358 tests with the one known import error (`test_local_choices`
+  needs PySide6).
+- Conversion, measured before the build on five fully seen dancers (353 frames
+  each): SMPL-X to SOMA and back returned the joints exactly; Kimodo kept the
+  converted end poses to 2.1-3.3 cm. GVHMR's raw result of one dancer floated
+  12-15 cm above its floor after frame 100; with the floor read from the
+  frames next to the range the generated feet stood on it, without that they
+  stayed 8-10 cm up.
+- Real window, run without a screen and driven through its own signals,
+  buttons and handlers; nobody looked at the 3D view. A stock clip of a man
+  walking down a corridor towards a fixed camera (290 frames at 25 fps, 348 at
+  the app's 30), covered by a black box from second 3 to 6, GVHMR, initial
+  result with correction:
+  - Find person (66 s) found the walker as two people, before and after the
+    cover; Reconstruct 3D took 239 s. **Continue as** joined them and one
+    hidden range appeared, frames 91-181 (3.0 s), the two takes 1.6 m apart.
+  - The range's list offered **Automatic** enabled with its tooltip, Smooth
+    join disabled (`limited to 30 frames; this range has 91`), and a
+    **Variation** box.
+  - Fill with Variation 0 and then 1: the fill job took 21 and 24 s (101
+    frames generated in 12.8 and 15.9 s, peak video memory 1.13 GiB), the
+    Console said `Frames 91–181 generated: the captured poses next to the
+    range were missed by 2.9 cm before it and 1.2 cm after it.` (3.0 and
+    1.5 cm for Variation 1), Motion Correction then took 4.3-4.5 s and Export
+    7 s (`motion.bvh` written). The take showed as `Frames 1–348 · Ready ·
+    filled` with motion and the timeline band on frames 91-181.
+  - Fill again with nothing changed: 2.5 s, no generation.
+  - Against the same clip without the cover (its own Find person and
+    Reconstruct 3D, 77 s and 272 s): mean pose error in the range 7.8 and
+    7.1 cm for the two variations, 7.8 cm for a blend of the two end poses.
+    The fills walk: 5 and 3 foot strikes (the real walk has 5), median pelvis
+    speed 0.45-0.48, 0.60-0.64, 0.49 m/s in the three thirds of the range,
+    toes sliding at 13-30 cm/s while low; a blend has no steps and slides one
+    pose at 58 cm/s. **Where the pelvis is in the room could not be judged:**
+    the uncovered reconstruction's own pelvis path jumps by 0.8 m inside the
+    range and nets 0.27 m in 3 s, while the joined takes are 1.6 m apart.
+  - Before the straight root path was added, the same range through the
+    window stood and then hurried (median pelvis speed 0.07-0.08 m/s in the
+    first second, 0.7-0.8 m/s after, 3 foot strikes, seams 3.0/5.3 and
+    1.9/4.3 cm). A trial on the same request with three seeds gave the path
+    its figures in `docs/models/KIMODO.md`.
+  - Side-view pose strips of the real walk and the two fills were rendered
+    and looked at by Claude, not by a person: the fills show alternating
+    strides from the first hidden frames on.
+- Product join started from a shell (the command the Fill button builds) on
+  the five-dancer project of the sections below, before the straight path:
+  - Range 121-166 (46 frames) between two sound takes, Variations 0-3: 13-18 s
+    each, the captured pose next to the range missed by 7.2-8.3 cm before it
+    and 4.3 cm after it (one value recorded), `fill_mask.npy` 3 on frames
+    121-166. Against the real motion: mean pose error 9.4, 10.3, 8.7 cm, a
+    blend 8.0 cm; pelvis position 15.3-17.9 cm, a blend 16.6 cm. Variation 0
+    nearly stood still for ten frames. An unchanged second run took 1-2 s and
+    started no worker.
+  - Range 137-166 next to a take whose last 15 frames come from a partly
+    covered view: the two takes were 8.4 m and about 135 degrees apart for one
+    second. The first version wrote that take with an info line. The final
+    code refuses it in 12 s (3 s from the cache the second time) with
+    `Automatic fill could not connect the motion on both sides of frames
+    137–166: the generated motion misses the captured poses next to the range
+    by 103 cm. …` and leaves the existing joined take untouched.
+- Earlier comparison on the gate's 15 hidden ranges of fully seen dancers (46,
+  90 and 150 frames, three seeds each, before the straight path): mean pose
+  error 10.6 cm for Automatic against 9.0 cm for a blend; Automatic was worse
+  in all 15. **Automatic was not closer to the real poses than a blend in any
+  case measured; what it adds is motion that steps and travels.**
+- Not run: any person looking at a filled take in the 3D view or in Blender;
+  ExMR (both guides list it as supported; only its tests ran); a range longer
+  than 91 frames through the product (a 290-frame synthetic request ran in the
+  worker: 39-41 s while a game used the GPU, peak 1.17 GiB); a natural
+  occluder; a person who stops or turns behind the cover; FBX export of an
+  Automatic take (BVH was written); Apply Correction for the other people of
+  a scene after an Automatic fill; the Resource Safety stop and Stop during
+  generation; a second machine or GPU. Twice during these runs Resource Safety
+  stopped Find person because the machine had under 2.5 GiB of free RAM; the
+  runs above were made after memory was freed.
+
 ## Continue as and Separate again (2026-11-22)
 
 - Same machine. Automated tests on temporary scene folders made by the tests,
