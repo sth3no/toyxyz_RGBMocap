@@ -149,6 +149,15 @@ class MaskTest(unittest.TestCase):
         mask[10:20]=0
         self.assertEqual(ui.export_line('P_filled',mask),
                          'P_filled: 20 of 100 frames are filled across hidden ranges (0 interpolated, 20 copied from another person).')
+    def test_line_with_generated_frames(self):
+        mask=np.zeros(300,np.uint8);mask[10:30]=1;mask[100:140]=3
+        self.assertEqual(ui.export_line('P1',mask),'P1: 60 of 300 frames are filled across hidden ranges (20 interpolated, 40 generated).')
+        mask[10:30]=0
+        self.assertEqual(ui.export_line('P1',mask),'P1: 40 of 300 frames are filled across hidden ranges (40 generated).')
+        mask[10:30]=1;mask[50:55]=2
+        self.assertEqual(ui.export_line('P1',mask),'P1: 65 of 300 frames are filled across hidden ranges (20 interpolated, 5 copied from another person, 40 generated).')
+        mask[10:30]=0
+        self.assertEqual(ui.export_line('P1',mask),'P1: 45 of 300 frames are filled across hidden ranges (5 copied from another person, 40 generated).')
     def test_export_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);take=root/'takes/j';take.mkdir(parents=True)

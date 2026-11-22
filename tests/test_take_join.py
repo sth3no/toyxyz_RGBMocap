@@ -235,6 +235,70 @@ class CopyAssembleTest(unittest.TestCase):
         self.assertEqual(list(mixed['mask'][50:60])+list(mixed['mask'][100:130]),[1]*10+[2]*30)
         for k,v in smooth['params']['initial'].items():
             np.testing.assert_array_equal(mixed['params']['initial'][k][:100],v[:100]);np.testing.assert_array_equal(mixed['params']['initial'][k][130:],v[130:])
+
+REST=np.linspace(-.5,.5,66).reshape(22,3)
+def straight(calls,end_pose=1.25,drop=0,nan=False,**response):
+    """A fake generator: the given known rows on each side and a straight line across the hidden frames."""
+    def generate(req):
+        calls.append(req);n=req['frames'];c0,c1=min(5,len(req['before_pelvis'])),min(5,len(req['after_pelvis']))
+        t=(np.arange(1,n+1)/(n+1))[:,None];line=lambda b,a:np.vstack([b[-c0:],b[-1]+(a[0]-b[-1])*t,a[:c1]])[drop:]
+        out=dict(version=1,context=np.array([c0,c1]),orient=line(req['before_orient'],req['after_orient']),pose=line(req['before_pose'],req['after_pose']),
+                 pelvis=line(req['before_pelvis'],req['after_pelvis']),contacts=(np.arange(c0+n+c1-drop)[:,None]+np.arange(4))%3==0,end_pose_cm=np.float64(end_pose))
+        if nan:out['pose'][c0+2,5]=np.nan
+        return {**out,**response}
+    return generate
+def auto(a,b,calls,seed=7,**kw):return dict(gap(a,b),method='auto',params=dict(seed=seed),generate=straight(calls,**kw),body=dict(rest=REST,sole=.02))
+
+class AutoAssembleTest(unittest.TestCase):
+    def setUp(self):
+        self.a,self.b=source(0,100),source(120,200,W=WB,pelvis=PB)
+        for s in(self.a,self.b):s['params']['footmr_initial']={**s['params']['initial'],'body_pose':s['params']['initial']['body_pose']+.01}
+    def join(self,calls,**kw):return assemble([self.a,self.b],[auto(self.a,self.b,calls,**kw)])
+    def test_request(self):
+        calls=[];out=self.join(calls);self.assertEqual(len(calls),1);q=calls[0];J=out['params']['initial']
+        shapes=dict(before_orient=(45,3),before_pose=(45,63),before_pelvis=(45,3),after_orient=(45,3),after_pose=(45,63),after_pelvis=(45,3),rest=(22,3))
+        for k,s in shapes.items():self.assertEqual(np.shape(q[k]),s,k)
+        self.assertEqual((q['version'],q['frames'],q['seed'],q['fps']),(1,20,7,30.));self.assertEqual(float(q['sole']),.02)
+        np.testing.assert_array_equal(q['rest'],REST)
+        np.testing.assert_allclose(q['before_pelvis'],J['transl'][55:100]+P0,atol=1e-12);np.testing.assert_allclose(q['after_pelvis'],J['transl'][120:165]+P0,atol=1e-12)
+        np.testing.assert_allclose(q['before_orient'],J['global_orient'][55:100],atol=1e-12);np.testing.assert_allclose(q['after_pose'],J['body_pose'][120:165],atol=1e-12)
+    def test_result(self):
+        from mocap.gap_fill import GENERATED
+        calls=[];out=self.join(calls);q=calls[0];J=out['params']['initial'];t=(np.arange(1,21)/21)[:,None]
+        self.assertTrue((out['mask'][100:120]==GENERATED).all());self.assertTrue((out['mask'][:100]==0).all() and (out['mask'][120:]==0).all())
+        self.assertEqual(out['reports'],[dict(end_pose_cm=1.25)]);self.assertIs(type(out['reports'][0]['end_pose_cm']),float)
+        for k,v in self.a['params']['initial'].items():np.testing.assert_array_equal(J[k][:100],v)   # captured rows at and before the boundary
+        np.testing.assert_allclose(J['transl'][[99,120]]+P0,np.r_[q['before_pelvis'][-1:],q['after_pelvis'][:1]],atol=1e-12)
+        # The boundary rows of the line are the captured poses, so the fill is the line itself.
+        line=lambda b,a:b[-1]+(a[0]-b[-1])*t
+        np.testing.assert_allclose(J['transl'][100:120]+P0,line(q['before_pelvis'],q['after_pelvis']),atol=1e-12)
+        np.testing.assert_allclose(J['body_pose'][100:120],line(q['before_pose'],q['after_pose']),atol=1e-12)
+        np.testing.assert_allclose(rot(J['global_orient'][100:120]),rot(line(q['before_orient'],q['after_orient'])),atol=1e-12)
+        c=(np.arange(5,25)[:,None]+np.arange(4))%3==0
+        np.testing.assert_array_equal(out['logits'][100:120,:4],np.where(c,4.,-8.))
+        np.testing.assert_allclose(out['logits'][100:120,4:],self.a['logits'][-1,4:]+(out['logits'][120,4:]-self.a['logits'][-1,4:])*t,atol=1e-12)
+        for x in(J['transl'],out['incam']['transl']):
+            mean=np.linalg.norm(np.diff(x,axis=0),axis=1).mean()
+            for at in(100,120):self.assertLess(np.linalg.norm(x[at]-x[at-1]),2*mean,at)
+    def test_second_kind_blends_to_its_own_boundaries(self):
+        out=self.join([]);F,J=out['params']['footmr_initial'],out['params']['initial']
+        np.testing.assert_allclose(F['body_pose'][105:115],J['body_pose'][105:115],atol=1e-12)   # 1 degree per joint: 5 blend rows
+        self.assertLess(np.abs(F['body_pose'][100]-F['body_pose'][99]).max(),.003);self.assertLess(np.abs(F['body_pose'][119]-F['body_pose'][120]).max(),.003)
+        self.assertGreater(np.abs(F['body_pose'][100]-J['body_pose'][100]).max(),.008)
+        np.testing.assert_allclose(F['transl'],J['transl'],atol=1e-12)
+    def test_short_neighbour(self):
+        a=source(0,4);calls=[];out=assemble([a,self.b],[auto(a,self.b,calls)])
+        self.assertEqual(len(calls[0]['before_pelvis']),4);self.assertEqual(len(calls[0]['after_pelvis']),45)
+        self.assertEqual(out['params']['initial']['body_pose'].shape,(200,63));self.assertTrue(np.isfinite(out['params']['initial']['body_pose']).all())
+    def test_bad_response(self):
+        for kw in(dict(drop=1),dict(nan=True),dict(version=2),dict(context=np.array([4,5])),dict(end_pose=np.nan)):
+            with self.assertRaisesRegex(ValueError,'^Generated motion does not match the hidden range$',msg=kw):self.join([],**kw)
+    def test_gap_without_generator(self):
+        g=auto(self.a,self.b,[]);del g['generate']
+        with self.assertRaises(ValueError):assemble([self.a,self.b],[g])
+    def test_other_methods_report_nothing(self):
+        a,b=source(0,100),source(120,200,W=WB,pelvis=PB)
+        self.assertEqual(assemble([a,b],[gap(a,b)])['reports'],[None]);self.assertEqual(assemble([a,b],[copied(a,b)])['reports'],[None])
 import contextlib,importlib.util,io,json,subprocess,tempfile
 from pathlib import Path
 from unittest import mock

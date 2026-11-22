@@ -91,3 +91,16 @@ class HiddenRangesTest(unittest.TestCase):
             ch['200_220']=bad;self.assertEqual([[t['first'] for t in c] for c in h.chains(takes,ch,people,1)],[[0,120]],bad)
         ch['200_220']={'method':'copy','person':2}
         self.assertEqual(h.chains(takes,ch,[None,5,dict(id=2,takes='x')],1),[[takes[0],takes[1]]])
+    def test_auto(self):
+        self.assertIn('auto',h.METHODS);self.assertEqual(h.AUTO_MAX_FRAMES,290)
+        self.assertEqual(h.choice_params({'method':'auto','seed':7}),('auto',{'seed':7}))
+        self.assertEqual(h.choice_params({'method':'auto'}),('auto',{'seed':0}))
+        self.assertEqual(h.choice_params({'method':'auto','seed':999,'person':2}),('auto',{'seed':999}))
+        for bad in(-1,1000,1.,'7',True,None):
+            with self.assertRaises(ValueError,msg=bad):h.choice_params({'method':'auto','seed':bad})
+        self.assertIsNone(h.method_issue('auto',dict(first=100,end=390)))
+        self.assertEqual(h.method_issue('auto',dict(first=100,end=391)),'Automatic fill is limited to 290 frames; this range has 291.')
+        takes=[T(0,100),T(390,500)];ch={'100_390':{'method':'auto','seed':3}}
+        self.assertEqual(h.chains(takes,ch),[takes])
+        self.assertEqual(h.chains([T(0,100),T(391,500)],{'100_391':{'method':'auto'}}),[])
+        self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':-1}}),[])

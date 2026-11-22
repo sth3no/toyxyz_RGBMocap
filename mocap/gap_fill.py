@@ -126,4 +126,40 @@ def copy_fill(before, after, donor, keys, height_scale=1.0, stats=None):
     if stats is not None: stats.update(residual=float(np.linalg.norm(res[[0, 2]])), blend=tuple(B))
     return out
 
+def generated_fill(before, after, generated, keys):
+    """Gap rows from the generated n+2 rows (rows 0 and n+1 are the boundary frames); transl is the pelvis position.
+    Nothing is turned or rescaled: the boundary differences of the poses and of the pelvis position fade out at each end."""
+    f = lambda d, k: np.asarray(d[k], np.float64)
+    gp = f(generated, 'transl').reshape(-1, 3); n = len(gp) - 2
+    if n < 1: raise ValueError('Automatic fill needs at least one hidden frame')
+    s = np.arange(n + 2) / (n + 1); out = {'transl': gp[1:-1].copy()}
+    p0, p1 = f(before, 'transl').reshape(-1, 3)[-1], f(after, 'transl').reshape(-1, 3)[0]
+    rows, diffs = {}, {}
+    for k in keys:
+        if k not in generated: continue
+        b, a = np.atleast_2d(f(before, k))[-1].reshape(-1, 3), np.atleast_2d(f(after, k))[0].reshape(-1, 3)
+        v = f(generated, k).reshape(n + 2, -1, 3); rows[k] = v
+        # Local rotations compose on the right: generated row · D equals the boundary pose.
+        diffs[k] = [(R.from_rotvec(v[i]).inv() * R.from_rotvec(x)).as_rotvec() for i, x in ((0, b), (-1, a))]
+    B = [_blend([d[side] for d in diffs.values()], n) for side in (0, 1)]
+    u = lambda j, side: 1 - _smoothstep(j / (B[side] + 1))
+    for j in range(1, B[0] + 1): out['transl'][j - 1] += u(j, 0) * (p0 - gp[0])
+    for j in range(1, B[1] + 1): out['transl'][n - j] += u(j, 1) * (p1 - gp[-1])
+    for k in keys:
+        if k not in generated:
+            b, a = np.atleast_2d(f(before, k)), np.atleast_2d(f(after, k))
+            out[k] = _slerp(b[-1], a[0], s[1:n + 1]).reshape(n, -1); continue
+        v = rows[k]; o = v[1:-1].copy(); D0, D1 = diffs[k]
+        for j in range(1, B[0] + 1): o[j - 1] = (R.from_rotvec(v[j]) * R.from_rotvec(D0 * u(j, 0))).as_rotvec()
+        for j in range(1, B[1] + 1): o[n - j] = (R.from_rotvec(v[n + 1 - j]) * R.from_rotvec(D1 * u(j, 1))).as_rotvec()
+        out[k] = o.reshape(n, -1)
+    return out
+
+CONTACT_ON, CONTACT_OFF = 4.0, -8.0  # static_conf_logits of the generated foot contacts
+
+def contact_logits(contacts, before_last, after_first):
+    """Logit rows of a generated range: columns 0-3 from the contacts [L heel, L toe, R heel, R toe], the rest linear."""
+    c = np.asarray(contacts, bool); out = fill_logits(before_last, after_first, len(c))
+    out[:, :4] = np.where(c, CONTACT_ON, CONTACT_OFF); return out
+
 def _smoothstep(x): return 3 * x * x - 2 * x ** 3

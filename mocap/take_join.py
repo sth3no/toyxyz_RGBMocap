@@ -8,7 +8,7 @@ import os
 import sys
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
-from .gap_fill import COPIED, INTERPOLATED, POSE_KEYS, copy_fill, fill_logits, mirror_logits, mirror_params, rigid_params, smooth_fill
+from .gap_fill import COPIED, GENERATED, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
 from .hidden_ranges import typed as _typed
 
 STAGE = 'take_join'
@@ -74,19 +74,48 @@ def _copy(a, b, g, pelvis):
         stats, keys = {}, [k for k in p if k != 'transl']
         params[kind] = at(copy_fill(at(p, pelvis, 1), at(b['params'][kind], pelvis, 1), donor, keys, g.get('height_scale', 1.), stats), pelvis, -1)
         residual[kind] = stats['residual']
+    logits = np.asarray(d['logits'], np.float64)[1:-1]
+    return dict(params=params, incam=_camera(a, b, params['initial'], pelvis, n), logits=mirror_logits(logits) if g['mirror'] else logits, mask=COPIED, residual=residual)
+
+
+def _camera(a, b, G, pelvis, n):
+    """Camera-space gap rows: the world rows G seen through a camera pairing that moves from one seam to the other."""
     W0, W1 = _seam(a, -1, pelvis), _seam(b, 0, pelvis)
-    # Camera space: the copied world motion seen through a camera pairing that moves from one seam to the other.
-    s = np.arange(1, n+1)/(n+1);turn = Slerp([0., 1.], Rotation.from_matrix([W0[:3, :3], W1[:3, :3]]))(s);G = params['initial']
+    s = np.arange(1, n+1)/(n+1);turn = Slerp([0., 1.], Rotation.from_matrix([W0[:3, :3], W1[:3, :3]]))(s)
     # A camera-space pose key that the world result lacks is interpolated.
     rest = smooth_fill({k: v[-2:] for k, v in a['incam'].items()}, {k: v[:2] for k, v in b['incam'].items()}, n) if any(k not in G for k in a['incam']) else {}
     incam = {k: G[k] if k in G else rest[k] for k in a['incam']}
     incam.update(global_orient=(turn*Rotation.from_rotvec(G['global_orient'])).as_rotvec(),
                  transl=turn.apply(G['transl']+pelvis)+W0[:3, 3]+(W1[:3, 3]-W0[:3, 3])*s[:, None]-pelvis)
-    logits = np.asarray(d['logits'], np.float64)[1:-1]
-    return dict(params=params, incam=incam, logits=mirror_logits(logits) if g['mirror'] else logits, mask=COPIED, residual=residual)
+    return incam
 
 
-FILLS = {'smooth': _smooth, 'copy': _copy}
+AUTO_CONTEXT, AUTO_KNOWN = 45, 5  # captured frames sent on each side; known frames the generator uses on each side
+MISMATCH = 'Generated motion does not match the hidden range'
+
+
+def _auto(a, b, g, pelvis):
+    n, A, B = g['end']-g['first'], a['params']['initial'], b['params']['initial']
+    nb, na = min(AUTO_CONTEXT, len(A['transl'])), min(AUTO_CONTEXT, len(B['transl']))
+    request = dict(version=1, before_orient=A['global_orient'][-nb:].copy(), before_pose=A['body_pose'][-nb:].copy(), before_pelvis=A['transl'][-nb:]+pelvis,
+                   after_orient=B['global_orient'][:na].copy(), after_pose=B['body_pose'][:na].copy(), after_pelvis=B['transl'][:na]+pelvis,
+                   rest=np.asarray(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.))
+    r = g['generate'](request);c0, c1 = min(AUTO_KNOWN, nb), min(AUTO_KNOWN, na);rows = c0+n+c1
+    try:
+        arrays = {k: np.asarray(r[k], np.float64) for k in ('orient', 'pose', 'pelvis')};contacts = np.asarray(r['contacts']);end_pose = float(r['end_pose_cm'])
+        ok = r['version'] == 1 and np.array_equal(np.asarray(r['context']), [c0, c1]) and contacts.shape == (rows, 4) and contacts.dtype == bool and np.isfinite(end_pose) and \
+            all(v.shape == (rows, w) and np.isfinite(v).all() for v, w in zip(arrays.values(), (3, 63, 3)))
+    except (KeyError, TypeError, ValueError, IndexError):ok = False
+    if not ok:raise ValueError(MISMATCH)
+    # Response rows c0-1 ... c0+n are the boundary frames and the range; generated_fill works on pelvis positions.
+    cut = slice(c0-1, c0+n+1);generated = dict(global_orient=arrays['orient'][cut], body_pose=arrays['pose'][cut], transl=arrays['pelvis'][cut])
+    at = lambda p, sign: dict(p, transl=p['transl']+sign*pelvis)
+    params = {kind: at(generated_fill(at(p, 1), at(b['params'][kind], 1), generated, [k for k in p if k != 'transl']), -1) for kind, p in a['params'].items()}
+    return dict(params=params, incam=_camera(a, b, params['initial'], pelvis, n), logits=contact_logits(contacts[c0:c0+n], a['logits'][-1], b['logits'][0]),
+                mask=GENERATED, report=dict(end_pose_cm=end_pose))
+
+
+FILLS = {'smooth': _smooth, 'copy': _copy, 'auto': _auto}
 
 
 def assemble(sources, gaps):
@@ -99,6 +128,8 @@ def assemble(sources, gaps):
             d, n = g['donor'], g['end']-g['first']+2
             if not set(first['params']) <= set(d['params']) or len(d['logits']) != n or \
                     any(len(d['params'][k]['transl']) != n for k in first['params']):raise ValueError('Donor arrays do not match the hidden range')
+        if g['method'] == 'auto' and not (callable(g.get('generate')) and isinstance(g.get('body'), dict) and isinstance(g.get('params'), dict)):
+            raise ValueError('Automatic fill needs a motion generator')
     for s in sources:
         n = s['end']-s['first']
         if len(s['logits']) != n or len(s['boxes']) != n or len(s['observed']) != n or len(s['incam']['transl']) != n or \
@@ -132,8 +163,9 @@ def assemble(sources, gaps):
     mask = np.zeros(total, np.uint8); observed = np.zeros(total, bool)
     for s in sources:observed[s['first']-base:s['end']-base] = np.asarray(s['observed'], bool)
     for g, f in zip(gaps, fills):mask[g['first']-base:g['end']-base] = f['mask']
-    # The horizontal path residual in metres per result kind of each copied gap; None for other methods.
-    return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed, residuals=[f.get('residual') for f in fills])
+    # The horizontal path residual in metres per result kind of each copied gap and the report of each generated gap; None for other methods.
+    return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed, residuals=[f.get('residual') for f in fills],
+                reports=[f.get('report') for f in fills])
 
 
 class Refused(ValueError):

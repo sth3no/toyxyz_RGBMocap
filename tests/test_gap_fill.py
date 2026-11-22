@@ -173,3 +173,58 @@ class GapFillTest(unittest.TestCase):
             self.assertTrue(all(v.shape[0]==n and v.dtype==np.float64 and np.isfinite(v).all() for v in out.values()))
         p=donor_walk(3);keep=copy.deepcopy(p);g.mirror_params(p)
         for k in p:np.testing.assert_array_equal(p[k],keep[k])
+
+def motion(N=40,seed=3):
+    """A smooth motion with hands; transl is the pelvis position."""
+    rng=np.random.default_rng(seed);t=np.arange(N)[:,None]
+    return dict(global_orient=(R.from_rotvec(np.c_[0*t,.02*t-.5,0*t])*R.from_rotvec(.1*np.sin(t/7+rng.normal(0,1,(1,3))))).as_rotvec(),
+                body_pose=.3*np.sin(t/9+rng.normal(0,3,(1,63))),left_hand_pose=.2*np.sin(t/5+rng.normal(0,3,(1,45))),right_hand_pose=.2*np.cos(t/6+rng.normal(0,3,(1,45))),
+                transl=np.c_[np.sin(t/10),.9+0*t,.03*t])
+KEYS=('global_orient','body_pose','left_hand_pose','right_hand_pose')
+
+class GeneratedFillTest(unittest.TestCase):
+    def setUp(self):
+        self.m=motion();self.f0,self.f1=10,30;rows=lambda a,b:{k:v[a:b].copy() for k,v in self.m.items()}
+        self.before,self.after=rows(self.f0-2,self.f0),rows(self.f1,self.f1+2)
+        self.gen={k:v for k,v in rows(self.f0-1,self.f1+1).items() if k in('global_orient','body_pose','transl')}   # no hands
+    def test_matching_boundaries_keep_the_generated_rows(self):
+        out=g.generated_fill(self.before,self.after,self.gen,KEYS)
+        self.assertEqual(set(out),{*KEYS,'transl'})
+        for k in('global_orient','body_pose','transl'):np.testing.assert_allclose(out[k],self.gen[k][1:-1],atol=1e-12,err_msg=k)
+    def test_left_offset_fades_out_and_leaves_the_right_half(self):
+        n=self.f1-self.f0;half=n//2;gen={k:v.copy() for k,v in self.gen.items()};O=R.from_euler('z',12,degrees=True)
+        j=gen['body_pose'][:half+1,9:12];gen['body_pose'][:half+1,9:12]=(R.from_rotvec(j)*O).as_rotvec()   # rows 0..half, one joint
+        gen['transl'][:half+1]+=[.03,0,0]
+        out=g.generated_fill(self.before,self.after,gen,KEYS)
+        b,t=self.before['body_pose'][-1,9:12],self.m['body_pose'][self.f0,9:12]
+        angle=lambda x,y:np.degrees((R.from_rotvec(x).inv()*R.from_rotvec(y)).magnitude())
+        self.assertLessEqual(angle(out['body_pose'][0,9:12],b),angle(t,b)+1)   # continues the boundary within 1 degree
+        p0=self.before['transl'][-1]
+        self.assertLessEqual(np.linalg.norm(out['transl'][0]-p0),np.linalg.norm(self.m['transl'][self.f0]-p0)+.003)
+        np.testing.assert_allclose(out['body_pose'][5:],gen['body_pose'][6:n+1],atol=1e-12)   # B = 5: the correction ends there
+        np.testing.assert_allclose(out['transl'][5:],gen['transl'][6:n+1],atol=1e-12)
+        self.assertGreater(angle(out['body_pose'][4,9:12],gen['body_pose'][5,9:12]),1e-3)
+        for k in('global_orient','body_pose','transl'):np.testing.assert_allclose(out[k][half:],self.m[k][self.f0+half:self.f1],atol=1e-12,err_msg=k)
+    def test_height_step_fades_without_a_jump(self):
+        gen=dict(self.gen,transl=self.gen['transl']+[0,.1,0])
+        y=np.r_[self.before['transl'][-1,1],g.generated_fill(self.before,self.after,gen,KEYS)['transl'][:,1],self.after['transl'][0,1]]
+        self.assertLess(np.abs(np.diff(y)).max(),.025);self.assertGreater(np.abs(np.diff(y)).max(),.02)
+        np.testing.assert_allclose(y[6:-6],.9+.1,atol=1e-12)   # rows beyond the blends keep the generated height
+    def test_keys_absent_from_the_generated_motion_are_slerped(self):
+        n=self.f1-self.f0;self.before['left_hand_pose'][:]=0;self.after['left_hand_pose'][:]=.2
+        out=g.generated_fill(self.before,self.after,self.gen,KEYS)
+        np.testing.assert_allclose(out['left_hand_pose'],np.tile(.2*np.arange(1,n+1)[:,None]/(n+1),(1,45)),atol=1e-12)
+        self.assertEqual(out['right_hand_pose'].shape,(n,45))
+    def test_one_frame(self):
+        gen={k:v[:3]+(.05 if k=='transl' else 0) for k,v in self.gen.items()};after={k:v[self.f0+1:self.f0+3] for k,v in self.m.items()}   # frame f0 hidden
+        out=g.generated_fill(self.before,after,gen,KEYS)
+        self.assertTrue(all(v.shape[0]==1 and np.isfinite(v).all() for v in out.values()))
+        np.testing.assert_allclose(out['transl'],gen['transl'][1:2],atol=1e-12)
+
+class ContactLogitsTest(unittest.TestCase):
+    def test_values(self):
+        c=np.array([[1,0,0,1],[0,1,1,0],[0,0,0,0]],bool)
+        out=g.contact_logits(c,np.zeros(6),np.full(6,4.))
+        self.assertEqual(out.shape,(3,6))
+        np.testing.assert_array_equal(out[:,:4],np.where(c,4.,-8.))
+        np.testing.assert_allclose(out[:,4:],[[1.,1.],[2.,2.],[3.,3.]])

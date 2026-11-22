@@ -143,10 +143,12 @@ def project_fill_runs(root, state, project):
 
 
 def export_line(stem, mask):
-    mask = np.asarray(mask)  # 1 is gap_fill.INTERPOLATED, 2 is gap_fill.COPIED
-    i, c = int((mask == 1).sum()), int((mask == 2).sum())
-    if not c:return f'{stem}: {i} of {len(mask)} frames are interpolated across hidden ranges.'
-    return f'{stem}: {i+c} of {len(mask)} frames are filled across hidden ranges ({i} interpolated, {c} copied from another person).'
+    mask = np.asarray(mask)  # 1 is gap_fill.INTERPOLATED, 2 is gap_fill.COPIED, 3 is gap_fill.GENERATED
+    i, c, g = int((mask == 1).sum()), int((mask == 2).sum()), int((mask == 3).sum())
+    if not c and not g:return f'{stem}: {i} of {len(mask)} frames are interpolated across hidden ranges.'
+    if not g:return f'{stem}: {i+c} of {len(mask)} frames are filled across hidden ranges ({i} interpolated, {c} copied from another person).'
+    kinds = ', '.join(f'{x} {name}' for x, name in ((i, 'interpolated'), (c, 'copied from another person'), (g, 'generated')) if x)
+    return f'{stem}: {i+c+g} of {len(mask)} frames are filled across hidden ranges ({kinds}).'
 
 
 def panel_state(root, found, choices, model, kind, people=None, ident=None):

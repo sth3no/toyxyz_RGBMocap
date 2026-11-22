@@ -1,6 +1,8 @@
 import html
 SMOOTH_MAX_FRAMES=30
-METHODS=('none','smooth','copy')
+AUTO_MAX_FRAMES=290  # with 5 known frames on each side the generator's 300-frame limit
+METHODS=('none','smooth','copy','auto')
+SEED_LIMIT=999
 OFFSET_LIMIT=600
 
 def typed(text):
@@ -23,6 +25,10 @@ def choice_params(choice):
     if not isinstance(choice,dict):raise ValueError('Invalid gap choice')
     m=choice.get('method','none')
     if m not in METHODS:raise ValueError(f'Unknown method: {m}')
+    if m=='auto':
+        seed=choice.get('seed',0)
+        if type(seed) is not int or not 0<=seed<=SEED_LIMIT:raise ValueError('Invalid automatic choice')
+        return m,dict(seed=seed)
     if m!='copy':return m,{}
     p,mirror,off=choice.get('person'),choice.get('mirror',False),choice.get('offset',0)
     if type(p) is not int or type(mirror) is not bool or type(off) is not int or abs(off)>OFFSET_LIMIT:raise ValueError('Invalid copy choice')
@@ -67,8 +73,9 @@ def method_issue(method,gap,choice=None,people=None,ident=None):
             if not spans:return f'{name} has no captured take long enough to cover this range.'
             return f'{name} has no captured motion covering this range with this offset.'+offset_hint(spans)
         return None
-    if method!='smooth':raise ValueError(f'Unknown method: {method}')
     n=gap['end']-gap['first']
+    if method=='auto':return f'Automatic fill is limited to {AUTO_MAX_FRAMES} frames; this range has {n}.' if n>AUTO_MAX_FRAMES else None
+    if method!='smooth':raise ValueError(f'Unknown method: {method}')
     return f'Smooth join is limited to {SMOOTH_MAX_FRAMES} frames; this range has {n}.' if n>SMOOTH_MAX_FRAMES else None
 
 def chains(takes,choices,people=None,ident=None):
