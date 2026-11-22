@@ -107,6 +107,22 @@ MODELS_LIST.extend([
           download_url='https://huggingface.co/facebook/sapiens2-pose-1b/resolve/f5fed8b97b99698d5eea1d14ff0855d0b4c3f000/sapiens2_1b_pose.safetensors',
           expected_sha256='2dab7014a17e99e460c18817325a71dd7a81ce48d87027f01c2ee7d7b3af969f'),
 ])
+# Kimodo for automatic fill of hidden ranges: the files its loader reads, from one pinned snapshot.
+KIMODO_REV = '0e3c89024d896064b6851201373f7834784a386b'
+KIMODO_FILES = (
+    ('kimodo', 'Kimodo Motion Generation (Optional)', 'model.safetensors', 1133177724, 'fdcef624140a12c0a4840192ce0b75cafb4e73228a893da3864b4a990d3e919e'),
+    ('kimodo_config', 'Kimodo Configuration', 'config.yaml', 675, '82f1e9f44d0df517d8ebde03d2e9396fd0bf372360714757901c1d97a2626599'),
+    ('kimodo_stats_body_mean', 'Kimodo Statistics (body mean)', 'stats/motion/body/mean.npy', 3040, 'd42f35f8bb7ef52fdec66ae29c5cf590bd038f4f1aabd2d560d1d0f78663ed6f'),
+    ('kimodo_stats_body_std', 'Kimodo Statistics (body std)', 'stats/motion/body/std.npy', 3040, '965bbad497726ef4e6c46b519827e2cbcb29f974214b25718d20a725b82279ed'),
+    ('kimodo_stats_global_root_mean', 'Kimodo Statistics (global root mean)', 'stats/motion/global_root/mean.npy', 168, '6c110980f9a0386e57a8c186f8eac7f55dc05bade92f44c4b391450ada598da1'),
+    ('kimodo_stats_global_root_std', 'Kimodo Statistics (global root std)', 'stats/motion/global_root/std.npy', 168, 'fb15aeed7143f5f0754611f0acf5fa5f55d1f6492a49c23e490fc62f7bf11fb0'),
+    ('kimodo_stats_local_root_mean', 'Kimodo Statistics (local root mean)', 'stats/motion/local_root/mean.npy', 160, '4c36e8e33d6d51e6c8206ac796a52b7b3a4da7f0dc49ebdbb4f130178e3e9d31'),
+    ('kimodo_stats_local_root_std', 'Kimodo Statistics (local root std)', 'stats/motion/local_root/std.npy', 160, '5f57b41f51ced7832cffa81702f6e04d8694e16475c184baec6c8be0e98c8dba'),
+)
+MODELS_LIST.extend(
+    Model(key, name, 'kimodo/Kimodo-SOMA-RP-v1.2/' + path, 'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2', minimum_bytes=size,
+          download_url=f'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2/resolve/{KIMODO_REV}/{path}', expected_sha256=digest)
+    for key, name, path, size, digest in KIMODO_FILES)
 from .mamma_models import ASSETS as MAMMA_ASSETS, KEYS as MAMMA_KEYS, INSTRUCTIONS as MAMMA_INSTRUCTIONS
 MODELS_LIST.extend(Model(**entry) for entry in MAMMA_ASSETS)
 from .prompthmr_models import ASSETS as PHMR_ASSETS,KEYS as PHMR_KEYS,CAMERA_KEYS as PHMR_CAMERA_KEYS,INSTRUCTIONS as PHMR_INSTRUCTIONS
@@ -269,6 +285,7 @@ STAGE_REQUIREMENTS = {
     'mamma_camera': ('flow_vggt','pear_geocalib'),
     'mamma_fit': ('mamma_vertices','mamma_body','mamma_body_male','mamma_body_female'),
     'mamma_publish': ('mamma_body','mamma_vertices'),
+    'kimodo_fill': tuple(entry[0] for entry in KIMODO_FILES),
 }
 
 
@@ -277,7 +294,7 @@ def ready(model: Model) -> bool:
         from .pear_models import geometry_ready
         return geometry_ready()
     valid=model.path.is_file() and model.path.stat().st_size >= model.minimum_bytes
-    if valid and (model.key.startswith(('flow','hand','exmr','mamma','phmr','pear','gemx','sam31','rife')) or model.key in ('smplh','mano_right')):
+    if valid and (model.key.startswith(('flow','hand','exmr','mamma','phmr','pear','gemx','sam31','rife','kimodo')) or model.key in ('smplh','mano_right')):
         import json
         try:
             receipt=json.loads(model.path.with_suffix(model.path.suffix+'.receipt.json').read_text(encoding='utf-8'))

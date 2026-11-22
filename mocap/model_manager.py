@@ -23,6 +23,8 @@ def workflow_catalog():
             stages = (*stages, key + '_assets')
         if key in SUPPORTED:
             stages = (*stages, 'people', 'sam31_people')
+        if key in SUPPORTED - {'flowhmr'}:
+            stages = (*stages, 'kimodo_fill')
         if key == 'pear':
             stages = (*stages, 'pear_align')
         if key == 'prompthmr':
@@ -35,6 +37,11 @@ def workflow_catalog():
             keys.add(MODEL_KEY)
         catalog[key] = keys
     return catalog
+
+
+def download_all_skips(key):
+    """Optional models that Download All leaves to their own row."""
+    return key in ('sam31_people', 'rife49') or key.startswith('kimodo')
 
 
 def workflow_name(key):

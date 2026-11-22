@@ -293,6 +293,10 @@ class ModelsDialog(QDialog):
             note = QLabel('SAM 3.1 is optional. Run Setup_SAM31.cmd with RGB MoCap closed before using it.')
             note.setWordWrap(True)
             self.workflow_panel.addWidget(note)
+        if key in SUPPORTED - {'flowhmr'}:
+            note = QLabel('Automatic fill of hidden ranges also needs Setup_Kimodo.cmd.')
+            note.setWordWrap(True)
+            self.workflow_panel.addWidget(note)
 
     def usage_text(self, key):
         from .model_manager import workflow_name
@@ -531,12 +535,13 @@ class ModelsDialog(QDialog):
 
     def pending_downloads(self):
         from .flow_hamer import MODEL_KEYS
+        from .model_manager import download_all_skips
         if self.inventory_tab:
             return []
-        excluded = {'sam31_people', 'rife49'}
+        excluded = set()
         if self.tool.key == 'flowhmr' and not self.window.flow_hamer.isChecked():
             excluded.update(MODEL_KEYS)
-        return [model for model in self.models if model.key not in excluded
+        return [model for model in self.models if model.key not in excluded and not download_all_skips(model.key)
                 and (model.drive_id or model.download_url) and not ready(model)]
 
     def start_download_all(self):

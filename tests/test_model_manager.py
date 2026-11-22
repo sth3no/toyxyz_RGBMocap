@@ -142,5 +142,57 @@ class InstalledModelTests(unittest.TestCase):
         self.assertEqual(self.external.read_bytes(), b'Keep the original')
 
 
+KIMODO_KEYS = ('kimodo', 'kimodo_config', 'kimodo_stats_body_mean', 'kimodo_stats_body_std',
+               'kimodo_stats_global_root_mean', 'kimodo_stats_global_root_std',
+               'kimodo_stats_local_root_mean', 'kimodo_stats_local_root_std')
+
+
+class KimodoModelTests(unittest.TestCase):
+    def test_records_are_pinned_files_of_one_snapshot(self):
+        self.assertEqual(models.STAGE_REQUIREMENTS['kimodo_fill'], KIMODO_KEYS)
+        sizes = {}
+        for key in KIMODO_KEYS:
+            model = models.BY_KEY[key]
+            self.assertRegex(model.expected_sha256, '^[0-9a-f]{64}$')
+            self.assertGreater(model.minimum_bytes, 0)
+            self.assertTrue(model.relative.startswith('kimodo/Kimodo-SOMA-RP-v1.2/'))
+            path = model.relative.removeprefix('kimodo/Kimodo-SOMA-RP-v1.2/')
+            self.assertEqual(model.download_url, 'https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.2/resolve/'
+                             '0e3c89024d896064b6851201373f7834784a386b/' + path)
+            sizes[path] = model.minimum_bytes
+        self.assertEqual(sizes['model.safetensors'], 1133177724)
+        self.assertEqual(sum(sizes.values()), 1133209886 - 1519 - 10229 - 13003)
+        self.assertEqual(models.BY_KEY['kimodo'].name, 'Kimodo Motion Generation (Optional)')
+        self.assertEqual(models.BY_KEY['kimodo_stats_global_root_std'].name, 'Kimodo Statistics (global root std)')
+
+    def test_all_missing_in_an_empty_models_folder(self):
+        with tempfile.TemporaryDirectory() as name, patch.object(models, 'MODELS', Path(name)):
+            self.assertEqual([model.key for model in models.missing('kimodo_fill')], list(KIMODO_KEYS))
+
+    def test_a_file_without_receipt_is_not_ready(self):
+        model = models.BY_KEY['kimodo_stats_local_root_mean']
+        with tempfile.TemporaryDirectory() as name, patch.object(models, 'MODELS', Path(name)):
+            model.path.parent.mkdir(parents=True)
+            model.path.write_bytes(b'x' * model.minimum_bytes)
+            self.assertFalse(models.ready(model))
+            stat = model.path.stat()
+            atomic_json(manager.receipt_path(model), dict(sha256=model.expected_sha256,
+                                                          stat=[stat.st_size, stat.st_mtime_ns]))
+            self.assertTrue(models.ready(model))
+
+    def test_download_all_leaves_kimodo_out(self):
+        for key in KIMODO_KEYS:
+            self.assertTrue(manager.download_all_skips(key))
+        for key in ('sam31_people', 'rife49'):
+            self.assertTrue(manager.download_all_skips(key))
+        for key in ('gvhmr', 'exmr', 'exmr_config', 'smplx'):
+            self.assertFalse(manager.download_all_skips(key))
+
+    def test_listed_under_gvhmr_and_exmr_only(self):
+        users = manager.model_consumers(manager.workflow_catalog())
+        for key in KIMODO_KEYS:
+            self.assertEqual(set(users[key]), {'gvhmr', 'exmr'})
+
+
 if __name__ == '__main__':
     unittest.main()
