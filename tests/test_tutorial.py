@@ -77,6 +77,15 @@ class PlacementTest(AppearanceCase):
     def test_card_goes_below_a_wide_target_at_the_top(self):
         self.assertEqual(tutorial.place_card(QSize(1100, 700), QSize(320, 200), QRect(0, 30, 1100, 60), 12), QPoint(12, 102))
 
+    def test_card_avoids_the_other_highlighted_controls(self):
+        anchor, neighbour = QRect(100, 100, 200, 300), QRect(312, 100, 400, 300)
+        self.assertEqual(tutorial.place_card(QSize(1440, 880), QSize(320, 160), anchor, 12, [anchor, neighbour]), QPoint(100, 412))
+
+    def test_card_covers_as_little_as_it_can_when_every_side_is_taken(self):
+        anchor = QRect(400, 300, 300, 200)
+        taken = [anchor, QRect(712, 0, 728, 880), QRect(0, 0, 388, 880), QRect(388, 512, 324, 368), QRect(400, 100, 300, 188)]
+        self.assertEqual(tutorial.place_card(QSize(1440, 880), QSize(320, 160), anchor, 12, taken).y(), 128)  # above: the smallest neighbour
+
     def test_card_without_a_target_is_centred(self):
         self.assertEqual(tutorial.place_card(QSize(1100, 700), QSize(320, 200), None, 12), QPoint(390, 250))
 
@@ -124,6 +133,28 @@ class WidgetsTest(AppearanceCase):
         card = tutorial.TutorialCard();self.addCleanup(card.deleteLater)
         card.set_content('', 'T', 'x', '', [('Go', print)])
         self.assertTrue(card.status.isHidden())
+
+    def test_card_is_tall_enough_for_its_text_in_the_font_of_the_window(self):
+        host = QWidget();host.setStyleSheet('QWidget{font-size:22px}');host.resize(1100, 900);self.addCleanup(host.deleteLater)
+        card = tutorial.TutorialCard(host)
+        card.set_content('Chapter · Step 1 of 9', 'Title', 'word ' * 60, 'Waiting…', [('Back', print), ('Next', print)])
+        host.show();card.show();APP.processEvents()
+        for label in (card.title, card.text, card.status):
+            self.assertGreaterEqual(label.height(), label.heightForWidth(label.width()), label.objectName())
+        self.assertGreater(card.height(), self.card().height())
+
+    def test_a_shown_card_grows_for_a_longer_text(self):
+        host = QWidget();host.resize(1100, 900);self.addCleanup(host.deleteLater)
+        card = tutorial.TutorialCard(host)
+        card.set_content('', 'Welcome', 'word ' * 12, '', [('Not now', print), ('Start', print)])
+        host.show();card.show();APP.processEvents()
+        card.set_content('Chapter · Step 1 of 9', 'Title', 'word ' * 60, '', [('Next', print)])
+        APP.processEvents()
+        self.assertGreaterEqual(card.text.height(), card.text.heightForWidth(card.text.width()))
+
+    def test_the_cross_has_room_for_its_sign(self):
+        card = self.card()
+        self.assertEqual(card.cross.objectName(), 'tutorialClose');self.assertIn('QPushButton#tutorialClose{padding:0px', card.styleSheet())
 
     def test_card_buttons_never_take_the_keyboard(self):
         self.assertTrue(all(b.focusPolicy() == Qt.NoFocus for b in self.card().findChildren(QPushButton)))
@@ -212,6 +243,10 @@ class ControllerTest(HomeCase):
         self.w.flag = True;self.t.tick()
         self.assertEqual(self.t.index, 1)
 
+    def test_a_step_that_does_not_say_it_waits_offers_next(self):
+        self.t.start(demo(steps=dict(a=dict(done=lambda w, e: w.flag))))
+        self.assertEqual((self.buttons(), self.t.card.status.isHidden()), (['×', 'Next'], True))
+
     def test_a_skipped_step_is_never_shown_and_is_not_counted(self):
         self.t.start(demo(steps=dict(b=dict(skip=lambda w: w.hide_b))))
         self.w.hide_b = True;self.t.tick()
@@ -275,6 +310,12 @@ class ControllerTest(HomeCase):
         self.t.start(demo(steps=dict(a=dict(card='center'))))
         self.assertEqual(self.t.card.pos(), tutorial.place_card(self.w.size(), self.t.card.size(), None, ui_px(12)))
         self.assertEqual(self.t.overlay.holes, [QRect(50, 50, 100, 30)])
+
+    def test_the_card_stands_beside_the_first_target_and_off_the_others(self):
+        self.w.a.setGeometry(100, 100, 200, 300);self.w.b.setGeometry(312, 100, 400, 300)
+        self.t.start(Chapter('two', 'Two', (Step('two', 'Two', 'x', lambda w: [w.a, w.b]),)))
+        self.assertEqual(self.t.card.pos(), QPoint(100, 400 + ui_px(12)))
+        self.assertFalse(any(self.t.card.geometry().intersects(hole) for hole in self.t.overlay.holes))
 
     def test_a_rectangle_target_is_used_as_it_is(self):
         self.t.start(Chapter('r', 'R', (Step('r', 'R', 'x', lambda w: [QRect(10, 20, 30, 40)]),)))

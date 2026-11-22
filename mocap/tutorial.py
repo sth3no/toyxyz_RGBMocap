@@ -40,21 +40,27 @@ def mark_done(key):
 DIM = True  # False draws only the ring, should the dim misbehave over the OpenGL viewport
 CARD_STYLE = ('QFrame#tutorialCard{background:#303030;border:1px solid #477bb7;border-radius:4px}'
               'QLabel#tutorialHeader,QLabel#tutorialStatus{color:#a0a0a0}'
-              'QLabel#tutorialTitle{color:#ededed;font-size:14px;font-weight:600}')
+              'QLabel#tutorialTitle{color:#ededed;font-size:14px;font-weight:600}'
+              'QPushButton#tutorialClose{padding:0px}')
 
 
-def place_card(window, card, target, margin):
-    """Top-left of the card: beside the target where there is room (right, left, below, above), always inside the window."""
+def place_card(window, card, target, margin, avoid=()):
+    """Top-left of the card: beside the target where there is room (right, left, below, above), always inside the window
+    and off the rectangles to avoid when a side allows it."""
     if target is None:return QPoint((window.width() - card.width()) // 2, (window.height() - card.height()) // 2)
     right, bottom = target.x() + target.width(), target.y() + target.height()
     sides = (('right', window.width() - right, card.width()), ('left', target.x(), card.width()),
              ('below', window.height() - bottom, card.height()), ('above', target.y(), card.height()))
-    fits = [side for side, room, need in sides if room >= need + 2 * margin]
-    side = fits[0] if fits else max(sides, key=lambda s: s[1] - s[2])[0]
-    x, y = {'right': (right + margin, target.y()), 'left': (target.x() - margin - card.width(), target.y()),
-            'below': (target.x(), bottom + margin), 'above': (target.x(), target.y() - margin - card.height())}[side]
+    spots = {'right': (right + margin, target.y()), 'left': (target.x() - margin - card.width(), target.y()),
+             'below': (target.x(), bottom + margin), 'above': (target.x(), target.y() - margin - card.height())}
     clamp = lambda value, room: max(min(margin, max(0, room)), min(value, room - margin)) if room >= 2 * margin else max(0, room) // 2
-    return QPoint(clamp(x, window.width() - card.width()), clamp(y, window.height() - card.height()))
+    def covered(point):
+        return sum(r.width() * r.height() for r in (QRect(point, card).intersected(other) for other in avoid))
+    # Sides with room first, in their order; then the roomiest. Among them the first that covers nothing, else the least.
+    order = sorted(sides, key=lambda s: (s[1] < s[2] + 2 * margin, 0 if s[1] >= s[2] + 2 * margin else s[2] - s[1]))
+    points = [QPoint(clamp(spots[side][0], window.width() - card.width()), clamp(spots[side][1], window.height() - card.height()))
+              for side, _, _ in order]
+    return min(points, key=covered)
 
 
 class TutorialOverlay(QWidget):
@@ -93,7 +99,7 @@ class TutorialCard(QFrame):
         self.box = QVBoxLayout(self)
         top = QHBoxLayout()
         self.header = QLabel();self.header.setObjectName('tutorialHeader')
-        self.cross = self._button('×', self.closed.emit)
+        self.cross = self._button('×', self.closed.emit);self.cross.setObjectName('tutorialClose')
         self.cross.setAccessibleName('End tutorial');self.cross.setToolTip('End the tutorial. Help → Tutorial starts it again.')
         top.addWidget(self.header, 1);top.addWidget(self.cross)
         self.title = QLabel();self.title.setObjectName('tutorialTitle');self.title.setWordWrap(True)
@@ -122,6 +128,7 @@ class TutorialCard(QFrame):
         for button in self._buttons:
             if button is self._buttons[-1]:button.setObjectName('primary')  # named before it is shown, so the style applies
             self.buttons.addWidget(button)
+            button.show()  # a layout shows a widget added to a visible parent only later; until then its row has no height
         self.fit()
 
     def fit(self):
@@ -285,23 +292,20 @@ class Tutorial(QObject):
         self._action = self._ask(step.action)
         buttons = [('Back', self.back)] if self._beside(-1) is not None else []
         if self._action:buttons.append((self._action[0], lambda: self._action and self._action[1]()))
-        buttons.append(('Finish' if self._beside(1) is None else 'Skip step' if waiting else 'Next', self.next))
-        target = None
-        if rects and step.card != 'center':
-            target = rects[0]
-            for rect in rects[1:]:target = target.united(rect)
+        buttons.append(('Finish' if self._beside(1) is None else 'Skip step' if waiting and step.waiting else 'Next', self.next))
         self._show(f'{self.chapter.title} · Step {shown.index(self.index) + 1} of {len(shown)}', step.title, text,
-                   self.note or (step.waiting if waiting else ''), buttons, target)
+                   self.note or (step.waiting if waiting else ''), buttons, rects[0] if rects and step.card != 'center' else None, rects)
 
-    def _show(self, header, title, text, status, buttons, target):
+    def _show(self, header, title, text, status, buttons, target, avoid=()):
         # The card is rebuilt only when it changes: replacing a button under a pressed mouse would swallow the click.
         shown = (header, title, text, status, tuple(label for label, _ in buttons))
         if shown != self._shown:
             self.card.set_content(header, title, text, status, buttons);self._shown = shown
-        self._place(target)
+        self._place(target, avoid)
 
-    def _place(self, target):
-        self.card.move(place_card(self.window.size(), self.card.size(), target, ui_px(12)))
+    def _place(self, target, avoid=()):
+        # Beside the first target, the control the step is about, and off the other highlighted ones.
+        self.card.move(place_card(self.window.size(), self.card.size(), target, ui_px(12), avoid))
         self.card.show();self.card.raise_()
 
     def refresh_appearance(self):
