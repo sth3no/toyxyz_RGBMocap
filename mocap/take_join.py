@@ -148,7 +148,10 @@ def _check(root, ident, result):
     names = list(dict.fromkeys(['tracking.npz', *(RESULTS[k][0] for k in kinds)]))
     rates = set()
     for take in (t for chain in chains for t in chain):
-        folder = safe_child(root, take['project']);state = json.loads((folder/'project.json').read_text(encoding='utf-8'))
+        folder = safe_child(root, take['project'])
+        try:state = json.loads((folder/'project.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):state = None
+        if not isinstance(state, dict):raise Refused(f'Take {folder.name} cannot be read. Prepare the person motion again.')
         if state.get('frames') != take['end']-take['first']:raise Refused(f'Take {folder.name} does not match its frame range. Prepare the person motion again.')
         rates.add(state.get('fps'))
         for name in names:
@@ -203,6 +206,18 @@ def _load(root, take, kinds, names, pelvis):
                 params=params, incam=incam, logits=logits, boxes=boxes, observed=observed, source_model=model)
 
 
+def _other_joins(person, join):
+    """Recorded joins that stay beside the new one. Takes prepared from different trims may share frames, so a join
+    over the same frames is replaced only when it uses one of the new join's takes, its folder, or a take that is gone."""
+    live = {t['project'] for t in person.get('takes', [])};mine = set(join['sources'])
+    def apart(j):
+        if not (j.get('first', join['end']) < join['end'] and join['first'] < j.get('end', join['first'])):return True
+        sources = j.get('sources')
+        return (j['project'] != join['project'] and isinstance(sources, list) and bool(sources)
+                and all(isinstance(s, str) for s in sources) and mine.isdisjoint(sources) and live.issuperset(sources))
+    return [j for j in person.get('joins') or [] if apart(j)]
+
+
 def _write(root, ident, sources, gaps, joined, kinds, base, pipeline):
     import torch
     from .motion_tools import RESULTS
@@ -255,7 +270,7 @@ def _write(root, ident, sources, gaps, joined, kinds, base, pipeline):
     state = load_people(root)  # The editor may have saved other fields meanwhile.
     person = next((p for p in state['people'] if p['id'] == ident), None)
     if person is None:raise RuntimeError('Person no longer exists; the joined take was not recorded. Run Find person again.')
-    person['joins'] = [j for j in person.get('joins') or [] if not (j.get('first', end) < end and first < j.get('end', first))]+[join]
+    person['joins'] = _other_joins(person, join)+[join]
     if not join_current(root, person, join):raise RuntimeError('The joined take was written but does not validate; it was not recorded.')
     save_people(root, state)
     return target

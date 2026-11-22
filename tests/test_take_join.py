@@ -258,6 +258,13 @@ class WriteTest(unittest.TestCase):
         code,events=self.join();self.assertEqual(code,1);self.assertEqual(events,[dict(type='failed',stage='take_join',message='No hidden range is selected for filling.')])
         self.assertEqual(self.snapshot(),before)
         self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists());self.assertFalse((self.root/'people_media').exists())
+    def test_unreadable_take_manifest_is_refused_without_traceback(self):
+        manifest=self.root/TAKE(110,200)/'project.json';text=manifest.read_text(encoding='utf-8')
+        for damage in(lambda:manifest.write_text(text[:40],encoding='utf-8'),lambda:manifest.write_text('[]',encoding='utf-8'),manifest.unlink):
+            damage();code,events=self.join()
+            self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message='Take 000000110_000000200_scene_v1 cannot be read. Prepare the person motion again.')]))
+            self.assertEqual(self.stderr.getvalue(),'')
+        self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists())
     def test_exmr_camera_receipt_is_copied(self):
         if self.MODEL!='exmr':self.skipTest('ExMR only')
         from mocap.scene_camera import camera_sources
@@ -266,6 +273,27 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(read(J),read(self.root/TAKE(0,100)))
         self.assertIn('exmr_camera_sources.json',camera_sources(J));self.assertFalse((J/'exmr_receipt.json').exists())
 class ExmrWriteTest(WriteTest):MODEL='exmr'
+def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
+def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))
+class OtherJoinsTest(unittest.TestCase):
+    """Which recorded joins a new join replaces; takes prepared from different trims may share frames."""
+    def kept(self,takes,joins,new):return [j['project'] for j in take_join._other_joins(dict(takes=takes,joins=joins),new)]
+    def test_join_of_other_takes_over_shared_frames_stays(self):
+        from mocap import hidden_ranges
+        takes=[_take(0,100),_take(120,200),_take(150,260),_take(280,400)]
+        chains=hidden_ranges.chains(takes,{'100_120':dict(method='smooth'),'260_280':dict(method='smooth')})
+        self.assertEqual([[t['project'] for t in c] for c in chains],[['t0_100','t120_200'],['t150_260','t280_400']])  # they share frames 150-200
+        early,late=_join(0,200,'t0_100','t120_200'),_join(150,400,'t150_260','t280_400')
+        self.assertEqual(self.kept(takes,[early],late),['j0_200']);self.assertEqual(self.kept(takes,[late],early),['j150_400'])
+    def test_join_sharing_a_take_or_the_folder_is_replaced(self):
+        takes=[_take(0,100),_take(120,200),_take(220,300)]
+        self.assertEqual(self.kept(takes,[_join(0,200,'t0_100','t120_200')],_join(0,300,'t0_100','t120_200','t220_300')),[])  # the chain grew
+        self.assertEqual(self.kept(takes,[_join(0,300,'t0_100','t120_200','t220_300')],_join(120,300,'t120_200','t220_300')),[])  # it shrank
+        self.assertEqual(self.kept(takes,[_join(0,200,'t220_300',project='j0_200')],_join(0,200,'t0_100','t120_200')),[])  # same folder
+    def test_join_of_takes_that_are_gone_is_replaced_and_a_distant_one_stays(self):
+        takes=[_take(0,100),_take(120,200),_take(500,600),_take(620,700)];new=_join(0,200,'t0_100','t120_200')
+        self.assertEqual(self.kept(takes,[_join(150,400,'gone_a','gone_b'),dict(project='j10_20',first=10,end=20),dict(project='bad',first=0,end=9,sources=[1])],new),[])
+        self.assertEqual(self.kept(takes,[_join(500,700,'t500_600','t620_700'),_join(900,990,'gone_a','gone_b'),dict(project='unranged')],new),['j500_700','j900_990','unranged'])
 class CommandTest(unittest.TestCase):
     def test_gui_command_loads_no_numeric_packages(self):
         import sys
