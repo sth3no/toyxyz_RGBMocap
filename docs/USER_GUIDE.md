@@ -995,16 +995,31 @@ range of the same person changes the chain of joined takes; the later
 
 **Description.** Under **Variation**, the optional **Description** field says what the person does
 in the range: one short action in English, in the third person, such as `A person raises
-both arms above the head.` (200 characters at most, one line). Single actions
-showed in the measurements, for example a wrist 23 cm above the head in a
-60-frame test range where the same range without a description kept it 59 cm
-below; "first this, then that" and actions that fight the straight path mostly
-did not show in a 3-second range, and nobody has looked at a described fill by
-eye yet. A description does not make the motion closer to what the person did.
-Reading a new description takes 18 to 25 seconds (a peak of 1.7 GiB of video
-memory and about 1.5 GiB of RAM on an RTX 5060 Ti) and is then kept for every
-project. Empty means no description, and the range is generated as without the
-field.
+both arms above the head.` (200 characters at most, one line). Before it is
+read, the description is tidied the way Kimodo tidies its own prompts: the
+first letter is made a capital and every other letter small, and a final period
+is added. Capitals inside the sentence and decimal numbers do not survive
+(`1.5` is read as `1. 5`), so write plain words; the Console line says what was
+read when it differs from what you typed. Single actions showed in the
+measurements. In a run through the app's window on a 91-frame range of a real
+walking clip, `A person raises both arms above the head.` put both wrists above
+the head in 55 of the 91 frames (the highest 36 cm above it), and `a person
+covers their face with one hand` brought a wrist within 25 cm of the head in 41
+frames, where without a description the nearest wrist stayed 77 cm away; the
+described fills missed the captured poses next to the range by 1.5 to 2.5 cm. The
+man really walked with his arms down, so the described fills were further from
+what he did (mean pose error 16.6 and 10.8 cm against 7.7 cm without a
+description), and on that range they slid the toes 30 to 45 % more. "First
+this, then that" and actions that fight the straight path mostly did not show
+in a 3-second range, and nobody has looked at a described fill by eye yet. A
+description does not make the motion closer to what the person did. Reading a
+new description takes 18 to 25 seconds from an NVMe drive (it reads the 16 GB
+of Llama files every time; a slower disk takes longer), with a peak of 1.7 GiB
+of video memory, about 1.5 GiB of RAM and 3.65 GiB of committed memory (backed
+by the page file) on an RTX 5060 Ti; a described fill of that 91-frame range
+took 57 to 60 seconds in all, a plain one 27 seconds. A description read once
+is kept for every project. Empty means no description, and the range is
+generated as without the field.
 
 **Set up inside the app.** Nothing needs the app closed. Choose **Automatic
 (Experimental)**: if something is missing, the row says what and **Set up…**
@@ -1016,8 +1031,12 @@ files, **Auto Download**) and, only for descriptions, **Kimodo Text Adapters**
 Descriptions** (16.06 GB, four files). Meta gates the Llama 3 weights: sign in
 at Hugging Face, accept Meta's Llama 3 Community License, download the four
 `model-0000N-of-00004.safetensors` files into one folder and click **Import...**
-on the row, choosing any one of them; the app imports all four. The app never asks for or stores a
-Hugging Face token or password. `Setup_Kimodo.cmd` with the app closed remains
+on the row, choosing any one of them; the app imports all four. If **Auto
+Download** fails on one of the other two rows, **Import...** works the same
+way from the files you downloaded yourself (see the
+[Kimodo guide](models/KIMODO.md#setup) for which file to pick). The app never asks for or stores a
+Hugging Face token or password. **Reinstall Runtime** checks an installed
+runtime and installs it again if the check fails. `Setup_Kimodo.cmd` with the app closed remains
 an alternative way to install the runtime. It needs an NVIDIA GPU
 with about 2 GB of free video memory (measured on an RTX 5060 Ti: a peak of
 1.17 GiB for a 290-frame range, plus the 600 to 700 MiB that Resource Safety
@@ -1086,6 +1105,11 @@ Limits of this version:
   needs **Apply Correction** like any joined take. A new Kimodo runtime or model
   version does not make an existing joined take out of date; change the
   **Variation** and fill again to generate the range again.
+- A range with a description cannot be filled again (for example with another
+  **Variation**) once the Llama files or the text adapters were removed, even
+  though its description was read before. Remove model files with **Model
+  Manager**: the app keeps hard links of model files in other places, so
+  deleting a file by hand may free no disk space.
 
 ### One person found as two
 

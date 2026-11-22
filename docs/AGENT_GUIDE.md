@@ -843,13 +843,23 @@ earlier range of the same person changes the chain, and the later Automatic
 ranges are generated again and may differ (pinned by
 `test_earlier_range_changes_later_automatic_ranges`). `hidden_ranges_state.export_line` counts
 generated frames. The Hidden ranges panel offers Automatic and its Variation
-(`hidden_ranges_ui.py`); `people_ui.py` passes `kimodo_runtime.issue()` so the
-row is disabled with the reason when the runtime or the model is missing. Keep
+(`hidden_ranges_ui.py`); `people_ui.py` passes `kimodo_runtime.issue()`. Missing
+setup does not disable the Automatic item: a chosen Automatic row shows the
+issue sentence (`kimodo_runtime.SETUP` or the model sentence), **Fill hidden
+ranges** is disabled and **Set up…** appears; only the range's own 290-frame
+limit disables the item. When a model job (`MODEL_JOB_STAGES`) ends, `next_job`
+calls `refresh_hidden_ranges_after_models`, which rebuilds the rows of the open
+person, so the row follows an install even if Model Manager was closed
+meanwhile. A rebuild returns keyboard focus to the control with the same
+accessible name. Keep
 the GUI free of numpy and torch: `kimodo_runtime.py` is stdlib only, and the
 model rows are in `models.py` (`KIMODO_FILES`, the stage `kimodo_fill`,
-skipped by Download All in `model_manager.py`). `Setup_Kimodo.cmd` keeps a valid
-runtime, and otherwise builds a new overlay in `.setup` and swaps it in, leaving
-a `kimodo-backup-*` folder. Do not delete `runtime_kimodo/`, its backups or the
+skipped by Download All in `model_manager.py`). The setup (`Setup_Kimodo.cmd` or
+the app's job) keeps a runtime whose receipt is valid when `verify` passes, and
+otherwise (no runtime, an old receipt or a failed check) removes the staging
+folders of cancelled runs (`.setup/.kimodo-*`), builds a new overlay in `.setup`
+and swaps it in through a `kimodo-backup-*` folder that it removes after the
+swap. Do not delete `runtime_kimodo/`, its backups or the
 Kimodo model files without the user's authorization. Real runs and their results
 belong in [VALIDATION.md](VALIDATION.md), not here.
 
@@ -864,16 +874,24 @@ shared by every project; the key hashes the text, `kimodo_runtime.text_identity(
 in the ExMR Python with the overlay, then publishes the `.npy` after checking
 its shape (4096), dtype and finiteness; leftovers of a killed run are removed.
 `take_join` reads each distinct description once per run and sends it as the
-request's `text_feature`; `kimodo_fill.conditioning` gives Kimodo the text with
+request's `text_feature`. The text worker encodes `kimodo.sanitize.sanitize_text`
+of the normalised description, as Kimodo's own call does before its encoder
+(`kimodo_text.VERSION` 2), and names the sentence read when that changed it;
+it refuses an all-zero vector, and so does the text cache. `normalise_text`
+and the field's `description` drop unprintable characters, so the stored
+choice is the text that is read. The Console renders rich text, so the join's
+and the text worker's lines escape the description (`html.escape`).
+`kimodo_fill.conditioning` gives Kimodo the text with
 `cfg_weight=[TEXT_WEIGHT, CONSTRAINT_WEIGHT]` = `[4.0, 2.0]` and the vector in
 place of its encoder. The encoder is Llama 3 8B Instruct with LLM2Vec's two LoRA
 adapters; it fits neither the GPU nor the free RAM, so the worker builds it
 empty, reads each layer's weights by safetensors header offsets with plain file
 reads (no mapping; on Windows a mapping is charged to commit in full), adds both
 adapters, runs the layer and drops it. Measured: 18 to 25 seconds, 1.7 GiB of
-video memory and about 1.5 GiB of RAM per new description. `fill.json` stores
-`params.text` and, in `generator`, `text_encoder` (`text_identity()`) for a
-described range only. The Console says `Frames A–B generated from the
+video memory, about 1.5 GiB of RAM and 3.65 GiB of commit per new description,
+which reads the 16 GB of Llama files from disk each time. `fill.json` stores
+`params.text` and, in `generator`, `text_encoder` (`text_identity()`) and
+`text_version` (`kimodo_text.VERSION`) for a described range only. The Console says `Frames A–B generated from the
 description "..."` instead of the plain line. The text worker's failures are
 `failed` events (`A description requires a CUDA GPU.`, `Not enough free video
 memory to read the description...`, `The description files are not the expected
@@ -886,8 +904,9 @@ the stage `kimodo_setup`, five steps); `gui.STAGES['kimodo_setup']` and
 `MODEL_JOB_STAGES` show it in Model Manager, whose Kimodo panel (`kimodo_panel`,
 `install_kimodo`, **Install Runtime** / **Reinstall Runtime**) is on the GVHMR
 and ExMR tabs. `PROFILE_VERSION` is 2 (the runtime receipt `runtime.json`
-holds it; version 1 runtimes count as not installed and are rebuilt, the old
-folder moved to `.setup/kimodo-backup-*`). The Hidden ranges panel's **Set up…**
+holds it; version 1 runtimes count as not installed and are rebuilt). The job's
+`complete` event carries `message` (`Automatic fill runtime verified.` or
+`Automatic fill runtime installed.`), which the status line shows. The Hidden ranges panel's **Set up…**
 (`setup_requested`) opens Model Manager; `kimodo_runtime.text_issue()` stops only
 an Automatic row that has a description. `Setup_Kimodo.cmd` still works with
 the app closed and takes the app lock.
@@ -900,9 +919,14 @@ files of the two LLM2Vec adapter repositories at pinned revisions, 345 MB, in
 `model-0000N-of-00004.safetensors` of `meta-llama/Meta-Llama-3-8B-Instruct`,
 16.06 GB, in `models/kimodo_text/llama`). The stage `kimodo_text` needs the second
 and third groups. The Llama files are gated by Meta: there is no download URL;
-`MANUAL_INSTRUCTIONS['kimodo_llama']` explains it, and the one **Import...** pick
-of any of the four runs `models.import_llama`, which checks sizes and SHA-256 and
-the free disk space, copies to staging and publishes all four or none. The app
+`MANUAL_INSTRUCTIONS['kimodo_llama']` explains it. **Import...** on any group row
+runs `models.import_group`: the user picks one file (any of the four Llama
+files; `model.safetensors` of a Kimodo copy, the others taken by their paths in
+the repository; the mntp `adapter_model.safetensors`, the supervised adapter
+taken from a folder `LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised` or
+`supervised` next to its folder, `group_sources`). It sweeps stale `.part`
+files, checks the members still missing for presence, size, free disk space
+and SHA-256, copies them to staging and publishes all or none. The app
 never reads, stores or sends a Hugging Face token or password; do not add one.
 No file that is hashed into a reconstruction cache identity (`worker.py` and the
 like) was changed for descriptions. `kimodo_fill.py` was, and its hash is in the

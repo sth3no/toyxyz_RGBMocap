@@ -69,18 +69,24 @@ MoCap stays open. A description is optional and needs two more groups of files
    encoder's code imports. Robot meshes and demo files are left out. It needs
    Git, internet access and 1 GiB of free disk space, and runs as a job with
    progress in the status line (63 seconds in the measured run). The button
-   then reads **Reinstall Runtime**; on a valid runtime it only verifies it
-   again and keeps it. A runtime installed by an earlier version
-   of `Setup_Kimodo.cmd` lacks the text packages and counts as not installed:
-   click **Install Runtime** again; the old folder is moved to a backup folder
-   under `.setup`, which you may delete.
+   then reads **Reinstall Runtime**: it checks the installed runtime again and
+   keeps it when the check passes (the status line says `Automatic fill runtime
+   verified.`); when the check fails it installs the runtime again (`Automatic
+   fill runtime installed.`). A runtime installed by an earlier version of
+   `Setup_Kimodo.cmd` lacks the text packages and counts as not installed:
+   click **Install Runtime** again. The old folder is replaced only once the
+   new runtime has been checked, and then removed.
 2. The motion model. Kimodo needs eight files of `nvidia/Kimodo-SOMA-RP-v1.2`
    at a pinned revision, **1.13 GB** in total (the model itself is 1.13 GB; the
    other seven are a few kilobytes). Their rows appear on the **GVHMR** and
    **ExMR** tabs as one row, **Kimodo Motion Generation (Experimental,
    optional)**. **Auto Download** on it fetches all eight files, each checked
-   by SHA-256. **Download All** skips it. **Import...** works for files you
-   downloaded yourself; the default location is
+   by SHA-256. **Download All** skips it. If the download fails, download the
+   eight files yourself into one folder, keeping their folders
+   (`model.safetensors`, `config.yaml` and
+   `stats/motion/<body|global_root|local_root>/<mean|std>.npy`), click
+   **Import...** on the row and pick `model.safetensors`: the app imports all
+   eight from that folder as it does the Llama files below. They go to
    `models/kimodo/Kimodo-SOMA-RP-v1.2/`.
 3. For a description, two more rows:
    - **Kimodo Text Adapters (Experimental, optional)**, **345 MB**, eight
@@ -88,7 +94,12 @@ MoCap stays open. A description is optional and needs two more groups of files
      and `...-mntp-supervised` (MIT, public) with their configurations and the
      tokenizer, at pinned revisions. **Auto Download** fetches them (about 10
      seconds in the measured run). They live in `models/kimodo_text/mntp/` and
-     `models/kimodo_text/supervised/`.
+     `models/kimodo_text/supervised/`. If the download fails, download the six
+     files of the `...-mntp` repository into one folder and the two of
+     `...-mntp-supervised` into a folder named
+     `LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised` (or `supervised`) next
+     to it, click **Import...** and pick `adapter_model.safetensors` of the
+     first folder: the app imports all eight.
    - **Llama 3 8B Instruct Weights for Descriptions (Experimental, optional)**,
      **16.06 GB**, four files `model-00001-of-00004.safetensors` to
      `model-00004-of-00004.safetensors` of `meta-llama/Meta-Llama-3-8B-Instruct`.
@@ -101,7 +112,8 @@ MoCap stays open. A description is optional and needs two more groups of files
      on the row and pick **any one of them**: the app imports all four from
      that folder (21 seconds from a local folder in the measured run), checks
      each one's size and SHA-256 and publishes none of them unless all pass. It
-     needs 16 GB of free disk space for them. Other Llama models, Llama 3.1 and
+     needs free disk space for the files still missing plus 256 MiB (about
+     16.3 GB when all four are missing). Other Llama models, Llama 3.1 and
      the original `consolidated.00.pth` are not accepted. They go to
      `models/kimodo_text/llama/`.
 4. Open a project with hidden ranges and choose **Automatic (Experimental)**
@@ -119,10 +131,10 @@ obtained in Model Manager as above.
    Setup_Kimodo.cmd
    ```
 
-Re-running the setup keeps a runtime whose receipt is valid. To rebuild a
-damaged one, close the app, delete the `runtime_kimodo` folder and run the
-setup again. Each reinstall over an existing out-of-date folder leaves a
-backup folder under `.setup`.
+Re-running the setup (**Reinstall Runtime**, or `Setup_Kimodo.cmd`) keeps a
+runtime whose receipt is valid and that passes its check; a runtime that fails
+the check is installed again. Staging folders of a cancelled setup are removed
+by the next one.
 
 ## Fill a hidden range
 
@@ -156,35 +168,70 @@ The **Description** field under **Variation** says what the person does in the
 range. Leave it empty and nothing changes: the range is generated exactly as
 before descriptions existed, and none of the description files are needed.
 
-**What to write.** One short action, in English, in the third person, starting
-as the placeholder does: `A person raises both arms above the head.`, `A person
-covers their face with one hand.`, `A person walks while waving with the right
-hand.` At most 200 characters, one line (line breaks and repeated spaces become
-one space; anything above 200 characters is cut). Other languages were not
-tried.
+**What to write.** One short action, in English, in the third person, as in
+the field's placeholder `Optional, in English: A person waves with the right
+hand.` Other examples: `A person raises both arms above the head.`, `A person
+covers their face with one hand.` At most 200 characters, one line (line
+breaks and repeated spaces become one space, control characters are dropped,
+anything above 200 characters is cut). Other languages were not tried. Before
+it is read, the description is tidied the way Kimodo tidies its own prompts:
+the first letter is made a capital and every other letter small, and a final
+period is added. Capitals inside the sentence therefore do not survive, and
+neither do decimal numbers: `1.5` is read as `1. 5`, a sentence break. Write
+plain words, such as "one and a half metres". When the tidied sentence differs
+from what you typed, the Console line says what was read, for example
+`Description read as "A person covers their face with one hand." in N
+seconds; peak video memory X GiB.`
 
 **What it costs.** The first time a description is used, a separate worker
 reads it with the text encoder: 18 to 25 seconds, a peak of 1.7 GiB of video
-memory and about 1.5 GiB of RAM on an RTX 5060 Ti. The encoder is Llama 3 8B
-Instruct with the two LLM2Vec adapters. It does not fit this GPU whole, so the
-worker streams its 32 layers through the GPU one at a time, reading each from
-the four Llama files and adding the adapters on the way. The result is Kimodo's
-4096-number vector for that text, kept in `<data folder>/cache/kimodo_text/`
-for every project; the same description is read again only when the text
-runtime, the text files or the worker's code change. The Console shows
-`Description read in N seconds; peak video memory X GiB.` Then the range is
-generated with the text guided at weight 4 (the constraints keep Kimodo's 2).
-The line for the range reads `Frames 101–120 generated from the description
-"A person raises both arms above the head.": the captured poses next to the
-range were missed by ... cm before it and ... cm after it.` The joined take's
-`fill.json` records the description and the identity of the text files used.
+memory, about 1.5 GiB of RAM and 3.65 GiB of committed memory (backed by the
+page file) on an RTX 5060 Ti. It reads the 16 GB of Llama files from disk for
+every new description; 18 to 25 seconds is the time from an NVMe drive, and a
+slower disk takes longer. The encoder is Llama 3 8B Instruct with the two
+LLM2Vec adapters. It does not fit this GPU whole, so the worker streams its 32
+layers through the GPU one at a time, reading each from the four Llama files
+and adding the adapters on the way. The result is a 4096-number vector for the
+text, kept in `<data folder>/cache/kimodo_text/` for every project; the same
+description is read again only when the text runtime, the text files or the
+worker's code change (a description read before the tidying was added is read
+again once). What was checked of that
+vector: on the encoder cut to 4 of its 32 layers it matches what LLM2Vec's own
+code computes (cosine 0.99997); at full depth it was checked only through its
+effect on the generated motion. The worker computes in float32 from weights
+rounded once to bfloat16, where Kimodo's own encoder computes in bfloat16. The
+Console shows `Description read in N seconds; peak video memory X GiB.` Then
+the range is generated with the text guided at weight 4 (the constraints keep
+Kimodo's 2). The line for the range reads `Frames 101–120 generated from the
+description "A person raises both arms above the head.": the captured poses
+next to the range were missed by ... cm before it and ... cm after it.` The
+joined take's `fill.json` records the description, the identity of the text
+files used and the text worker's version.
 
-**What it did.** In the app's window, on a 60-frame test range, `A person
-raises both arms above the head.` raised a wrist 23 cm above the head, where
-the same range without a description kept it 59 cm below; the captured poses
-next to the range were missed by 2 to 3 cm in both. In the trials made before
-(`experiments/hidden-person-fill/step-5-gate.md`), a 91-frame range of the
-walking clip with two seeds each, at weight 4:
+**What it did.** Two kinds of runs were made. The worker's own test, on a
+synthetic walking request of 60 frames: with `A person raises both arms above
+the head.` the highest wrist rose 23 cm above the head; without a description
+it stayed 59 cm below it. A run through the app's window, on a 91-frame range
+of a real clip (a man walking towards a fixed camera, covered for 3 seconds),
+with the descriptions typed into the field:
+
+| Description typed | In the 91 frames | Seams before / after | Fill took |
+| --- | --- | --- | --- |
+| `A person raises both arms above the head.` | both wrists above the head in 55 frames, the highest 36 cm above it | 2.4 / 1.5 cm | 60 s |
+| `a person covers their face with one hand` | a wrist within 25 cm of the head in 41 frames, nearest 23 cm | 2.5 / 1.6 cm | 57 s |
+| (none) | nearest wrist 77 cm from the head | 2.9 / 1.2 cm | 27 s |
+
+The described fills include reading the description (19 to 20 seconds). The
+real man walks with his arms down, so the described fills are further from what
+he did, as they must be: a mean pose error of 16.6 cm (arms raised) and 10.8 cm
+(face covered) against 7.7 cm for the fill without a description. On this one
+range the described fills also slid the toes 30 to 45 % more than the plain
+fill. The second description was typed lower-case without a period, before the
+tidying existed; it is read now as `A person covers their face with one hand.`,
+so a fill made with it today can differ from the one measured.
+
+In the trials made before (`experiments/hidden-person-fill/step-5-gate.md`), a
+91-frame range of the walking clip with two seeds each, at weight 4:
 
 | Description | Measure | No description | Weight 4 |
 | --- | --- | --- | --- |
@@ -221,7 +268,14 @@ clear the description.
 - A description is one short action, in English, third person, up to 200
   characters. Compound descriptions and actions that fight the straight path
   mostly did not show in a 3-second range, and nobody has looked at a described
-  fill by eye yet.
+  fill by eye yet. Capitals inside it and decimal numbers do not survive the
+  tidying (see [Describe the range](#describe-the-range)).
+- A range with a description cannot be filled again, for example with another
+  **Variation**, once the Llama files or the text adapters were removed, even
+  though its description was read before. Remove model files with **Model
+  Manager** (**Delete Selected...** on the installed models): the app also keeps
+  hard links of model files in other places, so deleting a file by hand may free
+  no disk space.
 - Without a description, Kimodo is given the poses on both sides and nothing
   else.
 - It needs an NVIDIA GPU with about **2 GB** of free video memory on top of
@@ -303,15 +357,28 @@ nothing measurable.
   its files. Check the internet connection and try again.` (followed by the last
   line of the tool's output), `Git was not found. Install Git for Windows or run
   install.cmd again.` or `Not enough free disk space to set up automatic fill (1
-  GiB needed).`: fix that and click **Install Runtime** again. Nothing of the
-  old runtime is replaced until the new one has been checked.
+  GiB needed).`: fix that and click **Install Runtime** (or **Reinstall
+  Runtime**) again. Nothing of the old runtime is replaced until the new one
+  has been checked. If an installed runtime is damaged, **Reinstall Runtime**
+  finds it in its check and installs it again; nothing needs deleting by hand.
 - `A description needs the Kimodo text adapters and the Llama 3 weights. Use
   Set up… to get them in Model Manager.`: **Auto Download** the **Kimodo Text
   Adapters** row and import the Llama weights. Importing the Llama weights can
   say `Choose one of the four model-0000N-of-00004.safetensors files.`, `... is
   missing next to the file you chose.`, `... is not complete (expected N bytes).`,
   `... is not the expected Llama 3 8B Instruct file.` or `Not enough free disk
-  space for ... (X GiB needed).`; nothing new is kept after a refusal.
+  space for ... (X GiB needed).`; nothing new is kept after a refusal. Import
+  on the other two rows refuses the same way (`... is not the expected
+  Kimodo-SOMA-RP-v1.2 file.`, `... is not the expected LLM2Vec adapter
+  file.`), names a missing file by its place relative to the file you chose
+  (for example `stats/motion/body/mean.npy is missing next to the file you
+  chose.`) and asks for the right file to pick (`Choose model.safetensors of a
+  downloaded copy of nvidia/Kimodo-SOMA-RP-v1.2.`, `Choose
+  adapter_model.safetensors in the folder of
+  McGill-NLP/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp.`).
+- `The text encoder returned an empty result.` means the text worker produced a
+  vector of zeros, which the generator cannot use; nothing is kept. Try again,
+  and if it repeats, get the description files again in Model Manager.
 - `The description files are not the expected version. Get them again in Model
   Manager.` means a Llama or adapter file does not read as the pinned one.
   `A description requires a CUDA GPU.` and `Not enough free video memory to read
