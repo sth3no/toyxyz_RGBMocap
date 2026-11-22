@@ -177,11 +177,12 @@ class PeopleWorkspace:
         self.sync_scene_visibility()
 
         self.restore_workspace_camera(consume=True)
-        if self._hidden_refresh:
+        if self._hidden_refresh and not self.busy:
             # A hidden range choice changes the takes the shared floor is resolved from. The floor is resolved again
-            # while this scene loads, so a corrected take and the take statuses are current only now.
+            # while this scene loads, so a corrected take is current only now. A preview loaded before that left the
+            # take's motion out, and its files have not changed since, so it is read again.
             self._hidden_refresh=False
-            if self.preview_data is not None:self.apply_preview()
+            if self.project is not None:self.preview_signature=None;self.refresh_results()
             self.populate_person_takes();self.update_readiness()
 
     def sync_shared_floor_controls(self):

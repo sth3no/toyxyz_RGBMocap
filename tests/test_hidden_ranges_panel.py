@@ -107,19 +107,20 @@ class ChoiceGlueTest(unittest.TestCase):
         host.motion_view=SimpleNamespace(set_people_scene=lambda scene:None)
         for name in('sync_shared_floor_controls','sync_scene_visibility'):setattr(host,name,lambda:None)
         host.restore_workspace_camera=lambda consume=False:None
-        host.apply_preview=lambda:self.calls.append(('preview',))
+        host.refresh_results=lambda:self.calls.append(('reload',host.preview_signature))
         scene=SimpleNamespace(close=lambda:None)
         PeopleWorkspace.people_scene_ready(host,generation,scene)
-    def test_a_choice_refreshes_the_loaded_take_once_the_scene_is_ready(self):
+    def test_a_choice_reads_the_loaded_take_again_once_the_scene_is_ready(self):
         # The shared floor is resolved again while the scene loads; only then is a corrected take current again.
-        host=self.host(self.J,preview_data=object(),_hidden_refresh=False)
+        host=self.host(self.J,preview_signature='loaded before the floor was resolved',_hidden_refresh=False)
         self.choose(host,'smooth');self.calls.clear()
         self.ready(host,generation=6);self.assertEqual(self.calls,[])               # a superseded load keeps the request
-        self.ready(host);self.assertEqual(self.calls,[('preview',),('populate',)])
+        host.busy=True;self.ready(host);self.assertEqual(self.calls,[])              # so does a running job; its end loads the scene again
+        host.busy=False;self.ready(host);self.assertEqual(self.calls,[('reload',None),('populate',)])
         self.calls.clear();self.ready(host);self.assertEqual(self.calls,[])           # an ordinary scene load does not
-    def test_no_preview_is_applied_without_a_loaded_take(self):
-        host=self.host(self.J,preview_data=None,_hidden_refresh=False)
-        self.choose(host,'smooth');self.calls.clear()
+    def test_nothing_is_read_without_a_loaded_take(self):
+        host=self.host(self.J,preview_signature=None,_hidden_refresh=False);host.project=None
+        host._hidden_refresh=True
         self.ready(host);self.assertEqual(self.calls,[('populate',)])
     def listed(self,host):
         from mocap.people_ui import PeopleWorkspace
