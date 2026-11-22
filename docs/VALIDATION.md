@@ -1,5 +1,98 @@
 # Source package validation
 
+## Tutorial from Settings (2026-11-23)
+
+**File > Settings...** has a **Tutorial** row with one button per chapter. A
+button applies and saves the chosen theme and scale like **OK**, closes the
+dialog and starts that chapter.
+
+- Tests, offscreen with the GUI runtime, on the real `MainWindow`
+  (`tests/test_tutorial_window.py`, 36 tests in all): the dialog offers both
+  chapters; a chapter button starts its chapter after the dialog closes; a
+  theme and scale chosen before the button are applied and saved, and the
+  tutorial card takes the new scale; **OK** and **Cancel** start nothing. The
+  dialog's `exec` was replaced by a function standing for the user. The whole
+  `tests` folder in one process: 660 tests passed, 66 skipped, none failed.
+- The dialog was drawn offscreen in the dark and the light theme and looked at:
+  the row and both buttons fit.
+- Not run: the dialog on a real screen.
+
+## Reconstruct 3D in view and people the 3D view cannot draw (2026-11-23)
+
+Seen in the real window on a 1080p screen: with four people checked only one
+was drawn, the view said `Person 2: handflow_initial result unavailable` twice,
+said nothing about two people that were never reconstructed, and **Reconstruct
+3D** was below the scrolled settings of the right panel, out of sight.
+
+- **Analyze 2D**, **Reconstruct 3D**, **Prepare Preview** and **Cancel Job**
+  now stand below the scrolling settings instead of inside them.
+- The 3D view names the take and the button: `Person 2, frames 121–200: no
+  result for the selected options. Click Reconstruct 3D.`, or `... no corrected
+  result for the current settings. Click Apply Correction.` when only the
+  correction is missing. Each note is shown once, on its own line, the first
+  three and a count of the rest. Checked people without any take get `Person 3,
+  Person 4: not reconstructed yet. Click Reconstruct 3D.` It also says `1 person
+  visible` instead of `1 people visible`.
+- The tutorial says where **Reconstruct 3D** is and why a checked person may be
+  missing.
+- Tests, offscreen with the GUI runtime: `tests/test_scene_notes.py` (7) for
+  the texts; in `tests/test_tutorial_window.py` the real `MainWindow` at
+  1100×700, where the settings do not fit, keeps **Reconstruct 3D** and **Cancel
+  Job** fully in view at both ends of the scroll, and passes the names of
+  checked people without a take to the viewport. The tutorial modules now hold
+  56, 39 and 30 tests. The whole `tests` folder in one process: 654
+  tests passed, 66 skipped (the same three reasons as below), none failed.
+- Real data: the shared scene of a copy of the project `tennis_two_gaps` (GVHMR,
+  four people found, two of them never reconstructed) was loaded with this
+  branch's code. For the result without fingers it drew Person 1 and Person 2
+  and said `Person 2, frames 121–200: no result for the selected options. Click
+  Reconstruct 3D.` and `Person 3, Person 4: not reconstructed yet. Click
+  Reconstruct 3D.`; for the corrected result it named Person 2's three takes
+  with **Apply Correction**.
+- Not run: the new layout and texts on a real screen. The copy was loaded with
+  the code of this branch, which does not yet draw joined takes with fingers,
+  so the exact case of the screen (HandFlow checked) was not reproduced.
+
+## In-window tutorial (2026-11-22)
+
+**Help → Tutorial** leads through two chapters, **From video to export** and
+**Hidden ranges**, by highlighting controls of the main window and waiting for
+the user's step. The first start offers it.
+
+- Tests run offscreen with the GUI runtime: `tests/test_tutorial.py` (56:
+  saved state, placement of the card, overlay, card, controller),
+  `tests/test_tutorial_steps.py` (38: route, wording and the rules that end,
+  skip or repeat a step, on a stand-in window with the real Hidden ranges panel
+  and timeline) and `tests/test_tutorial_window.py` (27: the real `MainWindow`:
+  menu, first start, the Hidden ranges offer, appearance change, closing). All
+  121 passed. The whole `tests` folder in one process: 643 tests passed, 66
+  skipped (52 need torch and the bundled ffmpeg, 13 need the Kimodo runtime or
+  its files, 1 needs file symlinks), none failed.
+- The real `MainWindow` was built offscreen with the app's font and style, an
+  empty settings folder, no model files and no video, and both chapters were
+  stepped through with **Next**. 45 pictures of the window were saved in dark
+  100 % (1440×880 and the minimum 1100×700), light 100 % and dark 200 %
+  (1920×1200); for the Hidden ranges chapter the panel was filled with stand-in
+  data (one range, **Automatic (Experimental)** chosen). 15 of the pictures were
+  looked at: the ring lay on the named control, the card stayed inside the
+  window and off the highlighted controls, and colours followed the theme.
+  Three defects were found this way and fixed, each with a test that failed
+  first: the card's text was cut when the card had shown something before, the
+  close sign was clipped, and the card covered the timeline rows of the
+  **Motion Correction** step.
+- A review of the branch found three more defects, each fixed with a test that
+  failed first: a failure or cancellation left from an earlier job sent **Skip
+  step** on **Reconstruct 3D** back to the same step; a chapter opened from the
+  menu while the welcome or the offer was shown did not remember that it had
+  been answered; and **Reconstruct 3D** clicked before its step came up was not
+  counted, so the step waited for a second click.
+- Not run: the tutorial on a real screen, the dim over the OpenGL viewport on a
+  real GPU surface (offscreen it is composed in software), a chapter driven by
+  a real video with **Find person**, **Reconstruct 3D** and **Fill hidden
+  ranges**, a real open menu or dialog over the tutorial (the tests stand in
+  for both), and the sample clip: none is shipped yet, so **Use the sample
+  clip** has only been tested with a stand-in file.
+
 ## Hidden ranges for results with fingers (2026-11-22)
 
 Hidden ranges now work when the selected GVHMR result has fingers (HandFlow

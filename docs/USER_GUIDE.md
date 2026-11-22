@@ -501,6 +501,19 @@ need an offline copy; keep a backup of manually acquired restricted models.
 
 ## Start here
 
+The first start offers a tutorial inside the window. It highlights one control
+at a time, explains it and waits until you have done the step; **Next** moves
+on without doing it and **×** ends the tutorial. It never changes a setting or
+a project by itself, and it steps aside while a dialog is open. **Help →
+Tutorial** and **File → Settings...** start it again at any time, one chapter
+at a time: **From video to
+export** follows the steps below, and **Hidden ranges** shows how gaps between
+two takes of a person are filled (see [Hidden ranges](#hidden-ranges)). The
+first chapter covers ExMR, FlowHMR and GVHMR. When a person's hidden range can
+be filled, the app offers the second chapter: **Not now** hides the offer until
+the next start, **Don't show again** turns it off, and it stops by itself once
+the chapter has been finished.
+
 For ExMR, FlowHMR and GVHMR:
 
 1. Choose an **AI Motion Model**, then **File → Open Video**, or drop a video
@@ -509,7 +522,13 @@ For ExMR, FlowHMR and GVHMR:
 3. Use **Model Manager** to prepare the selected model's files.
 4. For ExMR/FlowHMR/GVHMR with several people, use **Find person** and check
    who to reconstruct. MAMMA/PromptHMR track people during reconstruction.
-5. Click **Reconstruct 3D**. Review the video, mesh and **Bone Overlay** together.
+5. Click **Reconstruct 3D** at the bottom of the right panel; it stays in view
+   while the settings above it scroll. Review the video, mesh and **Bone
+   Overlay** together. A checked person is drawn once they have a result for
+   the selected model and options. The 3D view names who is missing and the
+   button that creates the result, for example `Person 2, frames 121–200: no
+   result for the selected options. Click Reconstruct 3D.` or `Person 3: not
+   reconstructed yet. Click Reconstruct 3D.`
 6. Adjust correction settings or contact timings, then click **Apply Correction**.
 7. **File → Export...** saves the displayed, applied animation.
 
@@ -557,6 +576,8 @@ Choose **File > Settings...** to select **Dark** or **Light** and adjust
 **UI Scale**. The scale is applied on top of the display scale and changes
 text, buttons, and panels together. **Default** resets the choices to **Dark**
 and **100%**. Select **OK** to apply and save your choices immediately.
+The **Tutorial** buttons apply and save the choices like **OK** and then start
+that chapter of the tutorial; **Help → Tutorial** has the same chapters.
 
 ### RIFE frame interpolation
 

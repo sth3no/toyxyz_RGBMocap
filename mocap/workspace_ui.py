@@ -83,6 +83,7 @@ def resize_appearance_controls(window):
     window.appearance_sidebar.setMaximumWidth(ui_px(330))
     window.appearance_sidebar.setMinimumWidth(ui_px(235))
     window.log.setMaximumHeight(ui_px(110))
+    if getattr(window, 'tutorial', None):window.tutorial.refresh_appearance()
 
 
 def show_appearance_settings(window):
@@ -91,10 +92,9 @@ def show_appearance_settings(window):
     if dialog.exec() != QDialog.DialogCode.Accepted:
         return
     choices = dialog.theme.currentData(), dialog.scale.currentData()
-    if choices == old:
-        return
-    apply_appearance(QApplication.instance(), *choices)
-    resize_appearance_controls(window)
+    if choices != old:
+        apply_appearance(QApplication.instance(), *choices)
+        resize_appearance_controls(window)
     if choices[1] > old[1] and not (window.isMaximized() or window.isFullScreen()):
         area = window.screen().availableGeometry()
         decorations = window.frameGeometry().size() - window.size()
@@ -103,6 +103,9 @@ def show_appearance_settings(window):
         frame = window.frameGeometry()
         window.move(max(area.left(), min(frame.left(), area.right() - frame.width() + 1)),
                     max(area.top(), min(frame.top(), area.bottom() - frame.height() + 1)))
+    if dialog.chapter:  # a Tutorial button of the dialog: the chapter starts in the appearance just chosen
+        from .tutorial import open_chapter
+        open_chapter(window, dialog.chapter)
 
 
 def build_workspace(w):
@@ -616,7 +619,8 @@ def build_workspace(w):
     w.cancel_button.setToolTip('Stop the current processing queue. Completed results are kept.')
     w.cancel_button.setEnabled(False)
     w.model_actions.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Maximum)
-    content_layout.addWidget(w.model_actions)
+    # Below the scrolling settings, not inside them: Reconstruct 3D stays in view on a window too short for every setting.
+    side_layout.addWidget(w.model_actions)
     content_layout.addStretch()
     w.settings_scroll=scroll
     w.model_choice.currentIndexChanged.connect(w.select_model)
@@ -677,6 +681,16 @@ def build_workspace(w):
     file_menu.addSeparator()
     file_menu.addAction("Exit", w.close)
     help_menu = w.menuBar().addMenu("Help")
+    from .tutorial import open_chapter
+    from .tutorial_steps import CHAPTERS
+    w.tutorial = None  # created by the first chapter opened, or by app.py on a normal start
+    tutorial_menu = help_menu.addMenu('Tutorial')
+    tutorial_menu.setToolTipsVisible(True)
+    w.tutorial_actions = {}
+    for key, tip in (('basics', 'Show the way from a video to an export, step by step in this window.'),
+                     ('hidden_ranges', 'Show how gaps between two takes of a person are filled.')):
+        w.tutorial_actions[key] = tutorial_menu.addAction(CHAPTERS[key].title, lambda key=key: open_chapter(w, key))
+        w.tutorial_actions[key].setToolTip(tooltip_text(tip))
     w.check_system_action = help_menu.addAction("Check System", lambda: w.start_jobs([("diagnose", [])]))
     help_menu.addAction("Controls", lambda: QMessageBox.information(w, "Workspace Controls",
         "Space: Play / Pause\nLeft / Right: Step one frame\nShift + Left / Right: Step one second\nHome / End: First / last frame\n\nViewport: LMB orbit, MMB / RMB pan, wheel zoom\nGizmo: click an axis to align the view\nTimeline: drag video clip edges to trim\nClick the frame ruler or drag the blue frame box to seek\nWheel to zoom; MMB to pan; Reset Trim restores the full clip\nClick ? in the timeline header for editing help.\nPlayback and reconstruction use the selected video clip range.\n\nThe mesh shows the selected motion result.\nFlowHMR and ExMR track fingers directly. GVHMR uses optional HandFlow for finger tracking.\nUse File > Export to choose FBX, BVH or a portable Blender project and save the displayed animation."))
