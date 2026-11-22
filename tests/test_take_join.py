@@ -242,7 +242,7 @@ def straight(calls,end_pose=1.25,drop=0,nan=False,seam=(1.2,2.3),without=(),**re
     def generate(req):
         calls.append(req);n=req['frames'];c0,c1=min(5,len(req['before_pelvis'])),min(5,len(req['after_pelvis']))
         t=(np.arange(1,n+1)/(n+1))[:,None];line=lambda b,a:np.vstack([b[-c0:],b[-1]+(a[0]-b[-1])*t,a[:c1]])[drop:]
-        out=dict(version=2,context=np.array([c0,c1]),orient=line(req['before_orient'],req['after_orient']),pose=line(req['before_pose'],req['after_pose']),
+        out=dict(version=3,context=np.array([c0,c1]),orient=line(req['before_orient'],req['after_orient']),pose=line(req['before_pose'],req['after_pose']),
                  pelvis=line(req['before_pelvis'],req['after_pelvis']),contacts=(np.arange(c0+n+c1-drop)[:,None]+np.arange(4))%3==0,end_pose_cm=np.float64(end_pose),
                  seam_cm=np.array(seam,np.float64))
         if nan:out['pose'][c0+2,5]=np.nan
@@ -259,7 +259,9 @@ class AutoAssembleTest(unittest.TestCase):
         calls=[];out=self.join(calls);self.assertEqual(len(calls),1);q=calls[0];J=out['params']['initial']
         shapes=dict(before_orient=(45,3),before_pose=(45,63),before_pelvis=(45,3),after_orient=(45,3),after_pose=(45,63),after_pelvis=(45,3),rest=(22,3))
         for k,s in shapes.items():self.assertEqual(np.shape(q[k]),s,k)
-        self.assertEqual((q['version'],q['frames'],q['seed'],q['fps']),(2,20,7,30.));self.assertEqual(float(q['sole']),.02)
+        self.assertEqual((q['version'],q['frames'],q['seed'],q['fps']),(3,20,7,30.));self.assertEqual(float(q['sole']),.02)
+        self.assertEqual((q['text'].shape,q['text'].dtype.kind,str(q['text'])),((),'U',''))   # no description: an empty text and a zero feature
+        self.assertEqual((q['text_feature'].shape,q['text_feature'].dtype),((4096,),np.float32));self.assertFalse(q['text_feature'].any())
         np.testing.assert_array_equal(q['rest'],REST)
         np.testing.assert_allclose(q['before_pelvis'],J['transl'][55:100]+P0,atol=1e-12);np.testing.assert_allclose(q['after_pelvis'],J['transl'][120:165]+P0,atol=1e-12)
         np.testing.assert_allclose(q['before_orient'],J['global_orient'][55:100],atol=1e-12);np.testing.assert_allclose(q['after_pose'],J['body_pose'][120:165],atol=1e-12)
@@ -314,6 +316,17 @@ class AutoAssembleTest(unittest.TestCase):
         rest=REST.copy();g=auto(self.a,self.b,[]);g['body']=dict(rest=rest,sole=.02);inner=g['generate']
         def generate(req):req['rest'][:]=0;return inner(req)
         g['generate']=generate;assemble([self.a,self.b],[g]);np.testing.assert_array_equal(rest,REST)
+    def test_description_reaches_the_request(self):
+        calls,texts=[],[];feature=np.arange(4096,dtype=np.float32)/4096
+        def describe(text):texts.append(text);return feature
+        g=auto(self.a,self.b,calls);g['params']=dict(seed=7,text='A person waves.');g['describe']=describe
+        out=assemble([self.a,self.b],[g]);q=calls[0]
+        self.assertEqual(texts,['A person waves.']);self.assertEqual((q['text'].shape,str(q['text'])),((),'A person waves.'))
+        self.assertEqual(q['text_feature'].dtype,np.float32);np.testing.assert_array_equal(q['text_feature'],feature)
+        self.assertEqual(out['reports'],[dict(end_pose_cm=1.25,seam_cm=[1.2,2.3])])
+        g=auto(self.a,self.b,[]);g['describe']=describe;assemble([self.a,self.b],[g]);self.assertEqual(len(texts),1)   # no description: not called
+        g=auto(self.a,self.b,[]);g['params']=dict(seed=7,text='A person waves.')
+        with self.assertRaisesRegex(ValueError,'^Automatic fill needs a motion generator$'):assemble([self.a,self.b],[g])   # a description needs `describe`
     def test_other_methods_report_nothing(self):
         a,b=source(0,100),source(120,200,W=WB,pelvis=PB)
         self.assertEqual(assemble([a,b],[gap(a,b)])['reports'],[None]);self.assertEqual(assemble([a,b],[copied(a,b)])['reports'],[None])
@@ -338,6 +351,7 @@ class WriteTest(unittest.TestCase):
         rng=np.random.default_rng(0);template=self.template=rng.normal(size=(5,3));self.pelvis=np.full(5,.2)@template
         np.savez(models/'body_models/smplx/SMPLX_NEUTRAL.npz',J_regressor=np.full((2,5),.2),v_template=template,shapedirs=rng.normal(size=(5,3,10))*.01)
         patch=mock.patch.object(paths,'MODELS',models);patch.start();self.addCleanup(patch.stop)
+        self.text_cache=Path(self.tmp.name)/'cache/kimodo_text';patch=mock.patch.object(auto_fill,'TEXT_CACHE',self.text_cache);patch.start();self.addCleanup(patch.stop)
         root.mkdir();subprocess.run([str(FFMPEG),'-v','error','-f','lavfi','-i','testsrc=size=64x48:rate=30','-frames:v','220',
             '-pix_fmt','yuv420p','-c:v','libx264',str(root/'input.mp4')],check=True,creationflags=0x08000000)
         (root/'project.json').write_text(json.dumps(dict(frames=220,fps=30,start=0.,end=220/30,width=64,height=48,pipeline=dict(model=self.MODEL),exmr_options=dict(static_camera=True),stages={})),encoding='utf-8')
@@ -519,8 +533,9 @@ class WriteTest(unittest.TestCase):
         self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before);self.assertFalse(J.exists())
         self.choose(offset=200);before=self.snapshot();code,events=self.join()  # the donor no longer covers the range
         self.assertEqual((code,events[0]['message']),(1,'No hidden range is selected for filling.'));self.assertEqual(self.snapshot(),before)
-    def automatic(self,seed=7,**choices):
-        state=ps.load_people(self.root);state['people'][0]['gap_fill']={'100_110':{'method':'auto','seed':seed},**choices};ps.save_people(self.root,state)
+    def automatic(self,seed=7,text=None,**choices):
+        choice={'method':'auto','seed':seed,**({} if text is None else {'text':text})}
+        state=ps.load_people(self.root);state['people'][0]['gap_fill']={'100_110':choice,**choices};ps.save_people(self.root,state)
     def generator(self,calls):
         gen=straight(calls);return mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:gen(request))
     def test_automatic_join(self):
@@ -531,7 +546,8 @@ class WriteTest(unittest.TestCase):
         np.testing.assert_allclose(q['rest'],np.full((2,5),.2)@self.template,atol=1e-12);self.assertAlmostEqual(q['sole'],self.template[:,1].min(),places=12)
         fill=json.loads((J/'fill.json').read_text(encoding='utf-8'))
         self.assertEqual(fill['gaps'],[dict(first=100,end=110,method='auto',params=dict(seed=7),
-            generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=2,end_pose_cm=1.25,seam_cm=[1.2,2.3]))])
+            generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=3,end_pose_cm=1.25,seam_cm=[1.2,2.3]))])
+        self.assertEqual(str(q['text']),'');self.assertFalse(q['text_feature'].any())
         info=dict(type='info',stage='take_join',message='Frames 101–110 generated: the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
         self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
         self.assertEqual(list(np.load(J/'fill_mask.npy')[95:115]),[0]*5+[3]*10+[0]*5)
@@ -626,6 +642,73 @@ class WriteTest(unittest.TestCase):
         self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message=kimodo_runtime.SETUP)]))
         self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before)
         self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists());self.assertNotIn('joins',ps.load_people(self.root)['people'][0])
+    def fill(self):return json.loads((self.root/'p1/takes/000000000_000000200_fill_v1/fill.json').read_text(encoding='utf-8'))
+    def test_automatic_join_with_description(self):
+        calls,texts=[],[];feature=np.full(4096,.5,np.float32);self.automatic(text='  A person  waves. ')
+        def describe(text,**kw):texts.append(text);return feature
+        def join():
+            with self.generator(calls),mock.patch.object(auto_fill,'describe',describe):return self.join()
+        code,events=join();self.assertEqual(code,0,events);self.assertEqual(texts,['A person waves.'])
+        q=calls[0];self.assertEqual(str(q['text']),'A person waves.');np.testing.assert_array_equal(q['text_feature'],feature)
+        generator=dict(name='kimodo',identity=kimodo_runtime.identity(),version=3,end_pose_cm=1.25,seam_cm=[1.2,2.3])
+        self.assertEqual(self.fill()['gaps'],[dict(first=100,end=110,method='auto',params=dict(seed=7,text='A person waves.'),
+            generator=dict(generator,text_encoder=kimodo_runtime.text_identity()))])
+        info=dict(type='info',stage='take_join',message='Frames 101–110 generated from the description "A person waves.": the captured poses next to the range '
+            'were missed by 1.2 cm before it and 2.3 cm after it.')
+        self.assertEqual([e['type'] for e in events],['progress','info','takes_joined','complete']);self.assertEqual(events[1],info)
+        person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]))
+        code,events=join();self.assertEqual((code,len(calls),len(texts)),(0,1,1));self.assertIs(events[-1]['cached'],True);self.assertEqual(events[1],info)
+        self.automatic(text='A person sits.');person=ps.load_people(self.root)['people'][0];self.assertFalse(ps.join_current(self.root,person,person['joins'][0]))
+        code,events=join();self.assertEqual((code,len(calls),texts[1:]),(0,2,['A person sits.']));self.assertEqual(str(calls[1]['text']),'A person sits.')
+        self.automatic();code,events=join()   # the description removed: generated as before, no text encoder
+        self.assertEqual((code,len(calls),len(texts)),(0,3,2));self.assertEqual(str(calls[2]['text']),'');self.assertFalse(calls[2]['text_feature'].any())
+        self.assertEqual(self.fill()['gaps'][0],dict(first=100,end=110,method='auto',params=dict(seed=7),generator=generator))
+        self.assertEqual(events[1]['message'],'Frames 101–110 generated: the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
+    def workers(self):
+        """Real auto_fill.generate and auto_fill.describe in front of fake workers; returns the lists of generation and text runs."""
+        runs,reads=[],[];generate,describe=auto_fill.generate,auto_fill.describe
+        def run(command):
+            args=dict(zip(command[1::2],command[2::2]));runs.append(command)
+            with np.load(args['--request'],allow_pickle=False) as z:request={k:z[k] for k in z.files}
+            runs[-1]=request;np.savez(args['--response'],**straight([])(request));return 0,[]
+        def read(command):
+            args=dict(zip(command[2::2],command[3::2]));reads.append(Path(args['--prompt-file']).read_text(encoding='utf-8'))
+            np.save(args['--out'],np.full(4096,len(reads),np.float32));return 0,[]
+        patches=[mock.patch.object(kimodo_runtime,'issue',lambda:None),mock.patch.object(kimodo_runtime,'text_issue',lambda:None),
+                 mock.patch.object(kimodo_runtime,'command',lambda args:['kimodo',*map(str,args)]),
+                 mock.patch.object(auto_fill,'generate',lambda folder,request,**kw:generate(folder,request,run=run,**kw)),
+                 mock.patch.object(auto_fill,'describe',lambda text,**kw:describe(text,run=read,**kw))]
+        for p in patches:p.start();self.addCleanup(p.stop)
+        return runs,reads
+    def test_one_reading_per_description(self):
+        state=ps.load_people(self.root);person=state['people'][0]
+        person['takes']=[person['takes'][0],self.take(110,140,WB),self.take(150,170,WC),self.take(180,200,WD)];ps.save_people(self.root,state)
+        same={'method':'auto','seed':3,'text':'A person waves.'};self.automatic(seed=3,text='A person waves.',**{'140_150':same,'170_180':same})
+        runs,reads=self.workers();code,events=self.join()
+        self.assertEqual((code,len(runs),reads),(0,3,['A person waves.']),events)   # three ranges, one reading
+        self.assertEqual([str(r['text']) for r in runs],['A person waves.']*3);self.assertTrue(all(r['text_feature'][0]==1 for r in runs))
+        self.automatic(seed=3,text='A person waves.',**{'140_150':dict(same,text='A person sits.'),'170_180':same});code,events=self.join()
+        self.assertEqual((code,len(runs),reads[1:]),(0,4,['A person sits.']),events)   # only the changed range is generated again
+        self.assertEqual((str(runs[3]['text']),runs[3]['text_feature'][0]),('A person sits.',2.))
+        self.assertEqual([g['params'] for g in self.fill()['gaps']],[dict(seed=3,text='A person waves.'),dict(seed=3,text='A person sits.'),dict(seed=3,text='A person waves.')])
+        self.assertEqual(len(list(self.text_cache.iterdir())),2)
+    def test_description_needs_the_text_files(self):
+        sentence='A description needs the Kimodo text adapters and the Llama 3 weights. Use Set up… to get them in Model Manager.'
+        runs,reads=self.workers();patch=mock.patch.object(kimodo_runtime,'text_issue',lambda:sentence);patch.start();self.addCleanup(patch.stop)
+        self.automatic(text='A person waves.');before=self.snapshot();code,events=self.join()
+        self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message=sentence)]));self.assertEqual((runs,reads,self.stderr.getvalue()),([],[],''))
+        self.assertEqual(self.snapshot(),before);self.assertFalse(self.text_cache.exists());self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists())
+        self.automatic();code,events=self.join()   # without a description the range is still filled
+        self.assertEqual((code,len(runs),reads),(0,1,[]),events);self.assertNotIn('text_encoder',self.fill()['gaps'][0]['generator'])
+    def test_step_4_join_stays_current(self):
+        calls=[];self.automatic()
+        with self.generator(calls):self.assertEqual(self.join()[0],0)
+        J=self.root/'p1/takes/000000000_000000200_fill_v1';fill=self.fill();self.assertEqual(fill['gaps'][0]['params'],dict(seed=7))
+        fill['gaps'][0]['generator']['version']=2;(J/'fill.json').write_text(json.dumps(fill),encoding='utf-8')   # as step 4 wrote it
+        for text in(None,'',' \n '):
+            self.automatic(text=text);person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]),repr(text))
+            with self.generator(calls):code,events=self.join()
+            self.assertEqual((code,len(calls)),(0,1));self.assertIs(events[-1]['cached'],True)
 class ExmrWriteTest(WriteTest):MODEL='exmr'
 def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
 def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))

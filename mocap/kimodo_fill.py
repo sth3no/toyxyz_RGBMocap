@@ -16,8 +16,12 @@ import numpy as np
 from . import soma_convert as sc
 
 STAGE = 'take_join'
-VERSION, CONTEXT, MAX_FRAMES, MAX_SIDE, FPS, STEPS, SEEDS = 2, 5, 290, 45, 30., 100, 1000
+VERSION, CONTEXT, MAX_FRAMES, MAX_SIDE, FPS, STEPS, SEEDS = 3, 5, 290, 45, 30., 100, 1000
 MODEL_KEY = 'kimodo-soma-rp-v1.2'
+# Kimodo's guidance weights (text, constraints) with a description, as measured in step-5-gate.md; without one Kimodo's
+# default guidance is used, as in version 2.
+TEXT_WEIGHT, CONSTRAINT_WEIGHT = 4.0, 2.0
+FEATURE = 4096  # numbers of Kimodo's text feature
 SMOOTH, SMOOTH_MIN = 30, 5  # frames next to the range the smooth root is read from; fewest frames Kimodo's smoother handles
 SIDES = dict(orient=3, pose=63, pelvis=3)
 CONTACTS = [0, 1, 3, 4]  # Kimodo's 77-joint channels [L heel, L toe, L toe end, R heel, R toe, R toe end] -> [L heel, L toe, R heel, R toe]
@@ -33,6 +37,9 @@ def _check(request):
         r = {f'{side}_{k}': np.asarray(request[f'{side}_{k}'], np.float64) for side in ('before', 'after') for k in SIDES}
         r.update(rest=np.asarray(request['rest'], np.float64), sole=np.asarray(request['sole'], np.float64))
         version, frames, seed, fps = (np.asarray(request[k]) for k in ('version', 'frames', 'seed', 'fps'))
+        text, feature = np.asarray(request['text']), np.asarray(request['text_feature'])
+        if text.shape != () or text.dtype.kind != 'U' or feature.shape != (FEATURE,) or feature.dtype.kind != 'f':raise ValueError
+        r['text_feature'] = feature.astype(np.float32)
         if any(v.shape != () for v in (version, frames, seed, fps, r['sole'])) or r['rest'].shape != (22, 3):raise ValueError
         for side in ('before', 'after'):
             count = len(r[side+'_pelvis'])
@@ -46,7 +53,9 @@ def _check(request):
         raise ValueError(f'Automatic fill supports hidden ranges of 1 to {MAX_FRAMES} frames.')
     if fps != FPS:raise ValueError('Automatic fill supports 30 fps motion only.')
     if seed != int(seed) or not 0 <= seed < SEEDS:raise ValueError(f'The automatic fill seed must be a whole number from 0 to {SEEDS-1}.')
-    r.update(frames=int(frames), seed=int(seed), sole=float(r['sole']));return r
+    text = str(text[()])
+    if text and not r['text_feature'].any():raise ValueError('The automatic fill request has a description without its text features.')
+    r.update(frames=int(frames), seed=int(seed), sole=float(r['sole']), text=text);return r
 
 
 def plan(request, smooth=None):
@@ -94,15 +103,33 @@ def finish(request, plan, output):
 
 
 class NoText:
-    """Text encoder stand-in: automatic fill sends no text, and Kimodo zeroes an empty prompt's features."""
+    """Text encoder stand-in for a range without a description: Kimodo zeroes an empty prompt's features."""
+    feature = None
+
     def __call__(self, texts):
         import torch
         texts = [texts] if isinstance(texts, str) else texts
-        return torch.zeros(len(texts), 1, 4096), [1]*len(texts)
+        out = torch.zeros(len(texts), 1, FEATURE)
+        if self.feature is not None:out[[bool(t.strip()) for t in texts]] = torch.from_numpy(self.feature)
+        return out, [1]*len(texts)
 
     def to(self, device):return self
 
     def eval(self):return self
+
+
+class GivenText(NoText):
+    """Text encoder stand-in returning the description's feature, read beforehand by the text worker, for every non-empty
+    prompt; Kimodo's interface: (features (batch, 1, 4096), [1] * batch)."""
+    def __init__(self, feature):self.feature = np.asarray(feature, np.float32)
+
+
+def conditioning(r):
+    """(prompt, text encoder stand-in, guidance keywords of Kimodo's call) of a checked request. Without a description the
+    call is version 2's: an empty prompt and Kimodo's default guidance. With one, the prompt must be the description:
+    Kimodo zeroes the feature of an empty prompt."""
+    if not r['text']:return '', NoText(), {}
+    return r['text'], GivenText(r['text_feature']), dict(cfg_weight=[TEXT_WEIGHT, CONSTRAINT_WEIGHT])
 
 
 def _save(response, path):
@@ -129,10 +156,10 @@ def _generate(request, seed, emit):
     if not torch.cuda.is_available():raise RuntimeError('Automatic fill requires a CUDA GPU.')
     torch.set_num_threads(threads)
     smooth = lambda root: get_smooth_root_pos(torch.tensor(root, dtype=torch.float32)[None])[0].double().numpy()
-    p = plan(request, smooth)
+    p = plan(request, smooth);prompt, encoder, guidance = conditioning(_check(request))
     torch.cuda.set_per_process_memory_fraction(gpu_memory_fraction(*torch.cuda.mem_get_info()))
     emit('progress', stage=STAGE, current=0, total=STEPS, message='Automatic fill: loading the Kimodo model')
-    started = time.monotonic();model = load_model(MODEL_KEY, device='cuda', text_encoder=NoText())
+    started = time.monotonic();model = load_model(MODEL_KEY, device='cuda', text_encoder=encoder)
     skeleton = model.skeleton;neutral = torch.as_tensor(skeleton.neutral_joints).detach().double().cpu().numpy()
     parents = torch.as_tensor(skeleton.joint_parents).detach().cpu().numpy()
     if sum(x.numel() for x in model.parameters()) != PARAMETERS or list(skeleton.bone_order_names) != sc.SOMA30 or \
@@ -149,8 +176,8 @@ def _generate(request, seed, emit):
             yield i
         emit('progress', stage=STAGE, current=len(indices), total=len(indices), message='Automatic fill: generated')
     torch.manual_seed(seed);started = time.monotonic()
-    out = model('', p['frames'], num_denoising_steps=STEPS, constraint_lst=[[fb, root2d]], first_heading_angle=p['heading'],
-                post_processing=False, num_samples=1, progress_bar=steps)
+    out = model(prompt, p['frames'], num_denoising_steps=STEPS, constraint_lst=[[fb, root2d]], first_heading_angle=p['heading'],
+                post_processing=False, num_samples=1, progress_bar=steps, **guidance)
     out = {k: out[k][0].detach().cpu().numpy() for k in ('global_rot_mats', 'root_positions', 'foot_contacts')}
     generated, peak = time.monotonic()-started, torch.cuda.max_memory_allocated()/2**30
     response = finish(request, p, dict(out, names=list(model.output_skeleton.bone_order_names)));before, after = response['seam_cm']

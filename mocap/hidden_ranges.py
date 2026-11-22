@@ -34,8 +34,10 @@ def choice_params(choice):
     if m not in METHODS:raise ValueError(f'Unknown method: {m}')
     if m=='auto':
         seed=choice.get('seed',0)
-        if type(seed) is not int or not 0<=seed<=SEED_LIMIT:raise ValueError('Invalid automatic choice')
-        return m,dict(seed=seed)
+        text=choice.get('text','')
+        if type(seed) is not int or not 0<=seed<=SEED_LIMIT or not isinstance(text,str):raise ValueError('Invalid automatic choice')
+        text=normalise_text(text)  # without a description the params are those of step 4, so its joins stay current
+        return m,dict(seed=seed,text=text) if text else dict(seed=seed)
     if m!='copy':return m,{}
     p,mirror,off=choice.get('person'),choice.get('mirror',False),choice.get('offset',0)
     if type(p) is not int or type(mirror) is not bool or type(off) is not int or abs(off)>OFFSET_LIMIT:raise ValueError('Invalid copy choice')

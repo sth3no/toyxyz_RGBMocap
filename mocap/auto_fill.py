@@ -8,14 +8,20 @@ import json
 import os
 import subprocess
 import numpy as np
+from .paths import HOME
 
-# Version of the request and response arrays. The cache key also holds the SHA-256 of the worker's code (SOURCES),
-# so a change of either file generates every range again.
-VERSION = 2
+# Version of the request and response arrays; 3 adds the description (`text`, `text_feature`). The cache key also holds
+# the SHA-256 of the worker's code (SOURCES), so a change of either file generates every range again.
+VERSION = 3
 KNOWN = 5  # known frames the worker uses on each side
 SOURCES = tuple(Path(__file__).with_name(name) for name in ('kimodo_fill.py', 'soma_convert.py'))
+# Text features of descriptions, shared by every project: reading one takes the text worker about 20 seconds.
+TEXT_CACHE = HOME/'cache'/'kimodo_text'
+TEXT_SOURCE = Path(__file__).with_name('kimodo_text.py')
+FEATURE = 4096
 PREFIX = '@@MOCAP@@'
 NO_MOTION = 'Automatic fill returned no usable motion.'
+NO_FEATURE = 'Reading the description returned no usable result.'
 STOPPED = 'Automatic fill stopped unexpectedly.'
 NOT_WRITTEN = 'Automatic fill could not write its working files: {}'
 
@@ -95,14 +101,61 @@ def generate(folder, request, run=None, echo=print):
             folder.mkdir(parents=True, exist_ok=True);_remove(leftovers[1:])
             with open(asked, 'wb') as handle:np.savez(handle, **{k: np.asarray(v) for k, v in request.items()})
         except OSError as error:raise Unavailable(NOT_WRITTEN.format(error)) from None
-        try:code, lines = (run or (lambda c: _run(c, echo)))(command)
-        except OSError:raise Unavailable(STOPPED) from None
-        if code != 0:
-            failed = [e for e in map(_event, lines) if e.get('type') == 'failed']
-            raise Unavailable(str(failed[-1].get('message') or STOPPED) if failed else STOPPED)
+        _call(command, run, echo)
         response = _read(partial, request)
         if response is None:raise Unavailable(NO_MOTION)
         os.replace(partial, done)
     finally:
         _remove(leftovers)
     return response
+
+
+def _call(command, run, echo):
+    """Run a worker (`run(command)` -> (exit code, stdout lines), by default `_run`); Unavailable with its `failed` message."""
+    try:code, lines = (run or (lambda c: _run(c, echo)))(command)
+    except OSError:raise Unavailable(STOPPED) from None
+    if code != 0:
+        failed = [e for e in map(_event, lines) if e.get('type') == 'failed']
+        raise Unavailable(str(failed[-1].get('message') or STOPPED) if failed else STOPPED)
+
+
+def text_key(text):
+    """Cache name of a description's feature: the text, the text runtime and model files, and the text worker's code."""
+    from . import kimodo_runtime, kimodo_text
+    source = hashlib.sha256(TEXT_SOURCE.read_bytes()).hexdigest()
+    return hashlib.sha256(json.dumps([text, kimodo_runtime.text_identity(), kimodo_text.VERSION, source]).encode()).hexdigest()
+
+
+def _feature(path):
+    """The text feature stored at `path` when it is a complete one, else None."""
+    try:
+        with open(path, 'rb') as handle:feature = np.load(handle, allow_pickle=False)
+        ok = isinstance(feature, np.ndarray) and feature.shape == (FEATURE,) and feature.dtype == np.float32 and np.isfinite(feature).all()
+    except Exception:return None
+    return feature if ok else None
+
+
+def describe(text, run=None, echo=print):
+    """Kimodo's text feature of the description `text` ((4096,) float32), served from TEXT_CACHE when it is there; raises Unavailable."""
+    from . import kimodo_runtime
+    folder = TEXT_CACHE;name = text_key(text);done = folder/f'{name}.npy'
+    cached = _feature(done) if done.is_file() else None
+    if cached is not None:return cached
+    problem = kimodo_runtime.text_issue()
+    if problem:raise Unavailable(problem)
+    prompt, partial = folder/f'{name}.prompt.txt', folder/f'{name}.partial.npy'
+    try:command = kimodo_runtime.command(['text', '--prompt-file', prompt, '--out', partial])
+    except RuntimeError as error:raise Unavailable(str(error)) from None
+    leftovers = (prompt, partial, partial.with_name(partial.name+'.tmp'))  # also those of a run that was killed
+    try:
+        try:
+            folder.mkdir(parents=True, exist_ok=True);_remove(leftovers[1:])
+            prompt.write_bytes(text.encode('utf-8'))
+        except OSError as error:raise Unavailable(NOT_WRITTEN.format(error)) from None
+        _call(command, run, echo)
+        feature = _feature(partial) if partial.is_file() else None
+        if feature is None:raise Unavailable(NO_FEATURE)
+        os.replace(partial, done)
+    finally:
+        _remove(leftovers)
+    return feature

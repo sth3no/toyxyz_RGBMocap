@@ -103,9 +103,12 @@ AUTO_MISSED = ('Automatic fill could not connect the motion on both sides of fra
 def _auto(a, b, g, pelvis):
     n, A, B = g['end']-g['first'], a['params']['initial'], b['params']['initial']
     nb, na = min(AUTO_CONTEXT, len(A['transl'])), min(AUTO_CONTEXT, len(B['transl']))
+    # Without a description: an empty text and a zero feature, and the worker generates as version 2 did.
+    text = g['params'].get('text', '');feature = g['describe'](text) if text else np.zeros(auto_fill.FEATURE, np.float32)
     request = dict(version=auto_fill.VERSION, before_orient=A['global_orient'][-nb:].copy(), before_pose=A['body_pose'][-nb:].copy(), before_pelvis=A['transl'][-nb:]+pelvis,
                    after_orient=B['global_orient'][:na].copy(), after_pose=B['body_pose'][:na].copy(), after_pelvis=B['transl'][:na]+pelvis,
-                   rest=np.array(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.))
+                   rest=np.array(g['body']['rest'], np.float64), sole=float(g['body']['sole']), frames=n, seed=g['params']['seed'], fps=g.get('fps', 30.),
+                   text=np.array(text), text_feature=np.array(feature, np.float32))
     r = g['generate'](request);c0, c1 = min(auto_fill.KNOWN, nb), min(auto_fill.KNOWN, na);rows = c0+n+c1
     try:
         arrays = {k: np.asarray(r[k], np.float64) for k in ('orient', 'pose', 'pelvis')};contacts = np.asarray(r['contacts']);end_pose = float(r['end_pose_cm'])
@@ -137,7 +140,8 @@ def assemble(sources, gaps):
             d, n = g['donor'], g['end']-g['first']+2
             if not set(first['params']) <= set(d['params']) or len(d['logits']) != n or \
                     any(len(d['params'][k]['transl']) != n for k in first['params']):raise ValueError('Donor arrays do not match the hidden range')
-        if g['method'] == 'auto' and not (callable(g.get('generate')) and isinstance(g.get('body'), dict) and isinstance(g.get('params'), dict) and 'seed' in g['params']):
+        if g['method'] == 'auto' and not (callable(g.get('generate')) and isinstance(g.get('body'), dict) and isinstance(g.get('params'), dict) and 'seed' in g['params']
+                                          and (not g['params'].get('text') or callable(g.get('describe')))):
             raise ValueError('Automatic fill needs a motion generator')
     for s in sources:
         n = s['end']-s['first']
@@ -186,6 +190,8 @@ RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration'
 DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
 COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
 AUTO_INFO = 'Frames {}–{} generated: the captured poses next to the range were missed by {:.1f} cm before it and {:.1f} cm after it.'
+AUTO_TEXT_INFO = ('Frames {}–{} generated from the description "{}": the captured poses next to the range were missed by {:.1f} cm before it '
+                  'and {:.1f} cm after it.')
 AUTO_RATE = 'Automatic fill needs 30 fps takes; this scene has {}.'
 
 
@@ -282,11 +288,11 @@ def _record(g):return dict(first=g['first'], end=g['end'], method=g['method'], p
 def _cm(metres):return round(float(metres)*100, 1)
 
 
-def _generator(report):
-    """The fill.json record of the generator of an automatic gap, beside its params: a report, not an input."""
-    from .kimodo_runtime import identity
+def _generator(report, g):
+    """The fill.json record of the generator of an automatic gap `g`, beside its params: a report, not an input."""
+    from .kimodo_runtime import identity, text_identity
     return dict(name='kimodo', identity=identity(), version=auto_fill.VERSION, end_pose_cm=round(float(report['end_pose_cm']), 2),
-                seam_cm=[round(float(x), 1) for x in report['seam_cm']])
+                seam_cm=[round(float(x), 1) for x in report['seam_cm']], **(dict(text_encoder=text_identity()) if g['params'].get('text') else {}))
 
 
 def _report(gaps, residuals, seams):
@@ -295,7 +301,8 @@ def _report(gaps, residuals, seams):
         if g['method'] == 'copy' and type(r) in (int, float):
             emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
         if g['method'] == 'auto' and isinstance(s, list) and len(s) == 2 and all(type(x) in (int, float) for x in s):
-            emit('info', stage=STAGE, message=AUTO_INFO.format(g['first']+1, g['end'], *s))
+            text = g['params'].get('text')
+            emit('info', stage=STAGE, message=AUTO_TEXT_INFO.format(g['first']+1, g['end'], text, *s) if text else AUTO_INFO.format(g['first']+1, g['end'], *s))
 
 
 def _donors(gaps, files):
@@ -412,7 +419,7 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     atomic_json(target/'project.json', state)
     atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
-        gaps=[dict(_record(g), **({} if r is None else dict(residual_cm=_cm(r[base]))), **({} if e is None else dict(generator=_generator(e))))
+        gaps=[dict(_record(g), **({} if r is None else dict(residual_cm=_cm(r[base]))), **({} if e is None else dict(generator=_generator(e, g))))
               for g, r, e in zip(gaps, joined['residuals'], joined['reports'])], donors=donors))
     pending.unlink()
     join = dict(project=target.relative_to(root).as_posix(), first=first, end=end, sources=[s['project'] for s in sources])
@@ -450,6 +457,10 @@ def run(root, ident, result, projects):
     cache = safe_child(root, person['preview'])/'auto_fill'
     echo = lambda line: print(line, flush=True)  # the worker's progress reaches the app unchanged
     generate = lambda request: auto_fill.generate(cache, request, echo=echo)
+    features = {}
+    def describe(text):  # once per distinct description in this run
+        if text not in features:features[text] = auto_fill.describe(text, echo=echo)
+        return features[text]
     def donor(g):
         take = g['take']
         if take['project'] not in loaded:
@@ -467,7 +478,7 @@ def run(root, ident, result, projects):
         if kept is not None:plans.append((kept, chain_gaps, None, None));continue
         sources = [_load(root, t, kinds, names, pelvis) for t in chain]
         records = [dict(g, **{k: g['params'][k] for k in ('mirror', 'offset')}, donor=_donor_rows(donor(g), g), height_scale=height_scale(sources[0], donor(g)))
-                   if g['method'] == 'copy' else dict(g, generate=generate, body=shape(sources[0])) if g['method'] == 'auto' else g for g in chain_gaps]
+                   if g['method'] == 'copy' else dict(g, generate=generate, describe=describe, body=shape(sources[0])) if g['method'] == 'auto' else g for g in chain_gaps]
         try:joined = assemble(sources, records)
         except auto_fill.Unavailable as error:raise Refused(str(error)) from None
         plans.append((sources, chain_gaps, _donors(chain_gaps, lambda t: loaded[t['project']]['files']), joined))
@@ -482,7 +493,7 @@ def run(root, ident, result, projects):
         else:
             projects.append(str(_write(root, ident, sources, chain_gaps, donors, joined, kinds, base, pipeline)))
             residuals = [None if r is None else _cm(r[base]) for r in joined['residuals']]
-            seams = [None if e is None else _generator(e)['seam_cm'] for e in joined['reports']]
+            seams = [None if e is None else _generator(e, g)['seam_cm'] for g, e in zip(chain_gaps, joined['reports'])]
         _report(chain_gaps, residuals, seams)
     return all(joined is None for *_, joined in plans)
 

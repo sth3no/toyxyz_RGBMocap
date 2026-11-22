@@ -104,3 +104,17 @@ class HiddenRangesTest(unittest.TestCase):
         self.assertEqual(h.chains(takes,ch),[takes])
         self.assertEqual(h.chains([T(0,100),T(391,500)],{'100_391':{'method':'auto'}}),[])
         self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':-1}}),[])
+    def test_auto_description(self):
+        self.assertEqual(h.TEXT_LIMIT,200)
+        self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':'  A person  waves. '}),('auto',{'seed':3,'text':'A person waves.'}))
+        self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':'Waves\r\n\tthen  sits.'}),('auto',{'seed':3,'text':'Waves then sits.'}))
+        for empty in('',' ','\n \t'):   # as a step-4 choice, so a join written then stays current
+            self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':empty}),('auto',{'seed':3}),repr(empty))
+        self.assertEqual(h.choice_params({'method':'auto','seed':3,'text':'x'*200+'  '}),('auto',{'seed':3,'text':'x'*200}))
+        self.assertEqual(h.choice_params({'method':'auto','text':'Člověk mává.'}),('auto',{'seed':0,'text':'Člověk mává.'}))
+        for bad in(None,5,['a'],b'a','x'*201,'a '*101):
+            with self.assertRaises(ValueError,msg=repr(bad)):h.choice_params({'method':'auto','seed':3,'text':bad})
+        self.assertEqual(h.choice_params({'method':'smooth','text':'x'}),('smooth',{}))
+        takes=[T(0,100),T(390,500)]
+        self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':3,'text':'A person waves.'}}),[takes])
+        self.assertEqual(h.chains(takes,{'100_390':{'method':'auto','seed':3,'text':'x'*201}}),[])

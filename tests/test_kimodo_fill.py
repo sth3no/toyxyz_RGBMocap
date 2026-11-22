@@ -16,7 +16,7 @@ SOLE = -1.3018
 GAP, SIDE = 60, 45
 
 
-def walk(frames=GAP, before=SIDE, after=SIDE, seed=0):
+def walk(frames=GAP, before=SIDE, after=SIDE, seed=0, text='', feature=None):
     """A person facing +Z, walking 1.5 m along +Z across the hidden range, standing-like poses with a slow leg swing."""
     rng = np.random.default_rng(seed); step = 1.5 / (frames + 1); height = REST[0, 1] - SOLE
 
@@ -27,8 +27,10 @@ def walk(frames=GAP, before=SIDE, after=SIDE, seed=0):
         orient = rng.normal(0, .01, (len(t), 3)); pelvis = np.c_[np.full(len(t), .2), np.full(len(t), height), t * step]
         return orient, pose, pelvis
     b, a = side(np.arange(-before, 0) + 1), side(np.arange(frames + 1, frames + 1 + after))
-    return dict(version=np.int64(2), before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
-                rest=REST.copy(), sole=np.float64(SOLE), frames=np.int64(frames), seed=np.int64(3), fps=np.float64(30.))
+    return dict(version=np.int64(3), before_orient=b[0], before_pose=b[1], before_pelvis=b[2], after_orient=a[0], after_pose=a[1], after_pelvis=a[2],
+                rest=REST.copy(), sole=np.float64(SOLE), frames=np.int64(frames), seed=np.int64(3), fps=np.float64(30.), text=np.array(text),
+                text_feature=np.zeros(4096, np.float32) if feature is None else np.asarray(feature, np.float32))
+FEATURE = np.random.default_rng(5).normal(size=4096).astype(np.float32)
 
 
 def synthetic_output(p):
@@ -107,7 +109,7 @@ class PlanTest(unittest.TestCase):
 class FinishTest(unittest.TestCase):
     def test_known_rows_come_back(self):
         r = walk(); p = kf.plan(r); o = synthetic_output(p); out = kf.finish(r, p, o)
-        self.assertEqual(int(out['version']), 2); np.testing.assert_array_equal(out['context'], [5, 5])
+        self.assertEqual(int(out['version']), 3); np.testing.assert_array_equal(out['context'], [5, 5])
         for k, w in (('orient', 3), ('pose', 63), ('pelvis', 3)):self.assertEqual(out[k].shape, (70, w))
         self.assertEqual(out['seam_cm'].shape, (2,)); self.assertEqual(out['seam_cm'].dtype, np.float64); self.assertLess(np.abs(out['seam_cm']).max(), 1e-3)
         for k in ('orient', 'pose', 'pelvis'):
@@ -153,6 +155,49 @@ class FloorDriftTest(unittest.TestCase):
         np.testing.assert_allclose(b['pelvis'][:, [0, 2]], a['pelvis'][:, [0, 2]], atol=1e-12)
 
 
+class DescriptionTest(unittest.TestCase):
+    TEXT = 'A person waves.'
+
+    def test_constants(self):
+        self.assertEqual((kf.VERSION, kf.TEXT_WEIGHT), (3, 4.))
+
+    def test_description_does_not_change_the_plan(self):
+        p, q = kf.plan(walk()), kf.plan(walk(text=self.TEXT, feature=FEATURE))
+        for k, v in p.items():
+            if k != 'fit':np.testing.assert_array_equal(q[k], v, err_msg=k)
+
+    def test_check_reads_the_description(self):
+        r = kf._check(walk()); self.assertEqual(r['text'], ''); self.assertIs(type(r['text']), str)
+        self.assertEqual((r['text_feature'].shape, r['text_feature'].dtype), ((4096,), np.float32)); self.assertFalse(r['text_feature'].any())
+        r = kf._check(walk(text=self.TEXT, feature=FEATURE)); self.assertEqual(r['text'], self.TEXT); np.testing.assert_array_equal(r['text_feature'], FEATURE)
+        self.assertEqual(kf._check(walk(text='Člověk mává.', feature=FEATURE))['text'], 'Člověk mává.')
+
+    def test_check_refusals(self):
+        bad = FEATURE.copy(); bad[7] = np.inf
+        for request in (walk(text=self.TEXT, feature=bad), walk(feature=np.where(np.arange(4096) == 3, np.nan, 0))):
+            with self.assertRaisesRegex(ValueError, '^The automatic fill request holds values that are not numbers.$'):kf._check(request)
+        with self.assertRaisesRegex(ValueError, '^The automatic fill request has a description without its text features.$'):kf._check(walk(text=self.TEXT))
+        for change in (dict(text_feature=FEATURE[:-1]), dict(text_feature=FEATURE[None]), dict(text=np.array([self.TEXT])), dict(text=np.array(5)),
+                       dict(text=np.array(b'A person waves.'))):
+            with self.assertRaisesRegex(ValueError, '^The automatic fill request is incomplete or malformed.$', msg=change):
+                kf._check(dict(walk(text=self.TEXT, feature=FEATURE), **change))
+        for name in ('text', 'text_feature'):
+            r = walk(); del r[name]
+            with self.assertRaisesRegex(ValueError, '^The automatic fill request is incomplete or malformed.$', msg=name):kf._check(r)
+
+    def test_conditioning(self):
+        import torch
+        prompt, encoder, guidance = kf.conditioning(kf._check(walk()))
+        self.assertEqual((prompt, guidance), ('', {})); self.assertIs(type(encoder), kf.NoText)   # as version 2: no text, default guidance
+        prompt, encoder, guidance = kf.conditioning(kf._check(walk(text=self.TEXT, feature=FEATURE)))
+        self.assertEqual((prompt, guidance), (self.TEXT, dict(cfg_weight=[4., 2.])))
+        self.assertIs(encoder.to('cuda'), encoder); self.assertIs(encoder.eval(), encoder)
+        features, lengths = encoder(['a person waves', ''])           # Kimodo's own sanitized prompt, and the empty one of its guidance
+        self.assertEqual((tuple(features.shape), features.dtype, lengths), ((2, 1, 4096), torch.float32, [1, 1]))
+        np.testing.assert_array_equal(features[0, 0].numpy(), FEATURE); self.assertFalse(features[1].any())
+        self.assertEqual(tuple(encoder(self.TEXT)[0].shape), (1, 1, 4096))
+
+
 def events(text):
     return [json.loads(line[len('@@MOCAP@@'):]) for line in text.splitlines() if line.startswith('@@MOCAP@@')]
 
@@ -162,6 +207,16 @@ def pelvis_speeds(pelvis, c0, n):
     the medians of its three thirds and its mean."""
     speed = np.linalg.norm(np.diff(pelvis[c0 - 1:c0 + n + 1][:, [0, 2]], axis=0), axis=1) * 30
     return [float(np.median(x)) for x in np.array_split(speed, 3)], float(speed.mean())
+
+
+MEASURED = Path(__file__).resolve().parents[1] / 'experiments/kimodo-spike/out/text/more.npz'
+ARMS = 'A person raises both arms above the head.'
+
+
+def wrist_above_head(response, c0=5, n=GAP):
+    """Highest wrist above the head over the hidden rows of a response, in cm (SMPL-X joints 20, 21 wrists, 15 head)."""
+    J = sc.smplx_fk(REST, response['orient'], response['pose'], response['pelvis'])[1][c0:c0 + n]
+    return float((J[:, [20, 21], 1].max(axis=1) - J[:, 15, 1]).max() * 100)
 
 
 @unittest.skipUnless(kimodo_runtime.issue() is None, 'Kimodo runtime or model is not installed')
@@ -187,7 +242,7 @@ class WorkerTest(unittest.TestCase):
             info = [e['message'] for e in events(p.stdout) if e['type'] == 'info']; self.assertEqual(len(info), 1)
             self.assertRegex(info[0], r'cm on average, [0-9.]+ cm before and [0-9.]+ cm after the range; peak video memory [0-9]+\.[0-9]{2} GiB\.$')
             with np.load(path, allow_pickle=False) as z:outs.append({k: z[k] for k in z.files})
-        o = outs[0]; self.assertEqual(int(o['version']), 2); np.testing.assert_array_equal(o['context'], [5, 5])
+        o = outs[0]; self.assertEqual(int(o['version']), 3); np.testing.assert_array_equal(o['context'], [5, 5])
         self.assertEqual(o['seam_cm'].shape, (2,)); self.assertTrue(np.isfinite(o['seam_cm']).all()); self.assertLess(o['seam_cm'].max(), 25)
         for k, w in (('orient', 3), ('pose', 63), ('pelvis', 3)):self.assertEqual(o[k].shape, (70, w)); self.assertTrue(np.isfinite(o[k]).all())
         self.assertEqual(o['contacts'].shape, (70, 4)); self.assertEqual(o['contacts'].dtype, bool)
@@ -199,6 +254,17 @@ class WorkerTest(unittest.TestCase):
         path = self.dir / 'pace.npz'; p = self.run_worker(self.request, path); self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-3000:])
         with np.load(path, allow_pickle=False) as z:thirds, mean = pelvis_speeds(z['pelvis'], 5, GAP)
         for median in thirds:self.assertTrue(.5 * mean <= median <= 2 * mean, f'medians by thirds {thirds}, mean {mean:.3f} m/s')
+
+    @unittest.skipUnless(MEASURED.is_file(), 'the measured text features of the step-5 gate are not here')
+    def test_description_raises_the_arms(self):
+        with np.load(MEASURED, allow_pickle=False) as z:feature = dict(zip(map(str, z['prompts']), z['features']))[ARMS]
+        found = {}
+        for label, request in (('described', walk(text=ARMS, feature=feature)), ('plain', walk())):
+            asked, path = self.dir / f'arms_{label}.npz', self.dir / f'arms_{label}_response.npz'; np.savez(asked, **request)
+            p = self.run_worker(asked, path); self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-3000:])
+            with np.load(path, allow_pickle=False) as z:found[label] = wrist_above_head(z), z['seam_cm']
+        self.assertGreaterEqual(found['described'][0], 15, found); self.assertLess(found['plain'][0], 15, found)
+        for label, (_, seam) in found.items():self.assertLess(seam.max(), 10, (label, seam))
 
     def test_missing_request(self):
         path = self.dir / 'none.npz'; p = self.run_worker(self.dir / 'missing.npz', path)
