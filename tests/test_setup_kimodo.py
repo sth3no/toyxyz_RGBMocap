@@ -1,7 +1,9 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import tempfile
@@ -53,11 +55,17 @@ class FromAppTest(unittest.TestCase):
 
     def test_a_failed_download_keeps_the_existing_runtime(self):
         old = self.root / 'runtime_kimodo'; old.mkdir(); (old / 'runtime.json').write_text('{"version": 1}', encoding='utf-8')
-        self.build.side_effect = subprocess.CalledProcessError(128, ['git', 'fetch'], output='fatal: unable to access')
+        self.build.side_effect = RuntimeError(DOWNLOAD + ' fatal: unable to access')
         self.assert_failed(DOWNLOAD + ' fatal: unable to access')
         self.assertEqual([p.name for p in old.iterdir()], ['runtime.json'])
         self.assertEqual((old / 'runtime.json').read_text(encoding='utf-8'), '{"version": 1}')
         self.assertEqual([p.name for p in (self.root / '.setup').iterdir()], [])
+
+    def test_a_tool_that_fails_outside_a_named_step_is_not_blamed_on_the_connection(self):
+        self.build.side_effect = subprocess.CalledProcessError(1, ['tool'], output='boom')
+        self.assert_failed('Automatic fill setup failed. boom')
+        self.build.side_effect = subprocess.TimeoutExpired(['tool'], 30)
+        self.assert_failed('Automatic fill setup failed.')
 
     @staticmethod
     def build_overlay(stage, step):
@@ -117,6 +125,8 @@ class FromAppTest(unittest.TestCase):
     def test_leftovers_of_cancelled_runs_are_removed(self):
         setup_folder = self.root / '.setup'
         for name in ('.kimodo-abc', '.kimodo-def'):(setup_folder / name / 'upstream').mkdir(parents=True)
+        pack = setup_folder / '.kimodo-abc/upstream/.git/objects/pack/pack-1.pack'; pack.parent.mkdir(parents=True)
+        pack.write_bytes(b'pack'); os.chmod(pack, stat.S_IREAD)   # Git marks what it fetched read-only
         (setup_folder / 'app.lock').write_text('', encoding='utf-8'); (setup_folder / 'kimodo-backup-1').mkdir()
         self.build.side_effect = self.build_overlay
         self.assertEqual(self.run_setup()[0], 0)
@@ -131,6 +141,29 @@ class FromAppTest(unittest.TestCase):
         with mock.patch.object(setup.tempfile, 'TemporaryDirectory', wraps=setup.tempfile.TemporaryDirectory) as made:
             self.assertEqual(self.run_setup()[0], 0)
         self.assertIs(made.call_args.kwargs.get('ignore_cleanup_errors'), True)
+
+
+class BuildFailureTest(unittest.TestCase):
+    """The sentence a failing tool of each step gets; `run` is replaced, so nothing is fetched or built."""
+    def fail_at(self, match, error=None):
+        def run(command, timeout, **options):
+            if match(command):
+                raise error or subprocess.CalledProcessError(1, command, output='last line')
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(setup, 'run', run), \
+                mock.patch.object(setup.subprocess, 'check_output', return_value=setup.REVISION + '\n'), \
+                mock.patch.object(setup.subprocess, 'run', return_value=mock.Mock(returncode=0)):
+            with self.assertRaises(RuntimeError) as caught:
+                setup.build(Path(tmp))
+        return str(caught.exception)
+
+    def test_only_the_steps_that_download_blame_the_connection(self):
+        self.assertEqual(self.fail_at(lambda c: 'fetch' in c), DOWNLOAD + ' last line')
+        self.assertEqual(self.fail_at(lambda c: '--only-binary=:all:' in c), DOWNLOAD + ' last line')
+        self.assertEqual(self.fail_at(lambda c: 'fetch' in c, subprocess.TimeoutExpired(['git'], 300)), DOWNLOAD)
+        self.assertEqual(self.fail_at(lambda c: 'init' in c), 'Automatic fill setup could not unpack the Kimodo source. last line')
+        self.assertEqual(self.fail_at(lambda c: 'checkout' in c), 'Automatic fill setup could not unpack the Kimodo source. last line')
+        self.assertEqual(self.fail_at(lambda c: '--no-build-isolation' in c),
+                         'Automatic fill setup could not get or build antlr4-python3-runtime. last line')
 
 
 class RunTest(unittest.TestCase):

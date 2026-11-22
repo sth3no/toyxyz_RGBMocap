@@ -12,7 +12,6 @@ are imported by `main`, which runs in the ExMR runtime with the Kimodo overlay.
 """
 import argparse
 import contextlib
-import html
 import json
 import math
 import os
@@ -21,7 +20,7 @@ import time
 import warnings
 from pathlib import Path
 
-from .hidden_ranges import normalise_text as normalise
+from .hidden_ranges import normalise_text as normalise, typed as shown
 from .paths import MODELS
 
 STAGE = 'take_join'
@@ -37,9 +36,8 @@ EMPTY = 'The description is empty.'
 
 
 def info(typed, read, seconds, peak):
-    """The Console line of a reading; it names the sentence read when tidying changed it. The Console shows rich text, so
-    the sentence is escaped to show as typed."""
-    said = '' if read == typed else f' as "{html.escape(read, quote=False)}"'
+    """The Console line of a reading; it names the sentence read when tidying changed it, so that it shows as typed."""
+    said = '' if read == typed else f' as "{shown(read)}"'
     return f'Description read{said} in {seconds:.1f} seconds; peak video memory {peak:.2f} GiB.'
 
 

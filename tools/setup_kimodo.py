@@ -1,8 +1,10 @@
 """Install a pinned, optional Kimodo overlay for automatic fill without changing base packages."""
 
+import contextlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -22,6 +24,9 @@ FREE = 1024 ** 3
 NO_SPACE = 'Not enough free disk space to set up automatic fill (1 GiB needed).'
 NO_GIT = 'Git was not found. Install Git for Windows or run install.cmd again.'
 NO_DOWNLOAD = 'Automatic fill setup could not download its files. Check the internet connection and try again.'
+NO_SOURCE = 'Automatic fill setup could not unpack the Kimodo source.'
+NO_BUILD = 'Automatic fill setup could not get or build antlr4-python3-runtime.'
+NO_TOOL = 'Automatic fill setup failed.'
 
 PACKAGES = (
     'hydra-core==1.3.8 --hash=sha256:d5f184c291691cba835c7f04bc4e36270ad88b1d7e394a3712f5af084c30b394',
@@ -71,6 +76,31 @@ def run(command, timeout, **options):
         raise subprocess.TimeoutExpired(command, timeout, output=last)
     if code:
         raise subprocess.CalledProcessError(code, command, output=last)
+
+
+def last_line(error):
+    return error.output.strip() if isinstance(error.output, str) else ''  # bytes or None from a bare subprocess call
+
+
+@contextlib.contextmanager
+def naming(sentence):
+    """A tool that fails or times out inside fails the setup with `sentence` and the tool's last output line."""
+    try:
+        yield
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(' '.join(filter(None, (sentence, last_line(error))))) from error
+
+
+def remove(folder):
+    """Delete a folder as far as it goes. Git marks the packs it fetched read-only, which stops a plain rmtree on
+    Windows; a file still held open is left behind."""
+    def retry(function, path, _):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            function(path)
+        except OSError:
+            pass
+    shutil.rmtree(folder, **{'onexc' if sys.version_info >= (3, 12) else 'onerror': retry})
 
 
 def check(code, *args):
@@ -135,24 +165,30 @@ def build(stage: Path, step=lambda message: None) -> Path:
     checkout = stage / 'upstream'
     checkout.mkdir()
     step('Fetching the Kimodo source')
-    run(['git', '-C', str(checkout), 'init', '-q'], timeout=30)
     git = ['git', '-C', str(checkout)]
-    run([*git, 'fetch', '--progress', '--depth=1', 'https://github.com/nv-tlabs/kimodo.git', REVISION], timeout=300)
-    fetched = subprocess.check_output([*git, 'rev-parse', 'FETCH_HEAD'], text=True, timeout=30).strip()
-    if fetched != REVISION:
-        raise RuntimeError('Unexpected Kimodo source revision.')
-    run([*git, 'checkout', '-q', '--detach', REVISION], timeout=60)
+    # Only the steps that read from the network blame the connection; the others say what they were doing.
+    with naming(NO_SOURCE):
+        run([*git, 'init', '-q'], timeout=30)
+    with naming(NO_DOWNLOAD):
+        run([*git, 'fetch', '--progress', '--depth=1', 'https://github.com/nv-tlabs/kimodo.git', REVISION], timeout=300)
+    with naming(NO_SOURCE):
+        fetched = subprocess.check_output([*git, 'rev-parse', 'FETCH_HEAD'], text=True, timeout=30).strip()
+        if fetched != REVISION:
+            raise RuntimeError('Unexpected Kimodo source revision.')
+        run([*git, 'checkout', '-q', '--detach', REVISION], timeout=60)
     step('Installing the Kimodo packages')
     wheels = stage / 'wheels.txt'
     wheels.write_text('\n'.join(PACKAGES) + '\n', encoding='utf-8')
-    pip(wheels, overlay, '--only-binary=:all:')
+    with naming(NO_DOWNLOAD):
+        pip(wheels, overlay, '--only-binary=:all:')
     step('Building antlr4-python3-runtime')
     if subprocess.run([sys.executable, '-I', '-c', 'import setuptools'], timeout=60).returncode:
         raise RuntimeError('The ExMR runtime cannot import setuptools, which builds antlr4-python3-runtime. '
                            'Run install.cmd to repair the ExMR runtime.')
     sources = stage / 'sources.txt'
     sources.write_text('\n'.join(SOURCES) + '\n', encoding='utf-8')
-    pip(sources, overlay, '--no-binary', 'antlr4-python3-runtime', '--no-build-isolation')
+    with naming(NO_BUILD):
+        pip(sources, overlay, '--no-binary', 'antlr4-python3-runtime', '--no-build-isolation')
     package = checkout / 'kimodo'
     left_out = {package / name for name in LEFT_OUT}
     shutil.copytree(package, overlay / 'kimodo', ignore=lambda folder, names: [
@@ -189,7 +225,7 @@ def install(emit=None):
             return existing, False
     # A stopped or cancelled setup does not unwind; its staging folders are removed before the free space is measured.
     for left in (ROOT / '.setup').glob('.kimodo-*'):
-        shutil.rmtree(left, ignore_errors=True)
+        remove(left)
     if shutil.disk_usage(ROOT).free < FREE:
         raise RuntimeError(NO_SPACE)
     if shutil.which('git') is None:
@@ -213,7 +249,7 @@ def install(emit=None):
                 backup.rename(destination)
             raise
     if backup is not None:
-        shutil.rmtree(backup, ignore_errors=True)  # the replaced runtime; a file still in use is left behind
+        remove(backup)  # the replaced runtime; a file still in use is left behind
     print('Kimodo runtime ready. Get the optional Kimodo model in Model Manager.', flush=True)
     return destination, True
 
@@ -224,8 +260,7 @@ def from_app():
     try:
         folder, installed = install(emit)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
-        last = error.output if isinstance(error.output, str) else ''  # bytes or None from a bare subprocess call
-        emit('failed', stage=STAGE, message=' '.join(filter(None, (NO_DOWNLOAD, last.strip()))))
+        emit('failed', stage=STAGE, message=' '.join(filter(None, (NO_TOOL, last_line(error)))))
         return 1
     except Exception as error:
         emit('failed', stage=STAGE, message=str(error) or type(error).__name__)

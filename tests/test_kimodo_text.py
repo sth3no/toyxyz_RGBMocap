@@ -34,7 +34,9 @@ class NormaliseTest(unittest.TestCase):
         self.assertEqual(kt.info('a person walks forward', WALK, 19.1, 1.5),
                          'Description read as "A person walks forward." in 19.1 seconds; peak video memory 1.50 GiB.')
         self.assertEqual(kt.info('a <b>wave</b> & "hi"', 'A <b>wave</b> & "hi".', 1, 1),
-                         'Description read as "A &lt;b&gt;wave&lt;/b&gt; &amp; "hi"." in 1.0 seconds; peak video memory 1.00 GiB.')
+                         'Description read as "<span>A &lt;b&gt;wave&lt;/b&gt; &amp; "hi".</span>" in 1.0 seconds; peak video memory 1.00 GiB.')
+        self.assertEqual(kt.info('a person rocks & rolls', 'A person rocks & rolls.', 1, 1),   # no tag: the Console shows the line as it is
+                         'Description read as "A person rocks & rolls." in 1.0 seconds; peak video memory 1.00 GiB.')
 
     def test_only_spaces(self):
         self.assertEqual(kt.normalise(' \t\n '), ''); self.assertEqual(kt.normalise(''), '')

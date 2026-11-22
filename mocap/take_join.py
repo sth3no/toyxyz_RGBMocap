@@ -304,8 +304,8 @@ def _report(gaps, residuals, seams):
         if g['method'] == 'copy' and type(r) in (int, float):
             emit('info', stage=STAGE, message=COPY_INFO.format(g['first']+1, g['end'], g['name'], r, r/(g['end']-g['first']+1)))
         if g['method'] == 'auto' and isinstance(s, list) and len(s) == 2 and all(type(x) in (int, float) for x in s):
-            text = g['params'].get('text')  # the Console shows rich text: escaped, the description shows as typed
-            emit('info', stage=STAGE, message=AUTO_TEXT_INFO.format(g['first']+1, g['end'], html.escape(text, quote=False), *s) if text else
+            text = g['params'].get('text')
+            emit('info', stage=STAGE, message=AUTO_TEXT_INFO.format(g['first']+1, g['end'], _typed(text), *s) if text else
                  AUTO_INFO.format(g['first']+1, g['end'], *s))
 
 

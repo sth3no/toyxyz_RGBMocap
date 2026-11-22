@@ -362,6 +362,12 @@ nothing measurable.
   Runtime**) again. Nothing of the old runtime is replaced until the new one
   has been checked. If an installed runtime is damaged, **Reinstall Runtime**
   finds it in its check and installs it again; nothing needs deleting by hand.
+- Installing the runtime failed with `Automatic fill setup could not unpack the
+  Kimodo source.`, `Automatic fill setup could not get or build
+  antlr4-python3-runtime.` or `Automatic fill setup failed.`: these are not
+  connection problems. The last line of the tool's output follows the sentence
+  and says what went wrong; for the second, running `install.cmd` repairs the
+  ExMR runtime that builds the package.
 - `A description needs the Kimodo text adapters and the Llama 3 weights. Use
   Set up… to get them in Model Manager.`: **Auto Download** the **Kimodo Text
   Adapters** row and import the Llama weights. Importing the Llama weights can

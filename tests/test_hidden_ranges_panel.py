@@ -410,5 +410,39 @@ class ConsoleNameTest(unittest.TestCase):
             for line in(COPY_INFO.format(101,120,'{}',1.,.05),'Processing failed. '+DONOR_NOT_READY):
                 console=QTextEdit();console.append(line.format(_typed(name)))   # the Console; the status line reads text the same way
                 self.assertEqual(console.toPlainText(),line.format(name))
+    def test_a_description_is_shown_as_typed(self):
+        application()
+        from PySide6.QtWidgets import QTextEdit
+        from mocap.take_join import AUTO_TEXT_INFO,_typed
+        for text in('A person waves.','A person rocks & rolls.','A person <b>waves</b> & <img src="x">.','Arms > head.','a &lt; b'):
+            console=QTextEdit();console.append(AUTO_TEXT_INFO.format(101,120,_typed(text),1.2,2.3))
+            self.assertEqual(console.toPlainText(),AUTO_TEXT_INFO.format(101,120,text,1.2,2.3))
+            from mocap import kimodo_text
+            console=QTextEdit();console.append(kimodo_text.info('typed',text,1,1))   # the text worker's line names the sentence it read
+            self.assertEqual(console.toPlainText(),f'Description read as "{text}" in 1.0 seconds; peak video memory 1.00 GiB.')
+
+
+@unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
+class ClickAfterDescriptionTest(unittest.TestCase):
+    def test_a_click_on_mirror_after_typing_a_description_is_not_swallowed(self):
+        from PySide6.QtCore import QPoint,Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QLineEdit
+        from mocap.hidden_ranges import gaps
+        from mocap.hidden_ranges_ui import HiddenRangesPanel
+        app=application();panel=HiddenRangesPanel();self.addCleanup(panel.close)
+        people=[dict(id=1,name='Person 1',takes=[T(0,100),T(120,200),T(225,313)]),dict(id=2,name='Person 2',takes=[T(0,400)])]
+        choices={'100_120':dict(method='auto',seed=0),'200_225':dict(method='copy',person=2,mirror=False,offset=0)}
+        show=lambda:panel.show_gaps(gaps(people[0]['takes']),choices,30,None,people,1)
+        def save(key,method,person,mirror,offset,seed,text):   # what the People panel does with a choice
+            choices[key]=dict(method='auto',seed=seed,**({'text':text} if text else {})) if method=='auto' else dict(method=method,person=person,mirror=mirror,offset=offset)
+            show()
+        panel.choice_changed.connect(save);show();panel.resize(260,420);panel.show()
+        QTest.qWaitForWindowExposed(panel);panel.windowHandle().requestActivate();QTest.qWaitForWindowActive(panel,2000)
+        field=panel.findChild(QLineEdit);field.setFocus();app.processEvents();self.assertIs(app.focusWidget(),field)
+        QTest.keyClicks(field,'Waves.');mirror=panel.findChild(QCheckBox)
+        QTest.mouseClick(mirror,Qt.LeftButton,Qt.NoModifier,QPoint(8,mirror.height()//2));QTest.qWait(120)
+        self.assertEqual(choices,{'100_120':dict(method='auto',seed=0,text='Waves.'),'200_225':dict(method='copy',person=2,mirror=True,offset=0)})
+        self.assertTrue(panel.findChild(QCheckBox).isChecked());self.assertEqual(panel.findChild(QLineEdit).text(),'Waves.')
 
 if __name__=='__main__':unittest.main()

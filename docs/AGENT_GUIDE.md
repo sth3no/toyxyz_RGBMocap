@@ -879,8 +879,11 @@ of the normalised description, as Kimodo's own call does before its encoder
 (`kimodo_text.VERSION` 2), and names the sentence read when that changed it;
 it refuses an all-zero vector, and so does the text cache. `normalise_text`
 and the field's `description` drop unprintable characters, so the stored
-choice is the text that is read. The Console renders rich text, so the join's
-and the text worker's lines escape the description (`html.escape`).
+choice is the text that is read. The Console reads a line with a tag or `&lt;`
+in it as rich text and any other line as it is, so the join's and the text
+worker's lines pass a description, like a person's name, through
+`hidden_ranges.typed`, which escapes only such text inside a `<span>`; plain
+`html.escape` would show `&` as `&amp;`.
 `kimodo_fill.conditioning` gives Kimodo the text with
 `cfg_weight=[TEXT_WEIGHT, CONSTRAINT_WEIGHT]` = `[4.0, 2.0]` and the vector in
 place of its encoder. The encoder is Llama 3 8B Instruct with LLM2Vec's two LoRA

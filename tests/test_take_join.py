@@ -672,7 +672,7 @@ class WriteTest(unittest.TestCase):
         with self.generator(calls),mock.patch.object(auto_fill,'describe',describe):code,events=self.join()
         self.assertEqual(code,0,events);self.assertEqual(texts,[typed]);self.assertEqual(str(calls[0]['text']),typed)
         self.assertEqual(self.fill()['gaps'][0]['params']['text'],typed)
-        self.assertEqual(events[1]['message'],'Frames 101–110 generated from the description "A person &lt;b&gt;waves&lt;/b&gt; &amp; &lt;img src="x"&gt;.": '
+        self.assertEqual(events[1]['message'],'Frames 101–110 generated from the description "<span>A person &lt;b&gt;waves&lt;/b&gt; &amp; &lt;img src="x"&gt;.</span>": '
                          'the captured poses next to the range were missed by 1.2 cm before it and 2.3 cm after it.')
     def workers(self):
         """Real auto_fill.generate and auto_fill.describe in front of fake workers; returns the lists of generation and text runs."""
