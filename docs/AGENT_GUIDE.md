@@ -791,23 +791,43 @@ frames = the generator's 300) and the take rate to 30 fps. `_auto` sends up to
 (SMPL-X `orient`, `pose`, pelvis, the body `rest` and `sole`, `frames`, `seed`,
 `fps`) to `auto_fill.generate`, which looks for `<key>.npz` in the folder
 `auto_fill` of the person's preview folder before starting a worker. The key
-hashes every request array and the generator identity
-(`kimodo_runtime.identity()`: Kimodo revision, profile version and the hash of
-the model file). On a miss it writes `<key>.request.npz`, starts the worker
+hashes `auto_fill.VERSION` (the protocol version, 2), every request array and
+the generator identity (`auto_fill.identity()`: `kimodo_runtime.identity()`,
+which is the Kimodo revision, profile version and the hash of the model file,
+followed by the SHA-256 of `mocap/kimodo_fill.py` and `mocap/soma_convert.py`
+read at call time), so a change of the worker's code generates every range
+again; responses cached under version 1 are never found. On a miss it writes
+`<key>.request.npz`, starts the worker
 (`kimodo_runtime.command` runs `kimodo_worker_boot.py` in the ExMR Python,
 which activates the `exmr` profile and then adds `runtime_kimodo/` to
 `sys.path`), and publishes `<key>.partial.npz` as `<key>.npz` after validating
-it; request and partial files are removed afterwards, also those of a killed
-run. The response holds `orient`, `pose`, `pelvis` (5 known + n + 5 known rows,
-fewer on a short take), `contacts` (four columns, bool), `context` and
-`end_pose_cm`. Failures reach the user as `Refused` sentences (`Unavailable`).
+it. The request and partial files of the same key are removed afterwards and
+before a run, also those left by a killed run; removal is best effort, and
+files of other keys and older cache entries stay. The response holds `orient`,
+`pose`, `pelvis` (5 known + n + 5 known rows, fewer on a short take;
+`auto_fill.KNOWN`), `contacts` (four columns, bool), `context`, `end_pose_cm`
+(mean distance over the 22 SMPL-X joints between the captured and generated
+pose, over all known frames) and `seam_cm` (the same at the last known frame
+before the range and the first after it). Failures reach the user as `Refused`
+sentences (`Unavailable`). When either `seam_cm` value exceeds
+`take_join.AUTO_SEAM_LIMIT_CM` (25 cm) the join refuses the whole run with
+`AUTO_MISSED` before anything is written: the takes on the two sides do not fit
+together. The response stays cached, so the same Fill refuses again at once.
+There is no speed check before the worker; speed alone cannot tell a sprint
+from takes that do not fit.
 `gap_fill.generated_fill` joins the generated rows to the boundary frames
 (the boundary differences fade out at each end); keys the generator does not
 provide, the fingers, are interpolated between the two sides, `take_join` marks the rows 3
 in `fill_mask.npy`, and `fill.json` stores per gap `params` (`seed`) and the
-report `generator` (`name`, `identity`, `version`, `end_pose_cm`), which the
+report `generator` (`name`, `identity`, `version`, `end_pose_cm` rounded to
+0.01, `seam_cm` as two numbers rounded to 0.1), which the
 currency check ignores like `residual_cm`: a new runtime or model does not make a
-join out of date, a changed seed does. `hidden_ranges_state.export_line` counts
+join out of date, a changed seed does. The request is expressed in the world and
+body of the chain's first take, so the same seed gives the same motion only
+while the takes joined before the range stay the same: filling or unfilling an
+earlier range of the same person changes the chain, and the later Automatic
+ranges are generated again and may differ (pinned by
+`test_earlier_range_changes_later_automatic_ranges`). `hidden_ranges_state.export_line` counts
 generated frames. The Hidden ranges panel offers Automatic and its Variation
 (`hidden_ranges_ui.py`); `people_ui.py` passes `kimodo_runtime.issue()` so the
 row is disabled with the reason when the runtime or the model is missing. Keep

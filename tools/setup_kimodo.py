@@ -43,10 +43,11 @@ sys.modules['kimodo.model.llm2vec'] = stand_in
 import numpy as np, torch
 import kimodo
 from kimodo.skeleton.registry import build_skeleton
-from mocap.soma_convert import SOMA30, SOMA_NEUTRAL
+from mocap.soma_convert import SOMA30, SOMA30_PARENTS, SOMA_NEUTRAL
 assert Path(kimodo.__file__).is_relative_to(Path(sys.argv[1]))
 skeleton = build_skeleton(30)
 assert list(skeleton.bone_order_names) == list(SOMA30)
+assert np.array_equal(torch.as_tensor(skeleton.joint_parents).cpu().numpy(), SOMA30_PARENTS)
 neutral = torch.as_tensor(skeleton.neutral_joints).detach().double().cpu().numpy()
 assert neutral.shape == SOMA_NEUTRAL.shape and np.abs(neutral - SOMA_NEUTRAL).max() <= 1e-5
 if not torch.cuda.is_available():
