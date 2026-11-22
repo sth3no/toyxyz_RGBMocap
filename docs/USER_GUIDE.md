@@ -501,6 +501,17 @@ need an offline copy; keep a backup of manually acquired restricted models.
 
 ## Start here
 
+The first start offers a tutorial inside the window. It highlights one control
+at a time, explains it and waits until you have done the step; **Next** moves
+on without doing it and **×** ends the tutorial. It never changes a setting or
+a project by itself, and it steps aside while a dialog is open. **Help →
+Tutorial** starts it again at any time, one chapter at a time: **From video to
+export** follows the steps below, and **Hidden ranges** shows how gaps between
+two takes of a person are filled (see [Hidden ranges](#hidden-ranges)). The
+first chapter covers ExMR, FlowHMR and GVHMR. When a person's hidden range can
+be filled for the first time, the app offers the second chapter once; **Don't
+show again** turns that offer off.
+
 For ExMR, FlowHMR and GVHMR:
 
 1. Choose an **AI Motion Model**, then **File → Open Video**, or drop a video

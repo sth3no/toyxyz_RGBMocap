@@ -1,5 +1,39 @@
 # Source package validation
 
+## In-window tutorial (2026-11-22)
+
+**Help → Tutorial** leads through two chapters, **From video to export** and
+**Hidden ranges**, by highlighting controls of the main window and waiting for
+the user's step. The first start offers it.
+
+- Tests run offscreen with the GUI runtime: `tests/test_tutorial.py` (54:
+  saved state, placement of the card, overlay, card, controller),
+  `tests/test_tutorial_steps.py` (37: route, wording and the rules that end,
+  skip or repeat a step, on a stand-in window with the real Hidden ranges panel
+  and timeline) and `tests/test_tutorial_window.py` (25: the real `MainWindow`:
+  menu, first start, the Hidden ranges offer, appearance change, closing). All
+  116 passed. The whole `tests` folder in one process: 638 tests passed, 66
+  skipped (52 need torch and the bundled ffmpeg, 13 need the Kimodo runtime or
+  its files, 1 needs file symlinks), none failed.
+- The real `MainWindow` was built offscreen with the app's font and style, an
+  empty settings folder, no model files and no video, and both chapters were
+  stepped through with **Next**. 45 pictures of the window were saved in dark
+  100 % (1440×880 and the minimum 1100×700), light 100 % and dark 200 %
+  (1920×1200); for the Hidden ranges chapter the panel was filled with stand-in
+  data (one range, **Automatic (Experimental)** chosen). 15 of the pictures were
+  looked at: the ring lay on the named control, the card stayed inside the
+  window and off the highlighted controls, and colours followed the theme.
+  Three defects were found this way and fixed, each with a test that failed
+  first: the card's text was cut when the card had shown something before, the
+  close sign was clipped, and the card covered the timeline rows of the
+  **Motion Correction** step.
+- Not run: the tutorial on a real screen, the dim over the OpenGL viewport on a
+  real GPU surface (offscreen it is composed in software), a chapter driven by
+  a real video with **Find person**, **Reconstruct 3D** and **Fill hidden
+  ranges**, a real open menu or dialog over the tutorial (the tests stand in
+  for both), and the sample clip: none is shipped yet, so **Use the sample
+  clip** has only been tested with a stand-in file.
+
 ## Hidden ranges on the upstream with appearance settings (2026-11-22)
 
 The hidden ranges steps were moved onto upstream `7c5fea2` (starting settings
