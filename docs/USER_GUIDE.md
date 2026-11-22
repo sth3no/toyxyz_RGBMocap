@@ -1018,15 +1018,20 @@ To join them, right-click the person that should disappear, choose **Continue
 as** and choose the person they really are. The first person leaves the list.
 Their takes and frames now belong to the chosen person, and the gap between the
 takes appears in [Hidden ranges](#hidden-ranges). No motion is changed and no
-file is moved or deleted. The status line then says `<name> now continues as
+file is moved or deleted. If the first person was checked, the chosen person is
+checked too. The status line then says `<name> now continues as
 <name>. Right-click <name> and choose Separate again to undo.`, with the names
 of the two people.
 
 What to do next:
 
-- Click **Reconstruct 3D** for the joined person. It now also covers the joined
-  frames. The takes of both people stay separate takes of the one person until
-  you run **Reconstruct 3D** for that person again.
+- Nothing has to be reconstructed. The takes of the first person are used as
+  they are, as takes of the chosen person.
+- Run **Reconstruct 3D** for the person only when the joined frames lie within
+  half a second of the person's own takes. Those frames then become part of one
+  longer take. Otherwise **Reconstruct 3D** only reconstructs the joined frames
+  again.
+- After any **Reconstruct 3D** of the person, fill the hidden ranges again.
 - Takes of the scene may ask for **Apply Correction** again. This applies to
   every person of the scene, because the floor of the scene is estimated per
   person.
@@ -1038,9 +1043,11 @@ What to do next:
 
 To undo it, right-click the person that now holds the other one, choose
 **Separate again** and choose the person to bring back. They return to the list
-with their takes and frames. Takes you reconstructed in between stay with the
-person they were made for. As after **Continue as**, **Track Face** and **Apply
-Correction** may be needed again, and the hidden ranges are listed anew.
+with their takes and frames. A take you reconstructed in between stays with the
+person that held them and still contains the returned person's frames. It is
+drawn beside the returned person and cannot be removed in the app. As after
+**Continue as**, **Track Face** and **Apply Correction** may be needed again, and
+the hidden ranges are listed anew.
 
 **Continue as** is refused, and nothing changes, in these cases:
 
@@ -1051,19 +1058,32 @@ Correction** may be needed again, and the hidden ranges are listed anew.
   scene.`
 - The person detection data is missing: `The person detection data of this
   scene is missing. Run Find person again.`
+- A take or preview file that the change must update is damaged: `<file> cannot
+  be read, so the people of this scene were not changed.`
 - An earlier Continue as or Separate again did not finish and its record cannot
-  be read: `A previous Continue as did not finish and cannot be read. Run Find
-  person again.` If the record can be read, it is finished automatically when
-  you open the scene or try again.
+  be read: `A previous Continue as did not finish and its record cannot be read.
+  It was set aside as people_merge_pending.unreadable.json. Check the people of
+  this scene; Find person can be run again to start over.` This message appears
+  once; the next try works normally.
 
-**Separate again** is refused with the last two messages as well.
+**Separate again** is refused with the last three messages as well.
+
+If the person detection data cannot be changed, for example because it is in
+use, nothing changes and the status line says `Cannot change the people of this
+scene: <reason>`. If the change stops after that, the status line says `The
+change could not be finished: <reason>. It will be finished when this scene is
+opened again.` It is also finished when you next choose **Continue as** or
+**Separate again**. The status line then says `An earlier change of the people
+of this scene was finished. Check the list and choose again.`, and the new
+choice is not carried out.
 
 Limits of this version:
 
 - GVHMR and ExMR only. For other models, and while a job is running, the menu
   does not offer **Continue as** or **Separate again**.
 - Running **Find person** again from scratch discards the joins, together with
-  the people list.
+  the people list. A record of an unfinished change from before is then set
+  aside as `people_merge_pending.discarded.json` and not carried out.
 
 ## Stream bones to Blender
 

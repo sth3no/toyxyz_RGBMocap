@@ -782,10 +782,20 @@ Continue as and Separate again (`mocap/person_merge.py`, Qt-free; handlers
 `continue_person_as` and `separate_person` and the right-click menu in
 `mocap/people_ui.py`): person B joins person A of the same scene. A gets B's
 takes and the frames it lacks, and B's whole record is kept under the `absorbed`
-key of A in `people.json` so that Separate again restores it. The change is
-first written whole to `people_merge_pending.json` and then run by `recover()`;
-every step is repeatable, and `recover()` also runs when a scene opens, so a
-crash leaves a file that is finished, never half applied. Rows of
+key of A in `people.json` so that Separate again restores it. Damaged take
+manifests or a damaged target preview `tracking.npz` are refused before anything
+is written. The change is then written whole to `people_merge_pending.json` and
+run step by step; every step is repeatable. When the first step (the row
+re-labelling, one transaction) fails, the pending file is removed; when a later
+one fails, it stays and `Unfinished` (a `Refused`) is raised. `recover()` runs
+when a scene opens (any error goes to the status bar and the log, never stopping
+the open) and, as its own step, before every Continue as or Separate again; the
+handler then reloads the list and asks to choose again. After any failure the
+handler reloads `people.json` when it differs from the window's list, so a stale
+list can never be saved over it. A pending file whose `observations` differs
+from the current `people.json` (Find person ran again) is renamed to
+`people_merge_pending.discarded.json`; an unreadable one to
+`people_merge_pending.unreadable.json`, refused once. Rows of
 `observations.sqlite` are re-labelled (`person` only) and nothing else in it
 changes; no row is inserted or deleted. Besides `people.json` and the pending
 file the only other writes are `person_id` in the moved takes' `project.json` and
