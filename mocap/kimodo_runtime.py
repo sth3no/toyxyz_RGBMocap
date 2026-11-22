@@ -6,11 +6,11 @@ import sys
 from .paths import ROOT
 
 REVISION = 'e1c219c99b4b94ba48be1fb6a1cbc64ecee4c954'
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2  # 2 adds the text-encoder packages
 MODEL_FOLDER = 'kimodo'
 MODEL_NAME = 'Kimodo-SOMA-RP-v1.2'
 PARAMETERS = 283281777
-SETUP = 'Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'
+SETUP = 'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.'
 WORKFLOWS = frozenset(('gvhmr', 'exmr'))  # the workflows whose hidden ranges can be filled automatically
 
 
@@ -42,6 +42,14 @@ def identity():
 
 def activate(folder):
     sys.path.insert(0, str(folder))
+
+
+def setup_command():
+    """Install the overlay as a job of the running app, which already holds the app lock."""
+    python = ROOT / 'runtime_exmr/python.exe'
+    if not python.is_file():
+        raise RuntimeError('The ExMR runtime is missing. Run install.cmd first.')
+    return [str(python), '-I', '-X', 'utf8', '-B', '-u', str(ROOT / 'tools/setup_kimodo.py'), '--from-app']
 
 
 def command(args):

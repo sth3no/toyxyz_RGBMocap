@@ -184,7 +184,7 @@ class ChoiceGlueTest(unittest.TestCase):
         self.assertEqual(shown(lambda:None)[0],True)
         self.assertEqual(shown(lambda:'Get it.'),(False,'Get it.'))
         def broken():raise OSError('disk')
-        self.assertEqual(shown(broken),(False,'Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'))
+        self.assertEqual(shown(broken),(False,'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.'))
     def test_an_unchanged_take_in_use_is_not_reloaded(self):
         self.choose(self.host(self.J),'smooth')
         self.assertEqual(self.calls,[('populate',),('scene',True)])

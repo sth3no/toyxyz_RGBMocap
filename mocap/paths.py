@@ -19,6 +19,9 @@ def worker_command(stage: str, *args: str) -> list[str]:
     if stage == 'sam31_people':
         from .sam31_runtime import command as sam31_command
         return sam31_command(args)
+    if stage == 'kimodo_setup':
+        from .kimodo_runtime import setup_command
+        return setup_command()
     if stage == 'take_join':
         from .take_join_runtime import command as join_command
         return join_command(args)

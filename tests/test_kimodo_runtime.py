@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from mocap import kimodo_runtime as runtime, models, paths
 
-SENTENCE = 'Close RGB MoCap and run Setup_Kimodo.cmd to prepare automatic fill.'
+SENTENCE = 'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.'
 
 
 class ImportTest(unittest.TestCase):
@@ -26,10 +26,10 @@ class LocationTest(unittest.TestCase):
         self.root = Path(tmp.name); self.folder = self.root / 'runtime_kimodo'
         target = patch.object(runtime, 'ROOT', self.root); target.start(); self.addCleanup(target.stop)
 
-    def prepare(self, revision=runtime.REVISION):
+    def prepare(self, revision=runtime.REVISION, version=runtime.PROFILE_VERSION):
         (self.folder / 'kimodo/model').mkdir(parents=True, exist_ok=True)
         (self.folder / 'kimodo/model/load_model.py').write_text('', encoding='utf-8')
-        (self.folder / 'runtime.json').write_text(json.dumps(dict(version=runtime.PROFILE_VERSION, revision=revision)),
+        (self.folder / 'runtime.json').write_text(json.dumps(dict(version=version, revision=revision)),
                                                   encoding='utf-8')
 
     def test_missing_runtime_raises_the_sentence(self):
@@ -40,6 +40,26 @@ class LocationTest(unittest.TestCase):
         self.prepare('0' * 40)
         with self.assertRaisesRegex(RuntimeError, SENTENCE):
             runtime.location()
+
+    def test_version_1_receipt_raises(self):
+        self.prepare(version=1)
+        with self.assertRaisesRegex(RuntimeError, '^' + SENTENCE + '$'):
+            runtime.location()
+
+    def test_version_2_receipt_is_accepted(self):
+        self.prepare(version=2)
+        self.assertEqual(runtime.location(), self.folder)
+
+    def test_setup_command_starts_the_setup_script_in_the_exmr_python(self):
+        with self.assertRaisesRegex(RuntimeError, '^The ExMR runtime is missing. Run install.cmd first.$'):
+            runtime.setup_command()
+        python = self.root / 'runtime_exmr/python.exe'; python.parent.mkdir(); python.write_bytes(b'')
+        self.assertEqual(runtime.setup_command(), [str(python), '-I', '-X', 'utf8', '-B', '-u',
+                                                   str(self.root / 'tools/setup_kimodo.py'), '--from-app'])
+
+    def test_worker_command_starts_the_setup(self):
+        python = self.root / 'runtime_exmr/python.exe'; python.parent.mkdir(); python.write_bytes(b'')
+        self.assertEqual(paths.worker_command('kimodo_setup'), runtime.setup_command())
 
     def test_missing_package_raises(self):
         self.prepare(); (self.folder / 'kimodo/model/load_model.py').unlink()
@@ -83,7 +103,7 @@ class LocationTest(unittest.TestCase):
 
     def test_constants(self):
         self.assertEqual((runtime.REVISION, runtime.PROFILE_VERSION, runtime.MODEL_FOLDER, runtime.MODEL_NAME, runtime.PARAMETERS),
-                         ('e1c219c99b4b94ba48be1fb6a1cbc64ecee4c954', 1, 'kimodo', 'Kimodo-SOMA-RP-v1.2', 283281777))
+                         ('e1c219c99b4b94ba48be1fb6a1cbc64ecee4c954', 2, 'kimodo', 'Kimodo-SOMA-RP-v1.2', 283281777))
 
 
 if __name__ == '__main__':
