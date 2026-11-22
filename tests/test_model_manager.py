@@ -477,5 +477,74 @@ class KimodoGroupTests(unittest.TestCase):
         self.assertEqual(self.files(), [])
 
 
+try:
+    import PySide6  # noqa: F401  the GUI runtime; the shared one skips these
+except ImportError:
+    PySide6 = None
+
+
+@unittest.skipIf(PySide6 is None, 'needs the GUI runtime (PySide6)')
+class KimodoSetupJobTests(unittest.TestCase):
+    """The setup job as Model Manager runs it; the dialog itself needs a main window, so a stand-in hosts its methods."""
+
+    def test_stage_is_named_and_watched(self):
+        from mocap import gui
+        self.assertEqual(gui.STAGES['kimodo_setup'], 'Setting up automatic fill')
+        self.assertEqual(gui.MODEL_JOB_STAGES, {'download', 'import_model', 'kimodo_setup'})
+
+    def host(self, busy=False):
+        from types import SimpleNamespace
+        os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        from PySide6.QtWidgets import QApplication
+        from mocap.gui import ModelsDialog
+        QApplication.instance() or QApplication([])
+        self.jobs = []
+        host = SimpleNamespace(window=SimpleNamespace(busy=busy), start_model_jobs=self.jobs.append)
+        host.sync_kimodo_panel = lambda: ModelsDialog.sync_kimodo_panel(host)
+        host.install_kimodo = lambda: ModelsDialog.install_kimodo(host)
+        panel = ModelsDialog.kimodo_panel(host)
+        self.addCleanup(panel.close)
+        return host, panel, ModelsDialog
+
+    def test_panel_shows_the_runtime_state(self):
+        from mocap import kimodo_runtime
+        from mocap.kimodo_runtime import SETUP
+        with patch.object(kimodo_runtime, 'location', side_effect=RuntimeError(SETUP)):
+            host, panel, _ = self.host()
+        self.assertEqual(host.kimodo_note.text(), 'Automatic fill of hidden ranges (Experimental): install the runtime here, '
+                         'then get the three Kimodo rows below.')
+        self.assertEqual((host.kimodo_state.text(), host.kimodo_install.text()), ('Runtime not installed', 'Install Runtime'))
+        self.assertTrue(host.kimodo_install.isEnabled())
+        with patch.object(kimodo_runtime, 'location', return_value=Path('runtime_kimodo')):
+            host, panel, dialog = self.host(busy=True)
+        self.assertEqual((host.kimodo_state.text(), host.kimodo_install.text()), ('Runtime installed', 'Reinstall Runtime'))
+        self.assertFalse(host.kimodo_install.isEnabled())                       # no second job while one runs
+        host.window.busy = False
+        with patch.object(kimodo_runtime, 'location', side_effect=RuntimeError(SETUP)):
+            dialog.sync_kimodo_panel(host)                                       # what refresh() does when a job ends
+        self.assertEqual((host.kimodo_state.text(), host.kimodo_install.text()), ('Runtime not installed', 'Install Runtime'))
+        self.assertTrue(host.kimodo_install.isEnabled())
+
+    def test_install_asks_once_and_starts_the_job(self):
+        from PySide6.QtWidgets import QMessageBox
+        host, panel, dialog = self.host()
+        asked = []
+        def answer(reply):
+            return lambda *a, **k: asked.append(a[2]) or reply
+        with patch.object(QMessageBox, 'question', answer(QMessageBox.No)):
+            host.kimodo_install.click()
+        self.assertEqual(self.jobs, [])
+        with patch.object(QMessageBox, 'question', answer(QMessageBox.Yes)):
+            host.kimodo_install.click()
+        self.assertEqual(self.jobs, [[('kimodo_setup', [])]])
+        self.assertEqual(asked, ['This downloads NVIDIA Kimodo (Apache-2.0) and Python packages into the app folder '
+                                 '(about 150 MB). The Kimodo model has its own licence (NVIDIA Open Model License), '
+                                 'shown on its download page. Continue?'] * 2)
+        host.window.busy = True                                                  # a job started meanwhile
+        with patch.object(QMessageBox, 'question', answer(QMessageBox.Yes)):
+            dialog.install_kimodo(host)
+        self.assertEqual(self.jobs, [[('kimodo_setup', [])]])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -48,14 +48,16 @@ def _shown(choice, gap, people, ident, auto_issue=None):
 
 
 def gap_rows(gaps, choices, fps, people=None, ident=None, auto_issue=None):
-    """One row per gap; `auto_issue` is why Automatic cannot run at all (no runtime or model), None when it can."""
+    """One row per gap; `auto_issue` is why Automatic cannot run at all (no runtime or model), None when it can.
+    `setup` marks a chosen Automatic row stopped by that, not by the range's own limit."""
     choices = choices if isinstance(choices, dict) else {};people = _people(people)
     donors = [(p['id'], str(p.get('name') or f"Person {p['id']}")) for p in people if type(p.get('id')) is int and p['id'] != ident]
     rows = []
     for g in gaps:
         method, person, mirror, offset, seed, issue = _shown(choices.get(gap_key(g)), g, people, ident, auto_issue)
         rows.append(dict(key=gap_key(g), label=gap_label(g, fps), method=method, person=person, mirror=mirror, offset=offset, seed=seed,
-                         issue=issue, smooth_issue=method_issue('smooth', g), auto_issue=_auto_issue(g, auto_issue), donors=donors))
+                         issue=issue, smooth_issue=method_issue('smooth', g), auto_issue=_auto_issue(g, auto_issue), donors=donors,
+                         setup=method == 'auto' and bool(issue) and method_issue('auto', g) is None))
     return rows
 
 

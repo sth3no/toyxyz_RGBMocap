@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 try:
-    from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QSpinBox
+    from PySide6.QtWidgets import QApplication,QCheckBox,QComboBox,QLabel,QSpinBox
 except ImportError:
     QApplication=None
 
@@ -64,13 +64,14 @@ class NarrowPanelTest(unittest.TestCase):
 
 @unittest.skipIf(QApplication is None,'needs the GUI runtime (PySide6)')
 class AutomaticChoiceTest(unittest.TestCase):
-    def panel(self,choices,auto_issue=None,reason=None):
+    def panel(self,choices,auto_issue=None,reason=None,takes=PEOPLE[0]['takes']):
         application()
         from mocap.hidden_ranges import gaps
         from mocap.hidden_ranges_ui import HiddenRangesPanel
         panel=HiddenRangesPanel();self.addCleanup(panel.close);self.emitted=[]
         panel.choice_changed.connect(lambda *a:self.emitted.append(a));panel.fill_requested.connect(lambda:self.emitted.append('fill'))
-        panel.show_gaps(gaps(PEOPLE[0]['takes']),choices,30,reason,PEOPLE,1,auto_issue)
+        panel.setup_requested.connect(lambda:self.emitted.append('setup'))
+        panel.show_gaps(gaps(takes),choices,30,reason,PEOPLE,1,auto_issue)
         return panel
     def combo(self,panel):return panel._widgets[1]
     def variation(self,panel):return next((s for s in panel.findChildren(QSpinBox) if s.accessibleName().startswith('Variation')),None)
@@ -78,13 +79,37 @@ class AutomaticChoiceTest(unittest.TestCase):
         from PySide6.QtCore import Qt
         combo=self.combo(self.panel({}))
         self.assertEqual([(combo.itemText(i),combo.itemData(i)) for i in range(combo.count())],
-                         [('Do not fill','none'),('Smooth join','smooth'),('Copy from person','copy'),('Automatic','auto')])
+                         [('Do not fill','none'),('Smooth join','smooth'),('Copy from person','copy'),('Automatic (Experimental)','auto')])
         self.assertTrue(combo.model().item(3).isEnabled())
         self.assertEqual(combo.itemData(3,Qt.ToolTipRole),'Generate the missing motion from the captured poses on both sides. The result is plausible motion, not a reconstruction.')
-    def test_issue_disables_the_item(self):
+    def test_setup_issue_leaves_the_item_enabled(self):
         from PySide6.QtCore import Qt
         combo=self.combo(self.panel({},'x'))
-        self.assertFalse(combo.model().item(3).isEnabled());self.assertEqual(combo.itemData(3,Qt.ToolTipRole),'x')
+        self.assertTrue(combo.model().item(3).isEnabled());self.assertEqual(combo.itemData(3,Qt.ToolTipRole),'x')
+    def test_range_limit_disables_the_item(self):
+        from PySide6.QtCore import Qt
+        combo=self.combo(self.panel({},'x',takes=[T(0,100),T(400,500)]))
+        sentence='Automatic fill is limited to 290 frames; this range has 300.'
+        self.assertFalse(combo.model().item(3).isEnabled());self.assertEqual(combo.itemData(3,Qt.ToolTipRole),sentence)
+    def test_choosing_automatic_without_setup_offers_set_up(self):
+        panel=self.panel({},'x')
+        self.assertTrue(panel.setup.isHidden())                                      # nothing chosen needs it yet
+        shown=lambda *a:panel.show_gaps(*panel._shown[:1],{a[0]:{'method':a[1],'seed':a[5]}},30,*panel._shown[2:])
+        panel.choice_changed.connect(shown)                                          # what the People panel does after saving
+        self.combo(panel).setCurrentIndex(3)
+        self.assertEqual(self.combo(panel).currentData(),'auto')
+        self.assertIn('x',[w.text() for w in panel._widgets if isinstance(w,QLabel)])
+        self.assertFalse(panel.setup.isHidden());self.assertEqual(panel.setup.text(),'Set up…')
+        self.assertFalse(panel.fill.isEnabled())
+        panel.setup.click();self.assertEqual(self.emitted[-1],'setup')
+    def test_set_up_is_hidden_when_no_row_needs_it(self):
+        for choices,issue,takes in (({'100_120':{'method':'auto','seed':3}},None,PEOPLE[0]['takes']),   # set up
+                                    ({'100_120':{'method':'smooth'}},'x',PEOPLE[0]['takes']),          # not Automatic
+                                    ({'100_400':{'method':'auto','seed':3}},'x',[T(0,100),T(400,500)])):  # over the limit
+            panel=self.panel(choices,issue,takes=takes)
+            self.assertTrue(panel.setup.isHidden(),choices)
+        panel=self.panel({'100_120':{'method':'auto','seed':3}},'x');self.assertFalse(panel.setup.isHidden())
+        panel.show_gaps(*panel._shown[:1],{},30,*panel._shown[2:]);self.assertTrue(panel.setup.isHidden())  # hidden again once nothing needs it
     def test_choosing_automatic(self):
         panel=self.panel({});self.combo(panel).setCurrentIndex(3)
         self.assertEqual(self.emitted,[('100_120','auto',None,False,0,0)])
@@ -114,6 +139,7 @@ class AutomaticChoiceTest(unittest.TestCase):
         panel=self.panel({'100_120':{'method':'auto','seed':3}},'x')
         self.assertEqual(self.combo(panel).currentData(),'auto');self.assertFalse(panel.fill.isEnabled())
         self.assertIn('x',[w.text() for w in panel._widgets if hasattr(w,'text')])
+        self.assertFalse(panel.setup.isHidden())
     def test_copy_rows_emit_a_trailing_zero(self):
         panel=self.panel({'100_120':dict(method='copy',person=2,mirror=False,offset=-30)})
         panel.findChild(QCheckBox).setChecked(True)
@@ -182,9 +208,15 @@ class ChoiceGlueTest(unittest.TestCase):
             combo=host.hidden_ranges._widgets[1];host.hidden_ranges.close()
             return combo.model().item(3).isEnabled(),combo.itemData(3,Qt.ToolTipRole)
         self.assertEqual(shown(lambda:None)[0],True)
-        self.assertEqual(shown(lambda:'Get it.'),(False,'Get it.'))
+        self.assertEqual(shown(lambda:'Get it.'),(True,'Get it.'))                  # a setup issue no longer disables the item
         def broken():raise OSError('disk')
-        self.assertEqual(shown(broken),(False,'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.'))
+        self.assertEqual(shown(broken),(True,'Automatic fill is not set up. Use Set up… and install the runtime in Model Manager.'))
+    def test_set_up_opens_model_manager_and_shows_the_rows_again(self):
+        from mocap.people_ui import PeopleWorkspace
+        host=self.host(self.J,open_model_manager=lambda:self.calls.append(('manager',)))
+        host.refresh_hidden_ranges=lambda person:self.calls.append(('rows',person['id']))
+        PeopleWorkspace.hidden_ranges_setup(host)
+        self.assertEqual(self.calls,[('manager',),('rows',1)])                      # rebuilt after the modal dialog closes
     def test_an_unchanged_take_in_use_is_not_reloaded(self):
         self.choose(self.host(self.J),'smooth')
         self.assertEqual(self.calls,[('populate',),('scene',True)])

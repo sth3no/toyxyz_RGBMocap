@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QCheckBox, QSpinBox,
     QScrollArea, QFrame, QSizePolicy)
-from .hidden_ranges import OFFSET_LIMIT, SEED_LIMIT
+from .hidden_ranges import OFFSET_LIMIT, SEED_LIMIT, method_issue
 from .theme import ui_px
 from .hidden_ranges_state import can_fill, editable, gap_rows, pending_state
 
@@ -35,6 +35,7 @@ class HiddenRangesPanel(QWidget):
     # key, method, donor person id (None until chosen), mirror, offset, seed
     choice_changed = Signal(str, str, object, bool, int, int)
     fill_requested = Signal()
+    setup_requested = Signal()  # open Model Manager to install what Automatic needs
 
     def __init__(self):
         super().__init__()
@@ -45,17 +46,21 @@ class HiddenRangesPanel(QWidget):
         self.fill = QPushButton('Fill hidden ranges')
         self.fill.setToolTip('Join the takes around the selected hidden ranges into one new take. The source takes are kept.')
         self.fill.clicked.connect(self._fill_clicked)
+        self.setup = QPushButton('Set up…');self.setup.setToolTip('Open Model Manager to install what Automatic fill needs.')
+        self.setup.clicked.connect(lambda: self.setup_requested.emit());self.setup.hide()
         self.manual = QLabel(MANUAL_NOTE);self.manual.setObjectName('muted');self.manual.setWordWrap(True);self.manual.hide()
-        for widget in (self.reason, self.fill, self.manual):layout.addWidget(widget)
-        self._widgets, self._pending, self._seeds, self._issues, self._shown, self._rows = [], {}, {}, {}, None, ([], False)
+        buttons = QHBoxLayout();buttons.setSpacing(6);buttons.addWidget(self.fill, 1);buttons.addWidget(self.setup)
+        layout.addWidget(self.reason);layout.addLayout(buttons);layout.addWidget(self.manual)
+        self._widgets, self._pending, self._seeds, self._issues, self._shown, self._rows = [], {}, {}, {}, None, ([], [], False)
         self._later = QTimer(self);self._later.setInterval(30);self._later.timeout.connect(self._rebuild);self.hide()
 
     def show_gaps(self, gaps, choices, fps, disabled_reason, people=None, ident=None, auto_issue=None):
         self._shown, self._pending = (gaps, choices, disabled_reason, people, ident, auto_issue), {}
         rows = gap_rows(gaps, choices, fps, people, ident, auto_issue)
         # An unsupported project, camera or result must not record choices.
-        self._rows = (rows, editable(disabled_reason))
+        self._rows = (gaps, rows, editable(disabled_reason))
         self.fill.setEnabled(can_fill(rows, disabled_reason))
+        self.setup.setVisible(any(row['setup'] for row in rows))
         self.reason.setText(disabled_reason or '');self.reason.setVisible(bool(disabled_reason))
         if not rows:self.hide()
         # An edited field is saved when a click elsewhere takes its focus, and saving shows the ranges again.
@@ -74,13 +79,14 @@ class HiddenRangesPanel(QWidget):
             for w in (widget, *widget.findChildren(QWidget)):w.blockSignals(True)
             widget.setParent(None);widget.deleteLater()
         self._widgets, self._seeds, self._issues = [], {}, {}
-        rows, enabled = self._rows
-        for row in rows:
+        gaps, rows, enabled = self._rows
+        for gap, row in zip(gaps, rows):
             label, combo = QLabel(row['label']), QComboBox()
             combo.setAccessibleName('Hidden range '+row['label'])
             combo.addItem('Do not fill', 'none');combo.addItem('Smooth join', 'smooth');combo.addItem('Copy from person', 'copy')
-            combo.addItem('Automatic', 'auto');combo.setItemData(3, row['auto_issue'] or AUTO_TIP, Qt.ToolTipRole)
-            if row['auto_issue']:combo.model().item(3).setEnabled(False)
+            combo.addItem('Automatic (Experimental)', 'auto');combo.setItemData(3, row['auto_issue'] or AUTO_TIP, Qt.ToolTipRole)
+            # Only the range's own limit disables it; missing setup is shown on the chosen row with Set up….
+            if method_issue('auto', gap):combo.model().item(3).setEnabled(False)
             if row['smooth_issue']:
                 combo.model().item(1).setEnabled(False)
                 combo.setItemData(1, row['smooth_issue'], Qt.ToolTipRole);combo.setToolTip(row['smooth_issue'])

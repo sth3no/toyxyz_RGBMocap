@@ -135,6 +135,13 @@ class AutoRowsTest(unittest.TestCase):
         sentence='Automatic fill is limited to 290 frames; this range has 300.'
         self.assertEqual((r['method'],r['auto_issue'],r['issue']),('auto',sentence,sentence))
         self.assertEqual(self.rows({},SETUP,LONG)[0]['auto_issue'],sentence)        # the range's own limit comes first
+    def test_setup_flag(self):
+        self.assertFalse(self.rows({'100_120':AUTO()})[0]['setup'])                  # no issue
+        self.assertFalse(self.rows({'100_400':AUTO()},SETUP,LONG)[0]['setup'])       # the range's own limit is not setup
+        self.assertTrue(self.rows({'100_120':AUTO()},SETUP)[0]['setup'])             # the runtime or model is missing
+        self.assertFalse(self.rows({'100_120':AUTO()},SETUP)[1]['setup'])            # only a chosen Automatic row needs it
+        self.assertFalse(self.rows({'100_120':{'method':'smooth'}},SETUP)[0]['setup'])
+        self.assertFalse(self.rows({'100_120':COPY(person=None)},SETUP)[0]['setup'])  # a copy's issue is not setup
     def test_malformed_shows_none(self):
         for bad in ({'method':'auto','seed':1000},{'method':'auto','seed':-1},{'method':'auto','seed':'7'},{'method':'auto','seed':7.0},{'method':'auto','seed':True}):
             r=self.rows({'100_120':bad})[0]
@@ -142,7 +149,7 @@ class AutoRowsTest(unittest.TestCase):
         self.assertEqual(self.rows({'100_120':{'method':'auto'}})[0]['method'],'auto')   # a missing seed is 0
     def test_can_fill(self):
         self.assertTrue(ui.can_fill(self.rows({'100_120':AUTO()}),None))
-        self.assertFalse(ui.can_fill(self.rows({'100_120':AUTO()},SETUP),None))
+        self.assertFalse(ui.can_fill(self.rows({'100_120':AUTO()},SETUP),None))    # a setup issue stops the fill
         self.assertFalse(ui.can_fill(self.rows({'100_400':AUTO()},None,LONG),None))
         self.assertTrue(ui.can_fill(self.rows({'100_120':{'method':'smooth'}},SETUP),None))   # the issue only stops Automatic rows
     def test_sources(self):

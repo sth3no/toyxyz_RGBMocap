@@ -325,6 +325,7 @@ class PeopleWorkspace:
         self.hidden_ranges=HiddenRangesPanel()
         self.hidden_ranges.choice_changed.connect(self.gap_choice_changed)
         self.hidden_ranges.fill_requested.connect(self.fill_hidden_ranges)
+        self.hidden_ranges.setup_requested.connect(self.hidden_ranges_setup)
         column.addWidget(self.hidden_ranges)
         self.people_note = QLabel('')
         self.people_note.setObjectName('muted');self.people_note.setWordWrap(True)
@@ -581,6 +582,11 @@ class PeopleWorkspace:
         except Exception:auto_issue=kimodo_runtime.SETUP
         self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason,people,person.get('id'),auto_issue)
         self.hidden_ranges.set_manual_note(manual)
+
+    def hidden_ranges_setup(self):
+        # Model Manager is modal; once it closes the rows show what was installed.
+        self.open_model_manager()
+        self.refresh_hidden_ranges(self.current_person())
 
     def gap_choice_changed(self,key,method,donor=None,mirror=False,offset=0,seed=0):
         from copy import deepcopy
