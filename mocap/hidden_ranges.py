@@ -4,6 +4,13 @@ AUTO_MAX_FRAMES=290  # with 5 known frames on each side the generator's 300-fram
 METHODS=('none','smooth','copy','auto')
 SEED_LIMIT=999
 OFFSET_LIMIT=600
+TEXT_LIMIT=200  # characters of an automatic fill's description
+
+def normalise_text(text):
+    """A description as one line: every run of whitespace, line breaks included, as one space; ValueError above TEXT_LIMIT characters."""
+    text=' '.join(text.split())
+    if len(text)>TEXT_LIMIT:raise ValueError(f'A description can have at most {TEXT_LIMIT} characters.')
+    return text
 
 def typed(text):
     """`text` for a message, so that the Console and the status line show it as typed. Both read a line with a tag or
