@@ -14,10 +14,17 @@ class PanelDecisionTest(unittest.TestCase):
         self.assertIsNone(ui.disabled_reason('exmr',True,'initial',lambda:True))
         self.assertIsNone(ui.disabled_reason('gvhmr',False,'initial',lambda:True))
     def test_unsupported_results(self):
-        for kind in ('refined','corrected_refined','handflow_initial','corrected_handflow_footmr_initial','footmr_refined'):
-            self.assertEqual(ui.disabled_reason('gvhmr',False,kind,lambda:True),'Hidden ranges support the initial and FootMR results in this version.')
-        for kind in ('initial','corrected_initial','footmr_initial','corrected_footmr_initial'):
-            self.assertIsNone(ui.disabled_reason('gvhmr',False,kind,lambda:True))
+        for kind in ('refined','corrected_refined','footmr_refined','handflow_refined','corrected_handflow_footmr_refined'):
+            self.assertEqual(ui.disabled_reason('gvhmr',False,kind,lambda:True),'Hidden ranges do not support HTD Refine results in this version.')
+        self.assertEqual(ui.UNSUPPORTED,'Hidden ranges do not support HTD Refine results in this version.')
+        for kind in ('initial','corrected_initial','footmr_initial','corrected_footmr_initial',
+                     'handflow_initial','corrected_handflow_initial','handflow_footmr_initial','corrected_handflow_footmr_initial'):
+            self.assertIsNone(ui.disabled_reason('gvhmr',False,kind,lambda:True),kind)
+    def test_a_donor_without_fingers_is_named(self):
+        reason=ui.DONOR_NO_FINGERS.format('Anna')
+        self.assertEqual(reason,'Anna has no finger motion for this result. Reconstruct that person with HandFlow.')
+        self.assertEqual(ui.disabled_reason('gvhmr',False,'handflow_initial',lambda:reason),reason)
+        self.assertTrue(ui.editable(reason))
     def test_not_ready(self):
         self.assertEqual(ui.disabled_reason('gvhmr',False,'initial',lambda:False),'Reconstruct and prepare both neighbouring takes first.')
     def test_readiness_read_only_when_needed(self):
@@ -231,6 +238,22 @@ class PendingAndReadinessTest(unittest.TestCase):
         self.assertTrue(ui.editable(run([donor])))                                  # the donor or offset can still be changed
         self.assertEqual(ui.disabled_reason('gvhmr',False,'initial',lambda:'X'),'X')
         self.assertEqual(ui.fill_sources(g,{'100_120':COPY(person=9)},PEOPLE,1),[])  # an unknown donor does not raise
+    def test_a_donor_without_fingers_is_named_by_the_panel(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp).resolve()/'scene';g=h.gaps(TAKES);donor=root/PEOPLE[1]['takes'][0]['project']
+            for t in (*TAKES[:2],PEOPLE[1]['takes'][0]):(root/t['project']).mkdir(parents=True,exist_ok=True)
+            ready={(root/t['project'],k) for t in TAKES[:2] for k in ('initial','handflow_initial')}|{(donor,'initial')}   # current body results everywhere
+            def run(kind):
+                with mock.patch('mocap.motion_tools.selected_export',lambda p,k:p if (p,k) in ready else None):
+                    return ui.panel_state(root,g,{'100_120':COPY()},'gvhmr',kind,PEOPLE,1)[0]
+            self.assertIsNone(run('initial'))
+            reason=run('handflow_initial')
+            self.assertEqual(reason,'Ben has no finger motion for this result. Reconstruct that person with HandFlow.');self.assertTrue(ui.editable(reason))
+            self.assertEqual(run('corrected_handflow_initial'),reason)
+            ready.discard((donor,'initial'))   # without the body result the donor is simply not ready
+            self.assertEqual(run('handflow_initial'),"Ben's take must be reconstructed and prepared before it can be copied from.")
+            ready.add((donor,'handflow_initial'));ready.add((donor,'initial'));self.assertIsNone(run('handflow_initial'))
 
 class MaskTest(unittest.TestCase):
     def test_runs(self):

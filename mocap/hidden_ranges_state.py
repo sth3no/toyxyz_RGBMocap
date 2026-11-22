@@ -4,23 +4,25 @@ import json
 import numpy as np
 from .hidden_ranges import METHODS, OFFSET_LIMIT, SEED_LIMIT, TEXT_LIMIT, chains, choice_params, donor_take, gap_key, gap_label, method_issue, printable
 
-SUPPORTED = ('initial', 'footmr_initial')
+SUPPORTED = ('initial', 'footmr_initial', 'handflow_initial', 'handflow_footmr_initial')
+UNSUPPORTED = 'Hidden ranges do not support HTD Refine results in this version.'
 NOT_READY = 'Reconstruct and prepare both neighbouring takes first.'
 DONOR_NOT_READY = "{}'s take must be reconstructed and prepared before it can be copied from."
+DONOR_NO_FINGERS = '{} has no finger motion for this result. Reconstruct that person with HandFlow.'
 
 
 def disabled_reason(model, static_camera, kind, ready):
     """First reason the Fill button cannot run; `ready` is called last because it reads take files."""
     if model not in ('gvhmr', 'exmr'):return 'Hidden ranges are available for GVHMR and ExMR in this version.'
     if model == 'exmr' and not static_camera:return 'Hidden ranges need a fixed camera in this version.'
-    if kind.removeprefix('corrected_') not in SUPPORTED:return 'Hidden ranges support the initial and FootMR results in this version.'
+    if kind.removeprefix('corrected_') not in SUPPORTED:return UNSUPPORTED
     ready = ready()  # True, False, or the reason naming a donor whose take is not ready
     return None if ready is True else ready if isinstance(ready, str) else NOT_READY
 
 
 def editable(reason):
-    """Choices stay editable only while the project, camera and result are supported."""
-    return reason is None or reason == NOT_READY or reason.endswith(DONOR_NOT_READY.format(''))
+    """Choices stay editable only while the project, camera and result are supported; a donor's reason lets another person be picked."""
+    return reason is None or reason == NOT_READY or reason.endswith((DONOR_NOT_READY.format(''), DONOR_NO_FINGERS.format('')))
 
 
 def _people(people):return [p for p in people if isinstance(p, dict)] if isinstance(people, list) else []
@@ -175,7 +177,7 @@ def export_line(stem, mask):
 def panel_state(root, found, choices, model, kind, people=None, ident=None):
     """(disabled reason, manual contact note) for a person's gaps; reads only the takes that would be joined or copied."""
     from .foot_contacts import contact_state
-    from .motion_tools import base_result, selected_export
+    from .motion_tools import base_result, body_result, has_handflow, selected_export
     from .people_store import safe_child
     base = base_result(kind)
     try:sources = [(safe_child(root, t['project']), name) for t, name in _sources(found, choices, people, ident).values()]
@@ -184,10 +186,14 @@ def panel_state(root, found, choices, model, kind, people=None, ident=None):
         try:return any(test(project) for project, _ in sources)
         except (OSError, ValueError, KeyError, TypeError):return None
     def ready():
-        try:waiting = [name for project, name in sources if selected_export(project, base) is None]
+        try:
+            waiting = [(project, name) for project, name in sources if selected_export(project, base) is None]
+            donor = next(((project, name) for project, name in waiting if name is not None), None)
+            if donor is None:return not waiting
+            # A donor whose body result alone is ready lacks only its fingers.
+            fingers = has_handflow(base) and selected_export(donor[0], body_result(base)) is not None
         except (OSError, ValueError, KeyError, TypeError):return False
-        donor = next((name for name in waiting if name is not None), None)
-        return DONOR_NOT_READY.format(donor) if donor is not None else not waiting
+        return (DONOR_NO_FINGERS if fingers else DONOR_NOT_READY).format(donor[1])
     static = False
     if model == 'exmr':
         from .exmr_options import saved

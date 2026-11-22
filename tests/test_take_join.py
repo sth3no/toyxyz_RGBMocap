@@ -719,8 +719,9 @@ class WriteTest(unittest.TestCase):
             self.automatic(text=text);person=ps.load_people(self.root)['people'][0];self.assertTrue(ps.join_current(self.root,person,person['joins'][0]),repr(text))
             with self.generator(calls):code,events=self.join()
             self.assertEqual((code,len(calls)),(0,1));self.assertIs(events[-1]['cached'],True)
-    def fingers(self):
-        """Gives both takes of person 1 a current handflow_initial result, written as mocap.handflow.run writes it; returns the hand rows per take."""
+    def fingers(self,spans=((0,100),(110,200)),donor=False):
+        """Gives the two takes of person 1 at `spans` (and with `donor` the donor take of person 2) a current handflow_initial result,
+        written as mocap.handflow.run writes it; returns the hand rows per take by its first frame, the donor's under 'donor'."""
         import torch
         from mocap import handflow
         from mocap.models import BY_KEY,STAGE_REQUIREMENTS
@@ -728,9 +729,10 @@ class WriteTest(unittest.TestCase):
         from mocap.storage import atomic_json
         models={k:file_stat(BY_KEY[k].path) for k in STAGE_REQUIREMENTS['handflow'] if BY_KEY[k].path.is_file()}
         rng=np.random.default_rng(5);rows={}
-        for (a,b),coverage,warning in(((0,100),[.9,.4],'Right hand detection coverage is low; inspect the finger motion.'),((110,200),[.5,.8],'')):
-            d=self.root/TAKE(a,b);n=b-a;body=torch.load(d/'hmr4d_results.pt',weights_only=False)['smpl_params_global']
-            hands=rows[a]={k:rng.uniform(-.4,.4,(n,45)).astype(np.float32) for k in('left_hand_pose','right_hand_pose')}
+        takes=[(TAKE(a,b),a,b-a,coverage,warning) for (a,b),coverage,warning in zip(spans,([.9,.4],[.5,.8]),('Right hand detection coverage is low; inspect the finger motion.',''))]
+        for folder,key,n,coverage,warning in takes+([(DONOR,'donor',220,[.7,.6],'')] if donor else []):
+            d=self.root/folder;body=torch.load(d/'hmr4d_results.pt',weights_only=False)['smpl_params_global']
+            hands=rows[key]={k:rng.uniform(-.4,.4,(n,45)).astype(np.float32) for k in('left_hand_pose','right_hand_pose')}
             torch.save({'smpl_params_global':{**body,**{k:torch.from_numpy(v) for k,v in hands.items()}},'source':'initial',
                         'method':'HandFlow finger-only; body and wrists unchanged'},d/'handflow_initial.pt')
             atomic_json(d/'handflow_initial_sources.json',{k:file_stat(d/k) for k in('hmr4d_results.pt','handflow_initial.pt','tracking.npz')})
@@ -787,6 +789,48 @@ class WriteTest(unittest.TestCase):
     def test_a_join_written_before_fingers_were_supported_stays_current(self):
         self.assertEqual(self.join('initial')[0],0);before=self.folder()
         code,events=self.join('initial');self.assertEqual(code,0);self.assertIs(events[-1]['cached'],True);self.assertEqual(self.folder(),before)
+    def same_body(self,J,label=''):
+        """The joined finger result's other keys are the joined body result's, bit for bit; returns its params."""
+        import torch
+        hand=torch.load(J/'handflow_initial.pt',weights_only=False)['smpl_params_global'];body=torch.load(J/'hmr4d_results.pt',weights_only=False)['smpl_params_global']
+        self.assertEqual(set(hand)-{'left_hand_pose','right_hand_pose'},set(body),label)
+        for k,v in body.items():self.assertTrue(torch.equal(hand[k],v),f'{label} {k}')
+        return hand
+    def test_a_copy_donor_without_fingers_is_refused_by_name(self):
+        self.fingers();self.choose();state=ps.load_people(self.root);state['people'][1]['name']='Anna <b>';ps.save_people(self.root,state)
+        self.assertEqual(take_join.DONOR_NO_FINGERS,'{} has no finger motion for this result. Reconstruct that person with HandFlow.')
+        before=self.snapshot();code,events=self.join('handflow_initial')
+        message='<span>Anna &lt;b&gt;</span> has no finger motion for this result. Reconstruct that person with HandFlow.'
+        self.assertEqual((code,events),(1,[dict(type='failed',stage='take_join',message=message)]));self.assertEqual(message,take_join.DONOR_NO_FINGERS.format(take_join._typed('Anna <b>')))
+        self.assertEqual(self.stderr.getvalue(),'');self.assertEqual(self.snapshot(),before);self.assertFalse((self.root/'p1/takes/000000000_000000200_fill_v1').exists())
+        (self.root/DONOR/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')   # its body result is out of date too
+        code,events=self.join('handflow_initial')
+        self.assertEqual((code,events[0]['message']),(1,"<span>Anna &lt;b&gt;</span>'s take is not ready to be copied from. Reconstruct and prepare it first."))
+    def test_a_copy_between_results_with_fingers_uses_the_donors_fingers(self):
+        state=ps.load_people(self.root);state['people'][0]['takes']=[state['people'][0]['takes'][0],self.take(150,200,WC)];ps.save_people(self.root,state)
+        rows=self.fingers(((0,100),(150,200)),donor=True);J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        mid=125   # 50 hidden frames: the boundary blends of these finger poses cover at most 14 frames at each end
+        for mirror in(False,True):
+            state=ps.load_people(self.root);state['people'][0]['gap_fill']={'100_150':{'method':'copy','person':2,'mirror':mirror,'offset':5}};ps.save_people(self.root,state)
+            code,events=self.join('handflow_initial');self.assertEqual(code,0,events);hand=self.same_body(J,mirror)
+            self.assertEqual(list(np.load(J/'fill_mask.npy')[95:155]),[0]*5+[2]*50+[0]*5)
+            for k,other in(('left_hand_pose','right_hand_pose'),('right_hand_pose','left_hand_pose')):
+                # Gap frame f copies donor frame f+offset; a mirrored copy takes the other hand, reflected.
+                want=rows['donor'][other][mid+5].reshape(15,3)*[1,-1,-1] if mirror else rows['donor'][k][mid+5].reshape(15,3)
+                np.testing.assert_allclose(hand[k][mid].double().numpy().reshape(15,3),want,atol=1e-5,err_msg=f'{mirror} {k}')
+    def test_an_automatic_range_of_a_result_with_fingers_blends_the_fingers(self):
+        rows=self.fingers();calls=[];self.automatic();J=self.root/'p1/takes/000000000_000000200_fill_v1'
+        with self.generator(calls):code,events=self.join('handflow_initial')
+        self.assertEqual(code,0,events);self.assertEqual(len(calls),1);hand=self.same_body(J)
+        angle=lambda x,y:(R.from_rotvec(x).inv()*R.from_rotvec(y)).magnitude()
+        for k in('left_hand_pose','right_hand_pose'):
+            v=hand[k].double().numpy();self.assertEqual(v.shape,(200,45),k)
+            np.testing.assert_allclose(v[99],rows[0][k][99],atol=1e-6);np.testing.assert_allclose(v[110],rows[110][k][0],atol=1e-6)
+            gap=v[99:111].reshape(12,15,3);j=int(np.argmax(angle(gap[0],gap[-1])));total=angle(gap[0][j],gap[-1][j])
+            self.assertGreater(total,.1,k)
+            # From the last captured row before the range to the first one after it, never back.
+            moved=[angle(gap[0][j],gap[i][j]) for i in range(12)];self.assertTrue(all(x<y for x,y in zip(moved,moved[1:])),(k,moved))
+            self.assertTrue(0<angle(gap[0][j],gap[6][j])<total and 0<angle(gap[6][j],gap[-1][j])<total,k)   # frame 105, the middle of frames 100-109
 class ExmrWriteTest(WriteTest):MODEL='exmr'
 def _take(a,b):return dict(project=f't{a}_{b}',first=a,end=b)
 def _join(first,end,*sources,project=None):return dict(project=project or f'j{first}_{end}',first=first,end=end,sources=list(sources))

@@ -9,7 +9,7 @@ import sys
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 from . import auto_fill
-from .gap_fill import COPIED, GENERATED, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
+from .gap_fill import COPIED, GENERATED, HANDS, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
 from .hidden_ranges import typed as _typed
 
 STAGE = 'take_join'
@@ -75,6 +75,9 @@ def _copy(a, b, g, pelvis):
         stats, keys = {}, [k for k in p if k != 'transl']
         params[kind] = at(copy_fill(at(p, pelvis, 1), at(b['params'][kind], pelvis, 1), donor, keys, g.get('height_scale', 1.), stats), pelvis, -1)
         residual[kind] = stats['residual']
+    # The finger poses lengthen the boundary blends, so a finger result takes the body rows of its body result and keeps only its hands.
+    for kind in [k for k in params if k.startswith('handflow_')]:
+        params[kind] = dict(params[kind.removeprefix('handflow_')], **{k: params[kind][k] for k in HANDS if k in params[kind]})
     logits = np.asarray(d['logits'], np.float64)[1:-1]
     return dict(params=params, incam=_camera(a, b, params['initial'], pelvis, n), logits=mirror_logits(logits) if g['mirror'] else logits, mask=COPIED, residual=residual)
 
@@ -188,6 +191,7 @@ class Refused(ValueError):
 UNSUPPORTED = 'Hidden ranges do not support HTD Refine results in this version; switch HTD Refine off.'
 RANGE_KEYS = ('start', 'end', 'frames', 'timeline', 'original_times', 'duration')
 DONOR_NOT_READY = "{}'s take is not ready to be copied from. Reconstruct and prepare it first."
+DONOR_NO_FINGERS = '{} has no finger motion for this result. Reconstruct that person with HandFlow.'
 COPY_INFO = 'Frames {}–{} copied from {}: the path was adjusted by {:.1f} cm ({:.2f} cm per frame) to meet the captured motion.'
 AUTO_INFO = 'Frames {}–{} generated: the captured poses next to the range were missed by {:.1f} cm before it and {:.1f} cm after it.'
 AUTO_TEXT_INFO = ('Frames {}–{} generated from the description "{}": the captured poses next to the range were missed by {:.1f} cm before it '
@@ -271,9 +275,13 @@ def _check(root, ident, result):
             name = gaps[-1][-1]['name'] = _typed(donor.get('name') or 'Person '+str(donor['id']))
             try:
                 folder = safe_child(root, take['project']);manifest = json.loads((folder/'project.json').read_text(encoding='utf-8'))
-                ready = manifest.get('frames') == take['end']-take['first'] and {manifest.get('fps')} == rates and \
-                    all((folder/n).is_file() for n in names[1:]) and all(result_is_current(folder, k) for k in kinds)
-            except (OSError, ValueError):ready = False
+                fits = manifest.get('frames') == take['end']-take['first'] and {manifest.get('fps')} == rates
+                ready = fits and all((folder/n).is_file() for n in names[1:]) and all(result_is_current(folder, k) for k in kinds)
+                # Not ready only because its finger result is missing or out of date: name what is missing.
+                plain = [k for k in kinds if not has_handflow(k)]
+                fingers = not ready and fits and len(plain) < len(kinds) and all((folder/RESULTS[k][0]).is_file() and result_is_current(folder, k) for k in plain)
+            except (OSError, ValueError):ready = fingers = False
+            if fingers:raise Refused(DONOR_NO_FINGERS.format(name))
             if not ready:raise Refused(DONOR_NOT_READY.format(name))
     return model, person, chains, gaps, kinds, names, body
 
