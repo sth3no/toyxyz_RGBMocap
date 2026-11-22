@@ -4,6 +4,7 @@ from .tooltips import tooltip_text
 from .ui_refresh import batch_readiness
 from .validation_snapshot import read_only_checks
 import json
+import sqlite3
 from collections import OrderedDict
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (QWidget,QFrame,QVBoxLayout,QHBoxLayout,QLabel,QPu
 
 from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,owned_projects
 from .hidden_ranges_ui import HiddenRangesPanel
+from .person_merge import PENDING,MODELS,Refused,candidates,absorbed
 
 
 PEOPLE_HELP = (
@@ -52,6 +54,9 @@ class PeopleList(QListWidget):
     characterMenuRequested=Signal(str,object)
     colorRequested=Signal(int)
     renameRequested=Signal(int)
+    continueRequested=Signal(int,int)
+    separateRequested=Signal(int,int)
+    person_choices=None
 
     def __init__(self):
         super().__init__()
@@ -78,11 +83,23 @@ class PeopleList(QListWidget):
         ident=index.data(Qt.UserRole)
         if isinstance(ident,str) and ident.startswith('character:'):
             self.characterMenuRequested.emit(ident,event.globalPos());return
-        menu=QMenu(self)
-        action=menu.addAction('Rename...')
+        menu,actions=self.person_menu(ident)
         try:
-            if menu.exec(event.globalPos())==action:self.renameRequested.emit(ident)
+            chosen=menu.exec(event.globalPos())
+            if chosen in actions:actions[chosen]()
         finally:menu.deleteLater()
+
+    def person_menu(self,ident):
+        menu=QMenu(self);menu.setToolTipsVisible(True)
+        actions={menu.addAction('Rename...'):lambda:self.renameRequested.emit(ident)}
+        joinable,joined=self.person_choices(ident) if self.person_choices else ([],[])
+        if joinable:
+            sub=menu.addMenu('Continue as');sub.menuAction().setToolTip("This person and the chosen one are the same person. Their frames and takes become one person's.")
+            for other,name in joinable:actions[sub.addAction(name)]=lambda other=other:self.continueRequested.emit(ident,other)
+        if joined:
+            sub=menu.addMenu('Separate again');sub.menuAction().setToolTip('Undo Continue as for the chosen person.')
+            for other,name in joined:actions[sub.addAction(name)]=lambda other=other:self.separateRequested.emit(ident,other)
+        return menu,actions
 
     def mouseMoveEvent(self,event):
         if self._color_press.isValid():
@@ -292,6 +309,9 @@ class PeopleWorkspace:
         self.people_list.itemChanged.connect(self.person_checked)
         self.people_list.colorRequested.connect(self.choose_person_color)
         self.people_list.renameRequested.connect(self.rename_person)
+        self.people_list.continueRequested.connect(self.continue_person_as)
+        self.people_list.separateRequested.connect(self.separate_person)
+        self.people_list.person_choices=self.person_choices
         column.addWidget(self.people_list,1)
         self.person_takes = QComboBox()
         self.person_takes.setAccessibleName('Visible motion interval')
@@ -383,6 +403,7 @@ class PeopleWorkspace:
 
     def sync_people(self, project, manifest):
         root = root_for(project,manifest)
+        self.recover_people_merge(root)
         state = load_people(root)
         if state is None:
             self.reset_people()
@@ -415,7 +436,7 @@ class PeopleWorkspace:
                 item.setFlags(item.flags()|Qt.ItemIsUserCheckable)
                 item.setCheckState(Qt.Checked if person.get('checked') else Qt.Unchecked)
                 item.setIcon(self.person_icon(person))
-                item.setToolTip(tooltip_text(f"{person['name']} | {person['observations']} observed frames\nCheck to reconstruct and show; select to edit. Right-click to rename."))
+                item.setToolTip(tooltip_text(f"{person['name']} | {person['observations']} observed frames\nCheck to reconstruct and show; select to edit. Right-click to rename, or to join this person with another one."))
                 self.people_list.addItem(item)
                 if person['id']==ident:self.people_list.setCurrentItem(item)
             self.populate_person_takes()
@@ -669,6 +690,45 @@ class PeopleWorkspace:
         if not ok:return
         try:self.set_person_name(ident,text)
         except (ValueError,OSError) as error:QMessageBox.warning(self,'Rename Person',str(error))
+
+    def recover_people_merge(self,root):
+        if not (Path(root)/PENDING).exists():return
+        from .person_merge import recover
+        try:recover(root)
+        except (Refused,OSError,ValueError,sqlite3.Error) as error:self.status.setText(str(error))
+
+    def person_choices(self,ident):
+        if self.people_state is None or self.busy or self.contact_saving or self.model_choice.currentData() not in MODELS:return [],[]
+        person=next((p for p in self.people_state['people'] if p['id']==ident),None)
+        return (candidates(self.people_state,ident),absorbed(person)) if person else ([],[])
+
+    def continue_person_as(self,source_id,target_id):
+        if self.busy or self.contact_saving or self.people_state is None:return
+        from . import person_merge
+        names={p['id']:str(p.get('name') or f"Person {p['id']}") for p in self.people_state['people']}
+        self._merge_people(lambda:person_merge.continue_as(self.people_root,source_id,target_id,self.model_choice.currentData(),self.info['fps'] if self.info else 30),
+            target_id,f"{names.get(source_id)} now continues as {names.get(target_id)}. Right-click {names.get(target_id)} and choose Separate again to undo.")
+
+    def separate_person(self,target_id,source_id):
+        if self.busy or self.contact_saving or self.people_state is None:return
+        from . import person_merge
+        absorbed_names=dict(absorbed(next((p for p in self.people_state['people'] if p['id']==target_id),{})))
+        self._merge_people(lambda:person_merge.separate(self.people_root,target_id,source_id),target_id,f"{absorbed_names.get(source_id,f'Person {source_id}')} is a separate person again.")
+
+    def _merge_people(self,run,target_id,done):
+        try:state=run()
+        except Refused as error:self.status.setText(str(error));return
+        except (OSError,ValueError,sqlite3.Error) as error:self.status.setText('Cannot change the people of this scene: '+str(error));return
+        self.people_state=state
+        target=next(p for p in state['people'] if p['id']==target_id)
+        owned=[safe_child(self.people_root,r) for r in owned_projects(target)]
+        takes=active_takes(self.people_root,target,self.active_result)
+        shown=Path(self.project).resolve() if self.project else None
+        path=shown if shown in owned else safe_child(self.people_root,takes[-1]['project'] if takes else target['preview'])
+        self.load_project(path)
+        self._hidden_refresh=True
+        self.request_people_scene(force=True);self.update_readiness()
+        self.status.setText(done)
 
     def set_person_name(self,ident,name):
         from .person_names import validate_name
