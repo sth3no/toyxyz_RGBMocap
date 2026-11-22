@@ -1,5 +1,53 @@
 # Source package validation
 
+## Fixes after a code review of hidden ranges (2026-11-22)
+
+A review of the hidden ranges work found seven defects. Each is fixed where it
+came from, with a test that failed before the fix.
+
+- Fixed:
+  - Two joined takes of one person over shared frames (takes prepared from
+    different trims) replaced each other on every fill. A join is now replaced
+    only by one that uses one of its takes or its folder, or when a take of it
+    is gone.
+  - A missing or damaged `project.json` of a source take ended the fill with a
+    raw error; it is refused by name now.
+  - After editing Offset, Variation or Description, the next click on another
+    control of the ranges did nothing. The rows are replaced once the mouse is
+    up and no list is open.
+  - In a scene prepared from a trimmed video, a changed choice could move the
+    view to the wrong take: the playhead was counted from the start of the
+    video, not of the scene.
+  - A person's name or a description with a tag in it lost part of its Console
+    line. Plain `html.escape`, which the description used, showed `&` as
+    `&amp;`; both go through one helper now, checked against a real Console
+    widget for names and descriptions with `<b>`, `&`, `>` and `&lt;`.
+  - The staging folder of a cancelled setup was not removed by the next one:
+    Git marks its fetched packs read-only.
+  - A setup step that does not use the network was reported as a download
+    problem.
+- Automated tests, shared runtime unless noted, on the final code of each
+  step: Smooth join 119 tests, Copy from person 209, Continue as 257,
+  Automatic 370, and this step 487 with the workers' GPU cases; each with the
+  one known import error (`test_local_choices` needs PySide6).
+  `test_hidden_ranges_panel` (GUI runtime, offscreen): 15, 15, 25 and 42.
+  `test_setup_kimodo` 12, `test_take_join` 91 (1 skipped),
+  `test_model_manager` 49 with 1 skipped in the GUI runtime. `check_source`
+  clean on each step.
+- Real runs:
+  - The real main window without a screen, on the five-dancer project: with
+    Copy from person chosen, Offset was raised by a key press and Mirror
+    clicked once with the mouse. `people.json` then held offset 1 and Mirror
+    on. The same steps on the former code were run only in the panel test,
+    where the click was lost.
+  - The Kimodo source at the pinned revision was fetched with Git into a
+    scratch folder (three read-only files, a 45 MB pack among them). Under the
+    ExMR Python 3.12.10 the former cleanup left all three; the new one removed
+    the folder.
+- Not run: the trimmed-scene fix and the two overlapping joins in the real
+  window (tests only); a failing setup step in the real window (tests with the
+  tool replaced); nobody looked at a screen.
+
 ## Descriptions for Automatic fill and its setup from the app (2026-11-22)
 
 - Same machine (Windows 11, RTX 5060 Ti 16 GB, 31 GB of RAM of which 3 to 9 GB
