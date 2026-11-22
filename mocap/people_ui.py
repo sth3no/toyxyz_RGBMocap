@@ -4,7 +4,6 @@ from .tooltips import tooltip_text
 from .ui_refresh import batch_readiness
 from .validation_snapshot import read_only_checks
 import json
-import sqlite3
 from collections import OrderedDict
 from pathlib import Path
 
@@ -24,7 +23,7 @@ PEOPLE_HELP = (
     'use Find person first.\n\n'
     'Check a person to reconstruct and show them. Select a row to preview their motion and '
     'edit their contact timings. Selecting a row does not change its checkbox.\n\n'
-    'Right-click a row to rename it. Click its color square to change the display color. '
+    'Right-click a row to rename it, or to join it with another person (Continue as) and undo that (Separate again). Click its color square to change the display color. '
     'Names are used for FBX files and rigs; colors affect the preview only.\n\n'
     'Use the take list to switch between saved frame ranges and see which results are ready.\n\n'
     'Automatic single-person tracking may switch people when they cross or overlap. '
@@ -699,7 +698,8 @@ class PeopleWorkspace:
         if not (Path(root)/PENDING).exists():return
         from .person_merge import recover
         try:recover(root)
-        except (Refused,OSError,ValueError,sqlite3.Error) as error:self.status.setText(str(error))
+        except Exception as error:   # recovery must never stop a scene from opening
+            self.status.setText(str(error));self.log.append(str(error))
 
     def person_choices(self,ident):
         if self.people_state is None or self.busy or self.contact_saving or self.model_choice.currentData() not in MODELS:return [],[]
@@ -710,7 +710,7 @@ class PeopleWorkspace:
         if self.busy or self.contact_saving or self.people_state is None:return
         from . import person_merge
         names={p['id']:str(p.get('name') or f"Person {p['id']}") for p in self.people_state['people']}
-        self._merge_people(lambda:person_merge.continue_as(self.people_root,source_id,target_id,self.model_choice.currentData(),self.info['fps'] if self.info else 30),
+        self._merge_people(lambda:person_merge.continue_as(self.people_root,source_id,target_id,self.model_choice.currentData(),self._scene_fps()),
             target_id,f"{names.get(source_id)} now continues as {names.get(target_id)}. Right-click {names.get(target_id)} and choose Separate again to undo.")
 
     def separate_person(self,target_id,source_id):
@@ -719,21 +719,52 @@ class PeopleWorkspace:
         absorbed_names=dict(absorbed(next((p for p in self.people_state['people'] if p['id']==target_id),{})))
         self._merge_people(lambda:person_merge.separate(self.people_root,target_id,source_id),target_id,f"{absorbed_names.get(source_id,f'Person {source_id}')} is a separate person again.")
 
+    def _scene_fps(self):
+        """The overlap limit is half a second of the scene, whatever take is open."""
+        try:return float(json.loads((Path(self.people_root)/'project.json').read_text(encoding='utf-8'))['fps'])
+        except (OSError,ValueError,KeyError,TypeError):return self.info['fps'] if self.info else 30
+
     def _merge_people(self,run,target_id,done):
-        try:state=run()
-        except Refused as error:self.status.setText(str(error));return
-        except (OSError,ValueError,sqlite3.Error) as error:self.status.setText('Cannot change the people of this scene: '+str(error));return
-        self.people_state=state
-        target=next(p for p in state['people'] if p['id']==target_id)
-        owned=[safe_child(self.people_root,r) for r in owned_projects(target)]
-        takes=active_takes(self.people_root,target,self.active_result)
-        shown=Path(self.project).resolve() if self.project else None
-        path=shown if shown in owned else safe_child(self.people_root,takes[-1]['project'] if takes else target['preview'])
-        if self.load_project(path) is False:   # it reports why in the status bar; the merge itself is done
+        from .person_merge import recover
+        try:
+            if recover(self.people_root):   # an earlier change finished first: the request was made on a list that is gone
+                self._resync_people(target_id)
+                self.status.setText('An earlier change of the people of this scene was finished. Check the list and choose again.');return
+            state=run()
+        except Exception as error:   # part of it may be on disk: never keep a list older than people.json
+            self._resync_people(target_id)
+            self.status.setText(str(error) if isinstance(error,Refused) else 'Cannot change the people of this scene: '+str(error));return
+        if (Path(self.people_root)/PENDING).exists():   # not after a normal success; the disk decides what is shown
+            self._resync_people(target_id);self.status.setText(done);return
+        if self._show_people(state,target_id) is False:   # it reports why in the status bar; the merge itself is done
             self.status.setText(f"{done} {self.status.text()}".rstrip());return
         self._hidden_refresh=True
         self.request_people_scene(force=True);self.update_readiness()
         self.status.setText(done)
+
+    def _resync_people(self,target_id):
+        try:state=load_people(self.people_root)
+        except Exception:return
+        if state is None or state==self.people_state:return
+        if self._show_people(state,target_id) is False:return
+        self._hidden_refresh=True
+        self.request_people_scene(force=True);self.update_readiness()
+
+    def _show_people(self,state,target_id):
+        """Reload on a take in use of the target, keeping the open one when it still is and the playhead's source time."""
+        self.people_state=state
+        people=state['people']
+        target=next((p for p in people if p['id']==target_id),None) or next((p for p in people if p['id']==state.get('active')),None) or (people[0] if people else None)
+        if target is None:return None
+        used=[safe_child(self.people_root,t['project']) for t in active_takes(self.people_root,target,self.active_result)]
+        shown=Path(self.project).resolve() if self.project else None
+        path=shown if shown in used else used[-1] if used else safe_child(self.people_root,target['preview'])
+        source_time=self.source_offset+(self.slider.value()/self.info['fps'] if self.info else 0)
+        loaded=self.load_project(path)
+        if loaded is not False:
+            self.motion_view.auto_fit=False
+            if self.info:self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))))
+        return loaded
 
     def set_person_name(self,ident,name):
         from .person_names import validate_name
