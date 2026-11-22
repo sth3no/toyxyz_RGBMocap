@@ -128,6 +128,21 @@ become the contact probabilities of the range. The conversion code is in
 (`kimodo_worker_boot.py`) in the ExMR Python with the `runtime_kimodo/`
 overlay; the app itself imports none of it.
 
+Kimodo is also asked to carry the pelvis in a straight line at constant speed
+across the range, from where the person was last seen to where they are seen
+again. A person who stopped, turned a corner or went around something behind
+the cover is still moved straight. Without this path the generated person
+tended to stand and then hurry. That was measured on one walking clip, a walker
+hidden for 91 frames (3 seconds) while covering 1.6 m, with three variations:
+without the path the median pelvis speed was 0.06 to 0.20 m/s in the first
+third of the range and 0.60 to 0.79 m/s in the last, with 3 foot strikes where
+the real walk has 5; with it the speed stayed between 0.38 and 0.67 m/s in
+every third, with 3 to 5 foot strikes, and the poses were as close to the real
+ones as before (7.2 to 7.9 cm against 7.1 to 9.3 cm). The feet slid more while
+planted (19 to 22 cm/s against 5 to 16 cm/s); **Apply Correction** works on the
+joined take afterwards. On a dance range with 0.18 m of travel the path changed
+nothing measurable.
+
 ## Licences
 
 - Kimodo code is Apache-2.0 (NVIDIA). The app does not bundle it; the setup

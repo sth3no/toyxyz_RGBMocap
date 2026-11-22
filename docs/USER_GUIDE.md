@@ -978,7 +978,12 @@ not what the person did.** On a group dance it was further from the real motion
 than a plain blend of the two end poses, so it is not a way to recover a
 dance. It is meant for ranges in which a person keeps moving or travels, for
 example while walking behind an object; that use has not been measured with
-real footage yet, so review the result. It has no text prompt in this version
+real footage yet, so review the result. The pelvis is carried in a straight
+line at constant speed from where the person was last seen to where they are
+seen again, so a person who stopped, turned a corner or went around something
+behind the cover is still moved straight; without this the generated person
+tended to stand and then hurry (see [How it works](models/KIMODO.md#how-it-works)).
+It has no text prompt in this version
 and generates no fingers: they blend between the two sides. A range may have up
 to 290 frames. **Variation** is a number from 0 to 999: another number gives
 another motion. Generated ranges are kept in the folder `auto_fill` inside the

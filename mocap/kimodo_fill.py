@@ -55,6 +55,8 @@ def plan(request, smooth=None):
     `smooth` maps a side's SOMA Hips path (F,3) to Kimodo's smooth root (Kimodo's `get_smooth_root_pos`), given the 30
     frames next to the range; without it, or for a side of fewer than 5 frames, the raw Hips path is used. Each side's floor is read under that side's given
     frames alone and joined by a straight line across the window, so a drifting capture height does not reach Kimodo.
+    `path` is the smooth root of the hidden rows `path_rows` on a straight line at constant speed from the last known row
+    before the range to the first after it: without it Kimodo tended to stand, then hurry.
     """
     r = _check(request);n = r['frames'];fit = sc.fit(r['rest'], r['sole']);sides = []
     for side in ('before', 'after'):
@@ -69,9 +71,10 @@ def plan(request, smooth=None):
     pick = lambda key: np.concatenate([b[key][len(b[key])-c0:], a[key][:c1]])
     S, root = pick('S'), pick('root');origin = np.array([root[0, 0], 0., root[0, 2]])
     # Kimodo's own heading: atan2(z, -x) of right hip minus left hip, at the first window frame.
-    d = S[0, HIPS[0]]-S[0, HIPS[1]]
+    d = S[0, HIPS[0]]-S[0, HIPS[1]];sr = (root-origin)[:, [0, 2]]
+    path = sr[c0-1]+(sr[c0]-sr[c0-1])*(np.arange(1, n+1)/(n+1))[:, None]
     return dict(context=(c0, c1), frames=rows, known=np.r_[0:c0, c0+n:rows], positions=S-origin, rotations=pick('K'),
-                smooth_root=(root-origin)[:, [0, 2]], heading=float(np.arctan2(d[2], -d[0])), origin=origin,
+                smooth_root=sr, path_rows=np.arange(c0, c0+n), path=path, heading=float(np.arctan2(d[2], -d[0])), origin=origin,
                 floor=np.interp(np.arange(rows), [c0-1, c0+n], [b['floor'], a['floor']]), joints=pick('J'), fit=fit)
 
 
@@ -120,7 +123,7 @@ def _generate(request, seed, emit):
     # The real module imports transformers and peft, which are not installed and not needed without text.
     stand_in = types.ModuleType('kimodo.model.llm2vec');stand_in.LLM2VecEncoder = None;sys.modules['kimodo.model.llm2vec'] = stand_in
     import torch
-    from kimodo.constraints import FullBodyConstraintSet
+    from kimodo.constraints import FullBodyConstraintSet, Root2DConstraintSet
     from kimodo.model.load_model import load_model
     from kimodo.motion_rep.smooth_root import get_smooth_root_pos
     if not torch.cuda.is_available():raise RuntimeError('Automatic fill requires a CUDA GPU.')
@@ -138,6 +141,7 @@ def _generate(request, seed, emit):
     loaded = time.monotonic()-started
     T = lambda x: torch.tensor(np.asarray(x), dtype=torch.float32, device='cuda')
     fb = FullBodyConstraintSet(skeleton, torch.tensor(p['known']), T(p['positions']), T(p['rotations']), T(p['smooth_root']))
+    root2d = Root2DConstraintSet(skeleton, torch.tensor(p['path_rows']), T(p['path']))
 
     def steps(indices):
         for k, i in enumerate(indices):
@@ -145,7 +149,7 @@ def _generate(request, seed, emit):
             yield i
         emit('progress', stage=STAGE, current=len(indices), total=len(indices), message='Automatic fill: generated')
     torch.manual_seed(seed);started = time.monotonic()
-    out = model('', p['frames'], num_denoising_steps=STEPS, constraint_lst=[[fb]], first_heading_angle=p['heading'],
+    out = model('', p['frames'], num_denoising_steps=STEPS, constraint_lst=[[fb, root2d]], first_heading_angle=p['heading'],
                 post_processing=False, num_samples=1, progress_bar=steps)
     out = {k: out[k][0].detach().cpu().numpy() for k in ('global_rot_mats', 'root_positions', 'foot_contacts')}
     generated, peak = time.monotonic()-started, torch.cuda.max_memory_allocated()/2**30

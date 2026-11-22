@@ -815,6 +815,18 @@ sentences (`Unavailable`). When either `seam_cm` value exceeds
 together. The response stays cached, so the same Fill refuses again at once.
 There is no speed check before the worker; speed alone cannot tell a sprint
 from takes that do not fit.
+`kimodo_fill._generate` gives Kimodo two constraints: a `FullBodyConstraintSet`
+on the known rows (SOMA positions, rotations and the smooth root) and a
+`Root2DConstraintSet` on the hidden rows (`plan`'s `path_rows`, `path`), the
+smooth root on a straight line at constant speed from the last known row before
+the range to the first after it. A person who stopped, turned or went around
+something behind the cover is still moved straight. Without the path the
+generated person tended to stand and then hurry: on one walking clip (91 hidden
+frames, 1.6 m, three seeds) the median pelvis speed by thirds was 0.06-0.20,
+0.77-0.79, 0.60-0.79 m/s with 3 foot strikes where the real walk has 5; with it
+0.38-0.47, 0.61-0.67, 0.48-0.52 m/s with 3 to 5 strikes, pose error vs real
+7.2-7.9 cm (7.1-9.3 without), toe slide while low 19-22 cm/s (5-16 without).
+On a dance range with 0.18 m of travel it changed nothing measurable.
 `gap_fill.generated_fill` joins the generated rows to the boundary frames
 (the boundary differences fade out at each end); keys the generator does not
 provide, the fingers, are interpolated between the two sides, `take_join` marks the rows 3

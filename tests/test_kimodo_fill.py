@@ -82,6 +82,15 @@ class PlanTest(unittest.TestCase):
         for count in (1, 2, 3, 4, 5, 6):
             p = kf.plan(walk(before=count, after=count), smooth); self.assertEqual(p['context'], (min(5, count),) * 2)
 
+    def test_straight_root_path_across_the_range(self):
+        p = kf.plan(walk()); sr = p['smooth_root']; path = p['path']
+        self.assertEqual(path.shape, (60, 2)); self.assertEqual(path.dtype, np.float64); np.testing.assert_array_equal(p['path_rows'], np.arange(5, 65))
+        steps = np.diff(np.concatenate([sr[4:5], path, sr[5:6]]), axis=0)        # last known row before, the path, first known row after
+        np.testing.assert_allclose(steps, np.tile(steps[0], (61, 1)), rtol=0, atol=1e-12); self.assertGreater(np.linalg.norm(steps[0]), 0)
+        one = kf.plan(walk(frames=1)); np.testing.assert_allclose(one['path'], [(one['smooth_root'][4] + one['smooth_root'][5]) / 2], atol=1e-12)
+        np.testing.assert_array_equal(one['path_rows'], [5])
+        short = kf.plan(walk(before=4)); self.assertEqual(short['path_rows'][0], 4); self.assertEqual(len(short['path_rows']), 60)
+
     def test_refusals(self):
         for change in (dict(frames=np.int64(291)), dict(fps=np.float64(25.)), dict(seed=np.int64(1000))):
             with self.assertRaises(ValueError) as e:kf.plan(dict(walk(), **change))
@@ -148,6 +157,13 @@ def events(text):
     return [json.loads(line[len('@@MOCAP@@'):]) for line in text.splitlines() if line.startswith('@@MOCAP@@')]
 
 
+def pelvis_speeds(pelvis, c0, n):
+    """Horizontal pelvis speed (m/s) between consecutive rows from the last known row before the range to the first after it:
+    the medians of its three thirds and its mean."""
+    speed = np.linalg.norm(np.diff(pelvis[c0 - 1:c0 + n + 1][:, [0, 2]], axis=0), axis=1) * 30
+    return [float(np.median(x)) for x in np.array_split(speed, 3)], float(speed.mean())
+
+
 @unittest.skipUnless(kimodo_runtime.issue() is None, 'Kimodo runtime or model is not installed')
 class WorkerTest(unittest.TestCase):
     @classmethod
@@ -178,6 +194,11 @@ class WorkerTest(unittest.TestCase):
         self.assertLess(float(o['end_pose_cm']), 6); self.assertGreaterEqual(np.linalg.norm(o['pelvis'][64] - o['pelvis'][5]), 1.2)
         for k in ('orient', 'pose', 'pelvis', 'end_pose_cm'):np.testing.assert_allclose(outs[1][k], o[k], atol=1e-4)
         np.testing.assert_array_equal(outs[1]['contacts'], o['contacts'])
+
+    def test_pelvis_keeps_a_steady_pace(self):
+        path = self.dir / 'pace.npz'; p = self.run_worker(self.request, path); self.assertEqual(p.returncode, 0, p.stdout[-3000:] + p.stderr[-3000:])
+        with np.load(path, allow_pickle=False) as z:thirds, mean = pelvis_speeds(z['pelvis'], 5, GAP)
+        for median in thirds:self.assertTrue(.5 * mean <= median <= 2 * mean, f'medians by thirds {thirds}, mean {mean:.3f} m/s')
 
     def test_missing_request(self):
         path = self.dir / 'none.npz'; p = self.run_worker(self.dir / 'missing.npz', path)
