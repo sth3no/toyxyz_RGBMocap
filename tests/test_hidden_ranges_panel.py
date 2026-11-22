@@ -14,9 +14,11 @@ PEOPLE=[dict(id=1,name='Person 1',takes=[T(0,100),T(120,200)]),dict(id=2,name='P
 
 
 def application():
+    """The application with the app's look, set once: setting it walks every widget the process ever made."""
     app=QApplication.instance() or QApplication([])
-    from mocap.theme import configure_application
-    configure_application(app)
+    if not getattr(application,'configured',False):
+        from mocap.theme import configure_application
+        configure_application(app);application.configured=True
     return app
 
 
