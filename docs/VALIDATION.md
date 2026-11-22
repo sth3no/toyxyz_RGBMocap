@@ -1,5 +1,58 @@
 # Source package validation
 
+## Hidden ranges in the app window and on a group dance (2026-11-22)
+
+- Same machine. The checks below drove the real main window (`MainWindow`, GUI
+  runtime) without a screen (`QT_QPA_PLATFORM=offscreen`) through its own
+  buttons and handlers; nobody looked at the 3D view or at a render.
+- A computer-use agent tested the tennis project in the shown window in three
+  rounds. It confirmed fills started from the window, Apply Correction, FBX
+  export (`Person 1_filled.fbx`) and Export Preview of a take with copied
+  frames, and found the defects fixed in this change: a joined take left
+  selected after Do not fill, "result unavailable" reported for replaced
+  source takes, a refused Offset without a hint, controls cut off or squeezed
+  into each other in the People column, and a take shown as "No motion data"
+  beside a Ready status after a choice. The last one was reproduced and
+  checked in the window run without a screen: both ranges set to Do not fill
+  and back to the copy show the motion again.
+- Clip: five dancers performing the same choreography, fixed camera, 11.8 s,
+  with the dancer on the right covered by a grey bar for 1.5 s. GVHMR, result
+  `initial` with correction, HTD Refine, FootMR and HandFlow off. Find person
+  found 9 people; Reconstruct 3D of all took 10 min 02 s. The covered dancer
+  got takes 1-120 and 167-353 and one hidden range, frames 121-166. Smooth
+  join was disabled for it with `Smooth join is limited to 30 frames; this
+  range has 46.`
+- Copy from person, Offset 0, started with the Fill button for each of the
+  four other dancers, and once with Mirror. Every fill finished in 15-18 s
+  including correction and export and left `Frames 1-353 · Ready · filled`
+  selected. Reported path adjustments: 20.9, 4.4, 28.4 and 53.9 cm, and 33.3 cm
+  with Mirror.
+- Fastest joint across the two seams: 0.8-5.0 m/s, against a 99th percentile of
+  4.6 m/s and a maximum of 5.5 m/s in the captured frames. One fill reached
+  7.6 m/s inside the range. Lowest foot joint in the range 0.1-2.5 cm before
+  correction (captured frames 0.7 cm).
+- Mirror: the mirrored fill's right wrist, reflected, lies 2.7 cm from the
+  plain fill's left wrist in the pelvis frame (25.1 cm without reflecting).
+- Against the real motion. The same clip without the bar was reconstructed
+  the same way; on the captured frames the two reconstructions of the dancer
+  differ by 0.6 cm per joint (pelvis frame). Inside frames 121-166 the copies
+  differ from her real motion by 8.4-9.9 cm per joint (11.5 cm mirrored), the
+  wrists by 26-32 cm, and the pelvis position by 17-26 cm. A straight blend of
+  the two end poses differs by 7.8 cm per joint and 16.6 cm in pelvis
+  position; holding the last pose by 9.7 cm and 10.4 cm. **On this clip a copy
+  is not closer to the real motion than a blend.** The dancers themselves
+  differ from one another by 9-13 cm per joint in captured frames with no time
+  shift improving it, so that is the floor for any copy here.
+- After a fill the other people of the scene report `corrected_initial result
+  unavailable` until Apply Correction is run again, because the shared floor
+  includes the joined take.
+- A new GVHMR project starts with HTD Refine, FootMR and HandFlow on, and
+  Find person turns them on again. Hidden ranges does not support those
+  results, so they were turned off before Reconstruct 3D.
+- Not run: ExMR (Reconstruct 3D of 8 people was stopped by Resource Safety
+  with 1.4 GiB RAM left); a clip with a natural occluder; import of the
+  exported files into other software; a person judging the motion by eye.
+
 ## Hidden ranges: Copy from person (2026-11-21)
 
 - Windows 11 Pro, NVIDIA GeForce RTX 5060 Ti (16 GB), 31 GB RAM, shared runtime
