@@ -1,5 +1,46 @@
 # Source package validation
 
+## Hidden ranges on the upstream with appearance settings (2026-11-22)
+
+The hidden ranges steps were moved onto upstream `7c5fea2` (starting settings
+for new videos, appearance settings with a light theme and a UI scale, Mixamo
+FBX import).
+
+- Changed for this upstream:
+  - The band over filled frames on the timeline kept the row position and the
+    height from before the UI scale, so at another scale it left the Motion
+    row. It follows the scale now and is a darker amber on the light theme.
+  - The minimum height of the Hidden ranges rows follows the UI scale.
+  - **Continue as** and **Separate again** reload the take in view with the
+    options in use kept, as switching the person does in this upstream.
+  - The panel tests set the app's look once per process. Set once per test and
+    run after the default-settings tests, they ended in heap corruption
+    (`0xc0000374`) inside `apply_appearance`, which walks every widget the
+    process has made.
+- Automated tests, the whole `tests` folder in one process with the GUI
+  runtime, in a working copy without models, on the final code of each step:
+  upstream alone 57 tests (1 skipped), Smooth join 152 (2 skipped), Copy from
+  person 243 (2), Continue as 292 (2), Automatic 405 (7), descriptions and
+  setup 522 (15). No failures or errors. `tools/check_source.py` reports no
+  errors on each. The cases that need the Kimodo runtime and model files were
+  among the skipped ones and were not run again on this upstream.
+- Real window without a screen (`QT_QPA_PLATFORM=offscreen`), RTX 5060 Ti,
+  final code, the project of five dancers with person 1 covered in frames
+  121-166:
+  - **Fill hidden ranges** with **Automatic (Experimental)**, variation 3:
+    Fill Hidden Ranges 16.41 s, Motion Correction 8.11 s, Export 5.97 s, and
+    the joined take came into view.
+  - The band over frames 121-166 lay on the top edge of the Motion row at
+    dark 100 % (pixel rows 54-56, the row starts at 54) and at light 150 %
+    (rows 81-84, the row starts at 81); the rows' minimum height was 72 and
+    108 pixels. The look was applied through `apply_appearance` and
+    `resize_appearance_controls`, the two calls the Settings dialog makes.
+  - Offset raised by a key press and one click on **Mirror** right after it:
+    both were saved (`offset` 1, `mirror` true).
+- Not run: the Settings dialog itself, other scales in the window, a Smooth
+  join or a copy filled in the window on this upstream, and nobody looked at
+  a screen.
+
 ## Fixes after a code review of hidden ranges (2026-11-22)
 
 A review of the hidden ranges work found seven defects. Each is fixed where it
