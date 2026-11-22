@@ -86,7 +86,7 @@ import sys, types
 sys.path.insert(0, sys.argv[2])
 sys.path.insert(0, sys.argv[1])
 from pathlib import Path
-# The real module imports transformers and peft, which are not installed and not needed without text.
+# The real module imports transformers and peft, which the generator does not need: the text worker reads a description.
 stand_in = types.ModuleType('kimodo.model.llm2vec')
 stand_in.LLM2VecEncoder = None
 sys.modules['kimodo.model.llm2vec'] = stand_in
@@ -165,7 +165,8 @@ def build(stage: Path, step=lambda message: None) -> Path:
 
 
 def install(emit=None):
-    """Install or keep the overlay; with `emit`, progress goes to the app as events instead of plain lines."""
+    """Keep the overlay when its receipt is valid and it passes its check, else install it again; with `emit`, progress
+    goes to the app as events instead of plain lines. Returns the folder and whether a new runtime was installed."""
     from mocap.runtime_registry import activate
     activate(ROOT, 'exmr')
     current = iter(range(STEPS))
@@ -179,15 +180,23 @@ def install(emit=None):
     except RuntimeError:
         pass
     else:
-        verify(existing)
-        print('Verified Kimodo runtime retained.', flush=True)
-        return existing
+        try:
+            verify(existing)
+        except RuntimeError as error:
+            print(f'{error} Installing the Kimodo runtime again.', flush=True)
+        else:
+            print('Verified Kimodo runtime retained.', flush=True)
+            return existing, False
     if shutil.disk_usage(ROOT).free < FREE:
         raise RuntimeError(NO_SPACE)
     if shutil.which('git') is None:
         raise RuntimeError(NO_GIT)
     (ROOT / '.setup').mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='.kimodo-', dir=ROOT / '.setup') as name:
+    # A stopped or cancelled setup does not unwind; its staging folders are removed before anything is fetched.
+    for left in (ROOT / '.setup').glob('.kimodo-*'):
+        shutil.rmtree(left, ignore_errors=True)
+    # Cleaning the staging folder can fail on a file still held open; after the swap that must not report failure.
+    with tempfile.TemporaryDirectory(prefix='.kimodo-', dir=ROOT / '.setup', ignore_cleanup_errors=True) as name:
         overlay = build(Path(name), step)
         step('Installing the Kimodo runtime')
         (overlay / 'runtime.json').write_text(json.dumps(dict(version=PROFILE_VERSION, revision=REVISION)),
@@ -203,15 +212,17 @@ def install(emit=None):
             if backup is not None:
                 backup.rename(destination)
             raise
+    if backup is not None:
+        shutil.rmtree(backup, ignore_errors=True)  # the replaced runtime; a file still in use is left behind
     print('Kimodo runtime ready. Get the optional Kimodo model in Model Manager.', flush=True)
-    return destination
+    return destination, True
 
 
 def from_app():
     """Run as the app's `kimodo_setup` job: no lock (the app holds it and runs one job at a time), events on stdout."""
     from mocap.worker_progress import emit
     try:
-        folder = install(emit)
+        folder, installed = install(emit)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
         last = error.output if isinstance(error.output, str) else ''  # bytes or None from a bare subprocess call
         emit('failed', stage=STAGE, message=' '.join(filter(None, (NO_DOWNLOAD, last.strip()))))
@@ -219,7 +230,8 @@ def from_app():
     except Exception as error:
         emit('failed', stage=STAGE, message=str(error) or type(error).__name__)
         return 1
-    emit('complete', stage=STAGE, output=str(folder))
+    emit('complete', stage=STAGE, output=str(folder),
+         message='Automatic fill runtime installed.' if installed else 'Automatic fill runtime verified.')
     return 0
 
 

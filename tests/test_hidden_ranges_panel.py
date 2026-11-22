@@ -290,6 +290,15 @@ class ChoiceGlueTest(unittest.TestCase):
         host.refresh_hidden_ranges=lambda person:self.calls.append(('rows',person['id']))
         PeopleWorkspace.hidden_ranges_setup(host)
         self.assertEqual(self.calls,[('manager',),('rows',1)])                      # rebuilt after the modal dialog closes
+    def test_a_model_job_end_rebuilds_the_rows_of_an_open_people_scene(self):
+        # Model Manager may be closed while its job runs; the job's end rebuilds the rows so Set up… and Fill follow.
+        from mocap.people_ui import PeopleWorkspace
+        host=self.host(self.J);host.refresh_hidden_ranges=lambda person:self.calls.append(('rows',person['id']))
+        PeopleWorkspace.refresh_hidden_ranges_after_models(host);self.assertEqual(self.calls,[('rows',1)])
+        self.calls.clear();host.people_state=None;host.current_person=lambda:None
+        PeopleWorkspace.refresh_hidden_ranges_after_models(host);self.assertEqual(self.calls,[])   # no person shown
+        host.people_root=None;host.current_person=lambda:self.fail('read without a people scene')
+        PeopleWorkspace.refresh_hidden_ranges_after_models(host);self.assertEqual(self.calls,[])   # no people scene open
     def test_an_unchanged_take_in_use_is_not_reloaded(self):
         self.choose(self.host(self.J),'smooth')
         self.assertEqual(self.calls,[('populate',),('scene',True)])

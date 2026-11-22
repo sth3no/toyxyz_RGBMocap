@@ -306,7 +306,6 @@ class ModelsDialog(QDialog):
         self.kimodo_note.setWordWrap(True)
         self.kimodo_state = QLabel()
         self.kimodo_install = QPushButton()
-        self.kimodo_install.setToolTip(tooltip_text('Download and install the Kimodo runtime as a job. RGB MoCap stays open.'))
         self.kimodo_install.clicked.connect(self.install_kimodo)
         box.addWidget(self.kimodo_note, 1); box.addWidget(self.kimodo_state); box.addWidget(self.kimodo_install)
         self.sync_kimodo_panel()
@@ -320,13 +319,15 @@ class ModelsDialog(QDialog):
             installed = False
         self.kimodo_state.setText('Runtime installed' if installed else 'Runtime not installed')
         self.kimodo_install.setText('Reinstall Runtime' if installed else 'Install Runtime')
+        self.kimodo_install.setToolTip(tooltip_text('Check the installed runtime and install it again if the check fails.' if installed else
+                                                    'Download and install the Kimodo runtime as a job. RGB MoCap stays open.'))
         self.kimodo_install.setEnabled(not self.window.busy)
 
     def install_kimodo(self):
         if self.window.busy:
             return
         answer = QMessageBox.question(self, 'Install Runtime',
-            'This downloads NVIDIA Kimodo (Apache-2.0) and Python packages into the app folder (about 150 MB). '
+            'This downloads NVIDIA Kimodo (Apache-2.0) and Python packages into the app folder (about 140 MB). '
             'The Kimodo model has its own licence (NVIDIA Open Model License), shown on its download page. Continue?')
         if answer == QMessageBox.Yes and not self.window.busy:
             self.start_model_jobs([('kimodo_setup', [])])
@@ -1706,7 +1707,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 elif self.current_stage == "import_model":
                     self.status.setText("Model setup complete.")
                 elif self.current_stage == 'kimodo_setup':
-                    self.status.setText('Automatic fill runtime installed. Get the Kimodo rows in Model Manager.')
+                    # The setup's complete event says whether it verified the runtime or installed a new one.
+                    self.status.setText(getattr(self, '_kimodo_setup_result', None) or 'Automatic fill runtime installed.')
                 elif self.current_stage not in ('people','sam31_people','person'):
                     self.status.setText("Complete. Play the result or open the project folder.")
                 if self._batch_has_motion and elapsed is not None:
@@ -1719,6 +1721,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                     self.log.append(f'Total motion processing time: {elapsed:.2f} s')
             self.refresh_results()
             self.update_readiness()
+            # Model Manager may have been closed while the job ran; the Hidden ranges rows show what is installed now.
+            if self.current_stage in MODEL_JOB_STAGES:self.refresh_hidden_ranges_after_models()
             if self.failed or self.cancelled:
                 self.character_refresh_queue=[]
             else:
@@ -1926,6 +1930,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.status.setText(label + event.get('message', 'See the console for details.'))
             self.log.append(self.status.text())
         elif kind == "complete":
+            if event.get('stage') == 'kimodo_setup':self._kimodo_setup_result=event.get('message')
             if not event.get('batch_inner'):self.task_state.cached|=bool(event.get('cached',False))
             self.log.append(f"{STAGES.get(event['stage'])}: {event.get('elapsed', 0):.2f} s · {event.get('output')}")
         self.log.ensureCursorVisible()

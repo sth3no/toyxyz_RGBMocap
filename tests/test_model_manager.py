@@ -509,6 +509,7 @@ class KimodoSetupJobTests(unittest.TestCase):
     def test_panel_shows_the_runtime_state(self):
         from mocap import kimodo_runtime
         from mocap.kimodo_runtime import SETUP
+        from mocap.tooltips import tooltip_text
         with patch.object(kimodo_runtime, 'location', side_effect=RuntimeError(SETUP)):
             host, panel, _ = self.host()
         self.assertEqual(host.kimodo_note.text(), 'Automatic fill of hidden ranges (Experimental): install the runtime here, '
@@ -518,12 +519,43 @@ class KimodoSetupJobTests(unittest.TestCase):
         with patch.object(kimodo_runtime, 'location', return_value=Path('runtime_kimodo')):
             host, panel, dialog = self.host(busy=True)
         self.assertEqual((host.kimodo_state.text(), host.kimodo_install.text()), ('Runtime installed', 'Reinstall Runtime'))
+        self.assertEqual(host.kimodo_install.toolTip(), tooltip_text('Check the installed runtime and install it again if the check fails.'))
         self.assertFalse(host.kimodo_install.isEnabled())                       # no second job while one runs
         host.window.busy = False
         with patch.object(kimodo_runtime, 'location', side_effect=RuntimeError(SETUP)):
             dialog.sync_kimodo_panel(host)                                       # what refresh() does when a job ends
         self.assertEqual((host.kimodo_state.text(), host.kimodo_install.text()), ('Runtime not installed', 'Install Runtime'))
+        self.assertEqual(host.kimodo_install.toolTip(), tooltip_text('Download and install the Kimodo runtime as a job. RGB MoCap stays open.'))
         self.assertTrue(host.kimodo_install.isEnabled())
+
+    def window(self, stage, failed=False, cancelled=False):
+        """A stand-in main window at the end of its last job, for MainWindow.next_job and handle_event."""
+        from unittest.mock import MagicMock
+        from mocap.gui import MainWindow
+        w = MagicMock(); w.jobs = []; w.failed, w.cancelled, w.current_stage = failed, cancelled, stage
+        w._batch_started_at = None; w._people_batch = False; w._batch_has_motion = False; w.project = None
+        status = []; w.status.setText.side_effect = status.append; w.status.text.side_effect = lambda: status[-1] if status else ''
+        w.people_event.return_value = False; w._kimodo_setup_result = None
+        w.handle_event = lambda event: MainWindow.handle_event(w, event)
+        w.next_job = lambda: MainWindow.next_job(w)
+        return w, status
+
+    def test_setup_job_reports_what_it_did(self):
+        for message in ('Automatic fill runtime verified.', 'Automatic fill runtime installed.'):
+            w, status = self.window('kimodo_setup')
+            w.handle_event(dict(type='complete', stage='kimodo_setup', output='runtime_kimodo', message=message))
+            w.next_job()
+            self.assertEqual(status[-1], message)                                # Model Manager is open: no pointer to it
+
+    def test_a_model_job_end_rebuilds_the_hidden_ranges(self):
+        from mocap.gui import MODEL_JOB_STAGES
+        for stage in sorted(MODEL_JOB_STAGES):
+            for ending in (dict(), dict(failed=True), dict(cancelled=True)):
+                w, _ = self.window(stage, **ending); w.next_job()
+                w.refresh_hidden_ranges_after_models.assert_called_once_with()
+        for stage in ('gvhmr', 'take_join', 'export', 'correct'):
+            w, _ = self.window(stage); w.next_job()
+            w.refresh_hidden_ranges_after_models.assert_not_called()
 
     def test_install_asks_once_and_starts_the_job(self):
         from PySide6.QtWidgets import QMessageBox
@@ -538,7 +570,7 @@ class KimodoSetupJobTests(unittest.TestCase):
             host.kimodo_install.click()
         self.assertEqual(self.jobs, [[('kimodo_setup', [])]])
         self.assertEqual(asked, ['This downloads NVIDIA Kimodo (Apache-2.0) and Python packages into the app folder '
-                                 '(about 150 MB). The Kimodo model has its own licence (NVIDIA Open Model License), '
+                                 '(about 140 MB). The Kimodo model has its own licence (NVIDIA Open Model License), '
                                  'shown on its download page. Continue?'] * 2)
         host.window.busy = True                                                  # a job started meanwhile
         with patch.object(QMessageBox, 'question', answer(QMessageBox.Yes)):

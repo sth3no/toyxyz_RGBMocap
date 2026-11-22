@@ -585,6 +585,11 @@ class PeopleWorkspace:
         self.hidden_ranges.show_gaps(found,choices,self.info['fps'] if self.info else 30,reason,people,person.get('id'),auto_issue,text_issue)
         self.hidden_ranges.set_manual_note(manual)
 
+    def refresh_hidden_ranges_after_models(self):
+        # A model job ended; Model Manager may have been closed meanwhile, so the rows say what is installed now.
+        person=self.current_person() if self.people_root else None
+        if person is not None:self.refresh_hidden_ranges(person)
+
     def hidden_ranges_setup(self):
         # Model Manager is modal; once it closes the rows show what was installed.
         self.open_model_manager()
