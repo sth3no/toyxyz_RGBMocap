@@ -624,6 +624,18 @@ runtime is not installed. Opening a project restores its saved model. **Prepare 
 | **GEM-X** | Fast processing with relatively low overall motion quality in our tests. One fixed-camera video and one automatically selected primary person. | Included. |
 | **PEAR** | Live single-person bone preview from a webcam or video. Lightweight live foot lock; no offline correction, recording, retargeting or export. | Included. |
 
+**Auto Setup**, beside **? Model Guide**, selects the first of FlowHMR, ExMR
+and GVHMR whose required files are all installed, in the order of the table
+above, and switches on what its installed files allow: **HaMeR Finger
+Refinement** for FlowHMR; **HTD Refine**, **FootMR** and **HandFlow** for
+GVHMR; the **SAM 3.1** tracker when its runtime and model are installed; and
+**Enable Correction**. It only sets these controls and runs nothing. A note
+under the button says what it chose, what it left out because files are
+missing, and which higher-ranked model lacks files. It does not look at your
+video or your GPU, never chooses MAMMA, PromptHMR or GEM-X, and does not
+combine the results of two models: the add-ons of one model cannot be applied
+to another model's result in this version.
+
 All six offline models support contact correction and portable Blender bundles.
 ExMR, FlowHMR and GVHMR offer **Find person** for explicit people selection.
 The tracker selector defaults to **Default**. Choose **SAM 3.1** to use a text
