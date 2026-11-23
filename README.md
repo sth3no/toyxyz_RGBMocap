@@ -244,6 +244,7 @@ motion quality was lower than **ExMR**. It does not support finger tracking.
 | [GEM-X](https://github.com/NVlabs/GEM-X) · fast processing, relatively low motion quality in our tests | SOMA Native77 | Included | [GEM-X guide](docs/models/GEMX.md) |
 
 Requires 64-bit Windows, a compatible NVIDIA GPU/driver and OpenGL 4.3.
+On macOS the 3D viewport uses an OpenGL 4.1 transform-feedback path instead.
 Model files are acquired separately; some require registration and license acceptance.
 
 **Installed models and runtimes:** approximately **77.8 GB (72.5 GiB)** for the

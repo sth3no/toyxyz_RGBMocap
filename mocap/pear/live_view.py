@@ -20,7 +20,8 @@ void main(){color=vec4(lineColor,1);}'''
 class LiveRenderer:
     def __init__(self,view):
         self.mesh=None;self.bones=BoneRenderer();self.bone_preview=None;self.bone_key=None;self.bone_revision=None;self.gl=self.bones.gl
-        self.program=MeshRenderer.program(((QOpenGLShader.Vertex,VERTEX),(QOpenGLShader.Fragment,FRAGMENT)))
+        self.program=MeshRenderer.program(((QOpenGLShader.Vertex,self.bones.surface_source(VERTEX)),
+                                           (QOpenGLShader.Fragment,self.bones.surface_source(FRAGMENT))))
         batches=[]
         for lines,color in ((view.grid_minor,(.27,.27,.27)),(view.grid_major,(.34,.34,.34)),
                             (np.array([[[-10,.001,0],[10,.001,0]]]),(.60,.32,.36)),

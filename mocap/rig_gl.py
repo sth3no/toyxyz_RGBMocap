@@ -3,7 +3,7 @@ import numpy as np
 from shiboken6 import VoidPtr
 from PySide6.QtGui import QSurfaceFormat
 from PySide6.QtOpenGL import QOpenGLBuffer,QOpenGLShader
-from .mesh_gl import MeshRenderer
+from .mesh_gl import MeshRenderer,R32F,RGB32F,RGBA32F
 
 SKIN='''#version 430 core
 layout(local_size_x=64) in;
@@ -25,6 +25,28 @@ void main(){
  vertices[i].position=vec4(dot(a,v),dot(c,v),dot(d,v),1);
  vertices[i].normal=vec4(normalize(vec3(dot(a,n),dot(c,n),dot(d,n))),0);
 }'''
+# OpenGL 4.1 transform-feedback counterpart; see mesh_gl. Raw mode writes a
+# placeholder normal that the following normals pass replaces.
+FEEDBACK_SKIN='''#version 410 core
+uniform samplerBuffer modelScalars;
+uniform samplerBuffer poseRows;
+uniform samplerBuffer rawPositions;
+uniform int vertexCount;
+uniform int rawMode;
+out vec4 position;
+out vec4 normal;
+void main(){
+ int i=gl_VertexID;
+ if(rawMode!=0){position=vec4(texelFetch(rawPositions,i).xyz,1);normal=vec4(0);return;}
+ int p=i*7;int b=int(texelFetch(modelScalars,p+6).r)*4;
+ vec4 v=vec4(texelFetch(modelScalars,p).r,texelFetch(modelScalars,p+1).r,texelFetch(modelScalars,p+2).r,1);
+ vec4 n=vec4(texelFetch(modelScalars,p+3).r,texelFetch(modelScalars,p+4).r,texelFetch(modelScalars,p+5).r,0);
+ vec4 a=texelFetch(poseRows,b);
+ vec4 c=texelFetch(poseRows,b+1);
+ vec4 d=texelFetch(poseRows,b+2);
+ position=vec4(dot(a,v),dot(c,v),dot(d,v),1);
+ normal=vec4(normalize(vec3(dot(a,n),dot(c,n),dot(d,n))),0);
+}'''
 
 
 class RigRenderer(MeshRenderer):
@@ -33,7 +55,7 @@ class RigRenderer(MeshRenderer):
         self.topology_key=None
         if shared is None:
             self.skin.removeAllShaders()
-            self.skin=self.program(((QOpenGLShader.Compute,SKIN),))
+            self.skin=self.kernel(SKIN,FEEDBACK_SKIN,('position','normal'))
 
     def load(self,asset):
         if self.asset_key==asset['key']:return
@@ -46,14 +68,21 @@ class RigRenderer(MeshRenderer):
         self.raw=asset['mode']=='raw';self.bone_count=asset.get('bone_count',52);self.vao.bind()
         if self.shared and self.shared.topology_key!=topology:raise ValueError('Shared raw meshes must have identical topology')
         self.model=self.shared.model if self.shared else self.buffer(asset.get('packed',np.zeros(7,np.float32)))
-        self.vertices=self.buffer(self.vertex_count*32)
+        if self.feedback:self.feedback_outputs()
+        else:self.vertices=self.buffer(self.vertex_count*32)
         self.offsets=self.shared.offsets if self.shared else self.buffer(asset.get('offsets',np.zeros(1,np.uint32)))
         self.neighbors=self.shared.neighbors if self.shared else self.buffer(asset.get('neighbors',np.zeros(1,np.uint32)))
         self.frame=self.buffer((self.vertex_count*3 if self.raw else self.bone_count*16)*4)
         self.indices=self.shared.indices if self.shared else self.buffer(asset['faces'],QOpenGLBuffer.IndexBuffer);self.indices.bind()
-        self.surface.bind();self.vertices.bind()
-        for i,offset in ((0,0),(1,16)):
-            self.surface.enableAttributeArray(i);self.surface.setAttributeBuffer(i,0x1406,offset,3,32)
+        if self.feedback:
+            self.surface.bind();self.feedback_attributes(self.surface)
+            self.skin_inputs=[('modelScalars',self.view(self.model,R32F)),('poseRows',self.view(self.frame,RGBA32F)),
+                              ('rawPositions',self.view(self.frame,RGB32F))]
+            self.normal_inputs=self.normal_views()
+        else:
+            self.surface.bind();self.vertices.bind()
+            for i,offset in ((0,0),(1,16)):
+                self.surface.enableAttributeArray(i);self.surface.setAttributeBuffer(i,0x1406,offset,3,32)
         self.vao.release();self.surface.release();self.asset_key=asset['key'];self.topology_key=topology;self.frame_key=None
         self.check('target load')
 
@@ -63,6 +92,11 @@ class RigRenderer(MeshRenderer):
         expected=self.vertex_count*3 if self.raw else self.bone_count*16
         if frame.size!=expected or not np.isfinite(frame).all():raise ValueError('Invalid target render frame')
         self.frame.bind();self.frame.write(0,frame.tobytes(),frame.nbytes)
+        if self.feedback:
+            passes=[(self.skin,self.skin_inputs,(self.positions,self.normal_buffer))]
+            if self.raw:passes.append((self.normals,self.normal_inputs,(self.normal_buffer,)))
+            self.run_feedback(passes,uniforms=(('rawMode',int(self.raw)),))
+            self.check('target deform');self.frame_key=key;self.dispatches+=1;return
         for index,buffer in enumerate((self.model,self.vertices,self.offsets,self.neighbors,self.frame)):
             self.gl.glBindBufferBase(0x90D2,index,buffer.bufferId())
         for program in ([self.skin,self.normals] if self.raw else [self.skin]):
