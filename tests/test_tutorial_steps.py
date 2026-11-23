@@ -175,11 +175,18 @@ class BasicsTest(ChapterCase):
                 self.assertIsNone(steps.sample_action(self.w))
                 clip.write_bytes(b'x')
                 label, run = steps.sample_action(self.w)
-                self.assertEqual(label, 'Use the sample clip')
+                self.assertEqual(label, 'Import sample video')
                 run();self.assertEqual(self.w.loaded, [clip])
                 self.w.busy = True
                 self.assertIsNone(steps.sample_action(self.w))
         self.assertIs(self.step('video').action, steps.sample_action)
+
+    def test_video_step_points_at_the_sample_video_only_when_it_exists(self):
+        self.assertNotIn('sample video', self.text('video'))
+        with tempfile.TemporaryDirectory() as folder:
+            clip = Path(folder) / 'sample.mp4';clip.write_bytes(b'x')
+            with patch.object(steps, 'SAMPLE', clip):
+                self.assertTrue(self.text('video').endswith(' Or click Import sample video below.'))
 
     def test_track_rows_follow_the_timeline_geometry(self):
         for scale in (100, 200):
@@ -291,11 +298,11 @@ class HiddenRangesChapterTest(ChapterCase):
         self.assertTrue(self.step('fill').done(self.w, set()))
 
     def test_need_video_mentions_the_sample_clip_only_when_it_exists(self):
-        self.assertNotIn('sample clip', self.text('need_video'))
+        self.assertNotIn('sample video', self.text('need_video'))
         with tempfile.TemporaryDirectory() as folder:
             clip = Path(folder) / 'sample.mp4';clip.write_bytes(b'x')
             with patch.object(steps, 'SAMPLE', clip):
-                self.assertTrue(self.text('need_video').endswith(' Or use the sample clip.'))
+                self.assertTrue(self.text('need_video').endswith(' Or click Import sample video below.'))
         self.assertIs(self.step('need_video').action, steps.sample_action)
 
     def test_live_preview_blocks_the_chapter(self):

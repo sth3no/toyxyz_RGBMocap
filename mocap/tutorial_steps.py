@@ -33,11 +33,12 @@ class Chapter:
 
 
 SAMPLE = ROOT / 'assets/tutorial/sample.mp4'  # optional clip shipped with the app; without it the user's own video is used
+SAMPLE_HINT = ' Or click Import sample video below.'
 
 
 def sample_action(window):
     if window.busy or not SAMPLE.is_file():return None
-    return 'Use the sample clip', lambda: window.load_video(SAMPLE)
+    return 'Import sample video', lambda: window.load_video(SAMPLE)
 
 
 def part(window, widget, rect):
@@ -95,7 +96,8 @@ BASICS = Chapter('basics', 'From video to export', (
          'needed while that option is off. This step ends when every required file is ready.',
          lambda w: [w.models_group], done=models_ready, skip=models_ready, waiting='Waiting for the model files…'),
     Step('video', 'Open a video',
-         'Choose File → Open Video…, or drop a video file into the window. The original video is never modified.',
+         lambda w: 'Choose File → Open Video…, or drop a video file into the window. The original video is never modified.'
+                   + (SAMPLE_HINT if sample_action(w) else ''),
          lambda w: [file_menu(w)], done=video_open, waiting='Waiting for a video…', action=sample_action, card='center'),
     Step('trim', 'Trim the clip (optional)',
          'Drag the ends of the Video track to limit playback and reconstruction to a part of the clip. '
@@ -153,7 +155,7 @@ def method_chosen(window, events=None):
 def need_video_text(window):
     return ('A hidden range is the gap between two takes of the same person, for example while the person is covered by an '
             'object. Open a video from a fixed camera in which a person is fully covered for more than half a second.'
-            + (' Or use the sample clip.' if sample_action(window) else ''))
+            + (SAMPLE_HINT if sample_action(window) else ''))
 
 
 def reason_text(window):
