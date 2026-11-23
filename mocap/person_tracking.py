@@ -22,16 +22,17 @@ from .storage import atomic_json, hard_link, sha256
 
 
 class AppearanceEncoder:
-    def __init__(self, checkpoint):
+    def __init__(self, checkpoint, device='cuda'):
         import torch
         spec = importlib.util.spec_from_file_location('rgb_person_osnet', UPSTREAM/'OSNet/osnet.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.torch = torch
-        self.model = module.osnet_x0_25(num_classes=4101, pretrained=False).eval().cuda()
+        self.device = device
+        self.model = module.osnet_x0_25(num_classes=4101, pretrained=False).eval().to(device)
         self.model.load_state_dict(torch.load(checkpoint, map_location='cpu', weights_only=True), strict=True)
-        self.mean = torch.tensor([.485, .456, .406], device='cuda')[None, :, None, None]
-        self.std = torch.tensor([.229, .224, .225], device='cuda')[None, :, None, None]
+        self.mean = torch.tensor([.485, .456, .406], device=device)[None, :, None, None]
+        self.std = torch.tensor([.229, .224, .225], device=device)[None, :, None, None]
 
     def inference(self, frame, boxes):
         import cv2
@@ -48,25 +49,28 @@ class AppearanceEncoder:
                 if not crop.size:
                     crop = np.zeros((256,128,3),np.uint8)
                 crops.append(cv2.resize(crop,(128,256))[:,:,::-1].copy())
-            tensor = torch.from_numpy(np.stack(crops)).permute(0,3,1,2).cuda().float().div_(255)
+            tensor = torch.from_numpy(np.stack(crops)).permute(0,3,1,2).to(self.device).float().div_(255)
             with torch.inference_mode():
                 embedding = torch.nn.functional.normalize(self.model((tensor-self.mean)/self.std), dim=1)
             return embedding.cpu().numpy()
         # A small model; bounded batches and retry outside the OOM exception scope.
         from .memory_mode import effective_mode
+        from .compute_device import empty_cache, is_oom
         batch = 4 if effective_mode() == 'low_memory' else 16
         first = 0
         while first < len(boxes):
             failed = False
             try:
                 values = run(first,min(batch,len(boxes)-first))
-            except torch.cuda.OutOfMemoryError:
+            except RuntimeError as error:  # CUDA OutOfMemoryError, or the MPS allocator's RuntimeError
+                if not is_oom(error,torch):
+                    raise
                 if batch == 1:
                     raise RuntimeError('Not enough GPU memory for person identification.') from None
                 failed = True
             if failed:
                 batch = max(1,batch//2)
-                gc.collect();torch.cuda.empty_cache()
+                gc.collect();empty_cache(torch)
                 continue
             result.append(values)
             first += len(values)
@@ -178,11 +182,13 @@ def discover(project, emit):
     import ultralytics.nn.tasks as tasks
     from ultralytics.trackers.bot_sort import BOTSORT
     from .models import BY_KEY
+    from .compute_device import device_name, empty_cache, kind, yolo_device
     project = Path(project)
     manifest = json.loads((project/'project.json').read_text(encoding='utf-8'))
     from .cache_compat import discovery_identity
+    device = kind(torch)  # CUDA keeps its device name; Apple MPS has its own identity
     digest = hashlib.sha256(json.dumps([media_receipt(project),str(torch.__version__),
-        torch.version.cuda,cv2.__version__,ultralytics.__version__,torch.cuda.get_device_name(),
+        torch.version.cuda,cv2.__version__,ultralytics.__version__,device_name(torch),
         discovery_identity(Path(__file__)),sha256(UPSTREAM/'OSNet/osnet.py'),
         *[sha256(BY_KEY[key].path) for key in ('yolo','person_reid')]]).encode()).hexdigest()
     try:old = load_people(project) if (project/'people.json').exists() else None
@@ -198,7 +204,7 @@ def discover(project, emit):
         return torch.load(selected,map_location='cpu',weights_only=False),str(selected)
     tasks.torch_safe_load = load
     detector = YOLO(str(BY_KEY['yolo'].path))
-    encoder = AppearanceEncoder(BY_KEY['person_reid'].path)
+    encoder = AppearanceEncoder(BY_KEY['person_reid'].path,device)
     args = SimpleNamespace(track_high_thresh=.5,track_low_thresh=.1,new_track_thresh=.6,
         track_buffer=60,match_thresh=.8,gmc_method='none',with_reid=True,
         proximity_thresh=.5,appearance_thresh=.25,fuse_score=True)
@@ -219,7 +225,7 @@ def discover(project, emit):
             ok,frame = capture.read()
             if not ok:
                 raise RuntimeError(f'Cannot read video frame {index}.')
-            prediction = detector.predict(frame,device=0,conf=.1,classes=0,verbose=False,max_det=128)[0]
+            prediction = detector.predict(frame,device=yolo_device(device),conf=.1,classes=0,verbose=False,max_det=128)[0]
             # Upstream calls this encoder only for high-confidence candidates.
             tracks = tracker.update(prediction.boxes.cpu().numpy(),frame)
             lookup = {int(t.track_id):t for t in tracker.tracked_stracks}
@@ -273,7 +279,7 @@ def discover(project, emit):
     finally:
         capture.release();db.close()
         del detector,encoder,tracker
-        gc.collect();torch.cuda.empty_cache()
+        gc.collect();empty_cache(torch)
     emit('people_found',project=str(project),count=len(selected),cached=False)
     return project/'people.json'
 

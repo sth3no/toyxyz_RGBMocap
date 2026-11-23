@@ -53,7 +53,6 @@ PLATFORM_ONLY = {
     "18b52409527dea9e7513850f7936d8662f09c93f00d64d8452b449881b2af1b8": "7b25e1eb57ed810bdf995a918d7b7633e7e558c25f982ba273f7d64783105ec3",  # correction.py
     "4f6711a1d08835c2e3894a7780a89432ef5f84a6259ce094368d344ce8cfc3e3": "7d1061f7f56e6c47a7a9660979616fb751dd8da36f39f0f4ed72a3b81135e04d",  # handflow_engine.py
     "bd97d0328b539a60af2b135ccb9d7ec669d40e71c7509274625d8bfc75a11795": "f157fe40e4c65b4853425ea50ed641a3b1a91fde40225aae93e273f912b05568",  # handflow.py
-    "14dfa2e611eb14335b38619469860b0c11baa7666ba8cee5e86636b1ed96bfac": "77c7162093f5bbf9b4dba46287f6542d5069cd3aef24444f531eac94335bd82f",  # exmr_backend.py
     "c851aa0b51b55b72840f2d4bf9afa9d2c50f2549a16802d4ebbb01e28eafca11": "b82861ea8496949c3b7d914a4b6eecf6400e61dcc008a188e2b7504c317a3012",  # flow_hamer.py
     "f0192f642b91e09cd4d5061134bdc07b6f835e57ce3d74f66ce974ff090d5c9e": "6fb33f433ece03ef19099a86d803a31a2b67ac23c70aa95a892906afc20e4d7a",  # flow_correction.py
     "97aad245e37c7ffa7792f777c39d9423aa75f62aac00254733e25be3cc58baef": "2e4533bdd021f57cc01baeb4c36ffe396d68ca512b743a5fd4d2cad158af65e7",  # gvhmr_preprocess.py
@@ -63,7 +62,11 @@ PLATFORM_ONLY = {
     "62480b0fe5b9786e4e458d3883833e3f7e45e17f7ecfbc8e0d417810a2a497e5": "68ae06b6c230612066591c2380506dae6886b2ccb779d79c938ff14cb9894b0d",  # runtime_registry.py with the macOS ExMR lock
     "df87cb443c3c148e511263781d3640df889253eae3f751cc10126cd8e6c1ccaa": "e3d094bbc21a7af4aa64dc857f004d7d15fdf931e163ec137ce53393301181ba",  # flow_backend adapter: flow_camera
     "8edfd3f96c55f42859e32b21606c85a8c37028a1e63654a8d240963b86d1214f": "6d9081574acbb859153820cc8d5c57676d15c70261043d7b0035a395875e6ac2",  # flow_backend adapter: flow_features
-    "fd67ebadffd8635eed91500effe2cb74c5bbb820ba3865770d76fc8e519df35e": "11164f85046c4548f58bc74298b34e1f01b6b4b33309b314f4307d7a37b72a1b"  # flow_backend adapter: flowhmr
+    "fd67ebadffd8635eed91500effe2cb74c5bbb820ba3865770d76fc8e519df35e": "11164f85046c4548f58bc74298b34e1f01b6b4b33309b314f4307d7a37b72a1b",  # flow_backend adapter: flowhmr
+    # Apple MPS device selection (mocap/compute_device.py). On CUDA these files run the same
+    # devices, dtypes and operations as before; MPS results carry their own identity instead.
+    "e4bd154a249373d56f0d24e3c7e739b8df175603afd8b3783ab9a5bc304cf4bc": "74512a9b2fb87f4fafb9f0bc963f5b5887e4069ffc59c24f656f984b9c8066fd",  # engines.py
+    "4bea32ea6f8153642e9c6a4e3ed92af81544db87f6152cff1d03d0f283866987": "97df91aacab5e68618e0b61752bce3844e08b47ff7e6a69315b6b8a32f96b0f1"  # worker.py
 }
 
 

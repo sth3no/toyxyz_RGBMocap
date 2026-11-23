@@ -71,6 +71,8 @@ def track(project: Path, emit) -> Path:
             raise ValueError("Unexpected detector checkpoint path")
         return torch.load(selected, map_location="cpu", weights_only=False), str(selected)
     yolo_tasks.torch_safe_load = load_official_detector
+    from .compute_device import kind, yolo_device
+    device = kind(torch)  # GPU index 0 on CUDA as before; Apple MPS on macOS
     model = YOLO(str(BY_KEY["yolo"].path))
     video = cv2.VideoCapture(str(project / "input.mp4"))
     total = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -80,7 +82,7 @@ def track(project: Path, emit) -> Path:
         ok, frame = video.read()
         if not ok:
             raise RuntimeError(f"Cannot read video frame {index}.")
-        prediction = model.predict(frame, device=0, conf=0.35, classes=0, verbose=False)[0]
+        prediction = model.predict(frame, device=yolo_device(device), conf=0.35, classes=0, verbose=False)[0]
         candidates = prediction.boxes.xyxy.detach().cpu().numpy()
         if len(candidates):
             areas = (candidates[:, 2] - candidates[:, 0]) * (candidates[:, 3] - candidates[:, 1])

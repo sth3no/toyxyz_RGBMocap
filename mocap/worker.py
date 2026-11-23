@@ -159,6 +159,8 @@ def main() -> int:
     from .model_session import set_memory_budget
     from .compute_policy import configure_worker_cpu,gpu_memory_fraction,GIB
     threads=configure_worker_cpu(args.stage)
+    from .compute_device import configure_worker_environment
+    configure_worker_environment()  # macOS: MPS watermarks before torch allocates; nothing elsewhere
     os.environ['RGB_MOCAP_STAGE']=args.stage
     if args.project:
         args.project = args.project.resolve()
@@ -277,10 +279,16 @@ def main() -> int:
             torch.set_num_threads(threads)
             memory=psutil.virtual_memory()
             free=total=None
-            if args.stage=='people':
-                if not torch.cuda.is_available():raise RuntimeError('A supported NVIDIA CUDA GPU is required for person detection.')
+            from .compute_device import kind,set_mps_budget,cuda_required
+            device=kind(torch)
+            if args.stage=='people' and device=='mps':
+                free,total=set_mps_budget(torch)  # unified memory; sets the MPS cap itself
+                from .memory_mode import select_stage
+                select_stage(args.stage,free,total,manifest.get('frames',0),emit)
+            elif args.stage=='people':
+                if not torch.cuda.is_available():raise RuntimeError(cuda_required('A supported NVIDIA CUDA GPU is required for person detection.'))
                 free,total=torch.cuda.mem_get_info()
-            if free is not None:
+            if free is not None and device=='cuda':
                 set_memory_budget(free,total)
                 from .memory_mode import select_stage
                 select_stage(args.stage,free,total,manifest.get('frames',0),emit)
@@ -348,12 +356,19 @@ def main() -> int:
         import torch
         torch.set_num_threads(threads)
         free=None
-        if args.stage in ('track','pva','features','gvhmr','refine','footmr','handflow'):
+        from .compute_device import kind,set_mps_budget,cuda_required
+        device=kind(torch)
+        if args.stage=='track' and device=='mps':
+            # Single-actor tracking (also ExMR's) runs on the Apple GPU; GVHMR stages stay CUDA-only.
+            free,total=set_mps_budget(torch)
+            from .memory_mode import select_stage
+            select_stage(args.stage,free,total,manifest.get('frames',0),emit)
+        elif args.stage in ('track','pva','features','gvhmr','refine','footmr','handflow'):
             if not torch.cuda.is_available():
-                raise RuntimeError('A supported NVIDIA CUDA GPU is required for this model. Check System in Help for details.')
+                raise RuntimeError(cuda_required('A supported NVIDIA CUDA GPU is required for this model. Check System in Help for details.'))
             free,total=torch.cuda.mem_get_info()
         memory=psutil.virtual_memory()
-        if free is not None:
+        if free is not None and device=='cuda':
             set_memory_budget(free,total)
             from .memory_mode import select_stage
             select_stage(args.stage,free,total,manifest.get('frames',0),emit)
