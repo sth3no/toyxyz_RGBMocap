@@ -20,6 +20,8 @@ def main():
     parser.add_argument("--smoke-camera-distance", type=float)
     parser.add_argument('--smoke-render-mode',choices=['raw','box','mixamo'],default='box',help=argparse.SUPPRESS)
     parser.add_argument('--smoke-bone-overlay',choices=['on','off'])
+    # Synthetic mesh, bones and textured character for a GPU check without models.
+    parser.add_argument('--smoke-gl-sample',action='store_true',help=argparse.SUPPRESS)
     args = parser.parse_args()
     # Give Windows a stable app identity so the taskbar uses the app icon.
     if sys.platform == "win32":
@@ -55,6 +57,11 @@ def main():
     if args.project:
         window.load_project(args.project)
     window.show()
+    if args.smoke_gl_sample:
+        from mocap.gl_sample import install
+        install(window.motion_view)
+        # Frame All also reads the skinned character back from the GPU.
+        QTimer.singleShot(400, window.motion_view.frame_all)
     from mocap.tutorial import first_run, smoke_run
     if not smoke_run(args):
         first_run(window, welcome=not (args.video or args.project))
