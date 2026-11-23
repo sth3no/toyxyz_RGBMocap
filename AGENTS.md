@@ -11,6 +11,7 @@ a manually built environment. For optional PromptHMR setup, its SAM2 build and
 the optional DroidCalib/LieTorch moving-camera build, follow
 [docs/models/PROMPTHMR.md](docs/models/PROMPTHMR.md).
 
+- For the experimental Linux installation, follow [docs/LINUX.md](docs/LINUX.md) and keep platform-specific interpreter layout in `mocap/runtime_registry.py`.
 - This is the Windows Git/CMD distribution. Preserve the separate pinned runtimes and model-specific behavior. `install.cmd` covers ExMR/FlowHMR/GVHMR and the small shared-runtime camera support overlay used by PEAR and MAMMA gravity; MAMMA, PromptHMR and GEM-X remain optional through their separate setup commands. Do not merge their packages or assume `update.cmd` installs them.
 - For an installation failure involving a long staging path, follow [Windows path length troubleshooting](docs/USER_GUIDE.md#windows-path-length-during-installation).
 - GEM-X uses its own verified inference packages over ExMR Python. Keep Native77 data separate from SMPL, including contact correction and FBX/BVH export. Follow [the GEM-X guide](docs/models/GEMX.md).

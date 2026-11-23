@@ -11,7 +11,16 @@ def git(*args):
 def main():
     with app_lock(ROOT):
         if git('status','--porcelain','--untracked-files=no'):raise RuntimeError('Tracked source files have local changes. Commit or back up changes before updating.')
-        if git('branch','--show-current')!='main':raise RuntimeError('Switch to the intended main branch before updating.')
+        expected = 'main' if os.name == 'nt' else 'linux_support'
+        if git('branch','--show-current') != expected:
+            raise RuntimeError(f'Switch to the intended {expected} branch before updating.')
+        if os.name != 'nt':
+            try:
+                upstream = git('rev-parse', '--symbolic-full-name', '@{upstream}')
+            except subprocess.CalledProcessError:
+                upstream = ''
+            if not upstream.startswith('refs/remotes/') or not upstream.endswith('/linux_support'):
+                raise RuntimeError('Set this branch to track the remote linux_support branch before updating.')
         before=git('rev-parse','HEAD');pending=ROOT/'.setup/git-sync.pending'
         pending.parent.mkdir(parents=True,exist_ok=True)
         previous_pending=pending.read_bytes() if pending.exists() else None
@@ -24,7 +33,8 @@ def main():
                 if previous_pending is None:pending.unlink(missing_ok=True)
                 else:pending.write_bytes(previous_pending)
             raise
-    command=[str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'tools/git_bootstrap.ps1'),*sys.argv[1:]]
+    if os.name=='nt':command=[str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'tools/git_bootstrap.ps1'),*sys.argv[1:]]
+    else:command=['/bin/sh',str(ROOT/'tools/git_bootstrap.sh'),*sys.argv[1:]]
     print('Checking the updated runtime configuration...',flush=True)
     subprocess.run(command,check=True,cwd=ROOT)
 
@@ -43,7 +53,8 @@ def cli():
         result=exc.returncode if isinstance(exc,subprocess.CalledProcessError) else 1
     if result:
         print('Update stopped; review the message above.',file=sys.stderr,flush=True)
-    if not cancelled and (len(sys.argv)==1 or not sys.argv[1]):
+    # The double-clicked CMD window pauses; a POSIX terminal stays open by itself.
+    if os.name=='nt' and not cancelled and (len(sys.argv)==1 or not sys.argv[1]):
         try:
             subprocess.run([str(Path(os.environ['SystemRoot'])/'System32/cmd.exe'),'/d','/c','pause'],check=False)
         except (OSError,KeyboardInterrupt):

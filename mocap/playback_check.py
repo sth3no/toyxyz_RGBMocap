@@ -8,6 +8,8 @@ import numpy as np
 import psutil
 from PySide6.QtCore import QTimer
 
+from .process_memory import peak_ram_bytes, private_bytes
+
 
 def schedule_check(window, seconds, output: Path, screenshot: Path | None, finish):
     samples = []
@@ -56,6 +58,7 @@ def schedule_check(window, seconds, output: Path, screenshot: Path | None, finis
         elapsed = time.perf_counter() - state["started"]
         window.stop_playback()
         intervals = [b[0] - a[0] for a, b in zip(samples, samples[1:])]
+        private = private_bytes(process)
         report = {"source_fps": window.info["fps"], "elapsed_seconds": elapsed,
                   "clip_in_frame": window.slider.clip_in, "clip_out_frame_exclusive": window.slider.clip_out,
                   "frames_outside_selected_clip": sum(not window.slider.clip_in <= i < window.slider.clip_out for _,i,_ in samples),
@@ -67,8 +70,8 @@ def schedule_check(window, seconds, output: Path, screenshot: Path | None, finis
                   "last_frame": samples[-1][1] if samples else None,
                   "cpu_core_percent": (cpu_time() - state["cpu"]) / elapsed * 100,
                   "logical_processors": psutil.cpu_count(),
-                  "peak_process_ram_mib": process.memory_info().peak_wset / 1024**2,
-                  "private_mib": process.memory_info().private / 1024**2,
+                  "peak_process_ram_mib": peak_ram_bytes() / 1024**2,
+                  "private_mib": private / 1024**2 if private is not None else None,
                   "os_threads": process.num_threads(),
                   "inference_modules_loaded": "torch" in sys.modules}
         view = window.motion_view

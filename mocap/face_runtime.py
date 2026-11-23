@@ -8,12 +8,13 @@ from tempfile import TemporaryDirectory
 from urllib.request import urlopen
 
 from .paths import HOME, ROOT
+from .runtime_registry import INSTALL_COMMAND, managed_python
 
 MODEL = ('https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
          '64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff')
 CANONICAL = ('https://raw.githubusercontent.com/google-ai-edge/mediapipe/v0.10.32/mediapipe/modules/face_geometry/data/canonical_face_model.obj',
              '8bac80443397e113f41a8b565ea72c59390bc031d9defab289dba7bc0c54e618')
-LOCK = ROOT / 'installer/face-windows.lock'
+LOCK = ROOT / 'installer' / ('face-windows.lock' if os.name == 'nt' else 'face-linux.lock')
 
 
 def sha(data):
@@ -21,9 +22,9 @@ def sha(data):
 
 
 def command(args):
-    python = ROOT / 'runtime_exmr/python.exe'
+    python = managed_python(ROOT, 'exmr')
     if not python.is_file():
-        raise RuntimeError('Run install.cmd to prepare the base runtime for Track Face.')
+        raise RuntimeError(f'Run {INSTALL_COMMAND} to prepare the base runtime for Track Face.')
     return [str(python), '-B', '-I', '-X', 'utf8', '-u', str(ROOT/'face_worker_boot.py'), *map(str, args)]
 
 

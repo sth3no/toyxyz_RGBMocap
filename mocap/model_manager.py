@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from .models import BY_KEY, GROUPS, LEADERS, MODELS_LIST, STAGE_REQUIREMENTS, ready
 from .motion_tools import MOTION_TOOLS
-from .paths import HOME, MODELS, ROOT, UPSTREAM
+from .paths import HOME, MODEL_FILES, MODELS, ROOT, UPSTREAM
 from .storage import atomic_json
 
 
@@ -140,7 +140,7 @@ def linked_entries(model, payload):
 
 
 def receipt_path(model):
-    return model.path.with_suffix(model.path.suffix + '.receipt.json')
+    return model.receipt
 
 
 def group_keys(keys):
@@ -155,26 +155,28 @@ def installed_files(model):
 
 
 def file_entries(model):
+    if model.key in MODEL_FILES:
+        return ()
     if model.key != 'pear_geometry':
-        payload = entry(model.path, HOME)
+        payload = entry(model.path, MODELS)
         if payload is None:
             return ()
-        receipt = entry(receipt_path(model), HOME)
+        receipt = entry(model.receipt, MODELS)
         return (payload, *((receipt,) if receipt else ()), *linked_entries(model, payload))
 
     from .pear_models import geometry_folder, spec
-    pointer = entry(model.path, HOME)
+    pointer = entry(model.path, MODELS)
     if pointer is None:
         return ()
     folder = geometry_folder()
     if folder.parent.parent != MODELS / 'pear' or not folder.parent.name.startswith('geometry-') or folder.name != 'assets':
         raise ValueError('PEAR geometry is outside its managed generation.')
-    return (pointer, *(entry(folder / asset['path'], HOME) for asset in spec()['files']))
+    return (pointer, *(entry(folder / asset['path'], MODELS) for asset in spec()['files']))
 
 
 def installed_models():
     # Include broken installations and externally linked paths so users can see them.
-    return [model for model in MODELS_LIST if os.path.lexists(model.path)]
+    return [model for model in MODELS_LIST if model.key in MODEL_FILES or os.path.lexists(model.path)]
 
 
 def physical_bytes(files, reclaim=False):
@@ -199,9 +201,13 @@ def removal_plan(keys):
     keys = set(keys)
     removed = group_keys(keys)
     retained = {model.path for model in MODELS_LIST if model.key not in removed}
+    # A manually configured path may be a symbolic link to a catalog file.
+    retained.update(path.resolve() for path in MODEL_FILES.values())
     files = {}
     for key in sorted(keys):
         model = BY_KEY[key]
+        if key in MODEL_FILES:
+            raise ValueError(f'{model.name} is registered in place. Its source file is protected.')
         installed = installed_files(model)
         if not installed or any(item is None for item in installed):
             raise ValueError(f'{model.name} changed. Refresh the list and try again.')
@@ -213,16 +219,17 @@ def removal_plan(keys):
 
 
 def journal_path():
-    return HOME / 'models/.rgbmocap-removal.json'
+    return MODELS / '.rgbmocap-removal.json'
 
 
 def recovery_roots(keys, paths):
     allowed = {}
     for key in group_keys(keys):
         model = BY_KEY[key]
-        allowed[model.path] = HOME
+        payload = MODELS / model.relative
+        allowed[payload] = MODELS
         if key != 'pear_geometry':
-            allowed[receipt_path(model)] = HOME
+            allowed[payload.with_suffix(payload.suffix + '.receipt.json')] = MODELS
             allowed.update(runtime_aliases(model))
             continue
         from .pear_models import spec
@@ -233,7 +240,7 @@ def recovery_roots(keys, paths):
                 parts = path.relative_to(pear).parts
                 if (len(parts) > 2 and parts[0].startswith('geometry-') and parts[1] == 'assets'
                         and Path(*parts[2:]) in assets):
-                    allowed[path] = HOME
+                    allowed[path] = MODELS
     return allowed
 
 
@@ -244,7 +251,7 @@ def fingerprint(item):
 
 def recover_removal():
     journal = journal_path()
-    if not entry(journal, HOME):
+    if not entry(journal, MODELS):
         return
     state = json.loads(journal.read_text(encoding='utf-8'))
     txid = state['id']
@@ -286,7 +293,7 @@ def recover_removal():
 
 def remove_models(keys, expected):
     journal = journal_path()
-    if entry(journal, HOME):
+    if entry(journal, MODELS):
         raise ValueError('A previous model removal needs recovery.')
     if removal_plan(keys) != expected:
         raise ValueError('Model files changed after confirmation. Review the updated list.')

@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFil
     QAbstractItemView, QSplitter, QTabBar, QTableWidget, QTableWidgetItem, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
 
 from .models import MODELS_LIST, import_body_model, missing, ready
-from .paths import ROOT, PROJECTS, worker_command
+from .paths import MODEL_FILES, ROOT, PROJECTS, worker_command
+from .process_group import kill_group, own_session
 from .video import select_preview
 from .viewer import VideoView, MotionView
 from .playback import playback_frame, PlaybackTimerResolution
@@ -364,7 +365,9 @@ class ModelsDialog(QDialog):
             if (key and key not in consumers) or (self.dedicated_only.isChecked() and len(consumers) != 1):
                 continue
             status = 'Protected'
-            if files and all(item is not None for item in files):
+            if model.key in MODEL_FILES:
+                status = 'Ready (in place)' if ready(model) else 'Missing (in place)'
+            elif files and all(item is not None for item in files):
                 self.removable.add(model.key)
                 status = 'Ready' if ready(model) else 'Needs verification'
             rows.append((model, status, physical_bytes(files) if files else None))
@@ -375,7 +378,11 @@ class ModelsDialog(QDialog):
                 item.setToolTip(str(model.path) if column < 2 else text)
                 item.setData(Qt.UserRole, model.key)
                 self.table.setItem(index, column, item)
-            item = ModelSizeItem(file_size(size) if size is not None else 'Unknown')
+            if model.key in MODEL_FILES:
+                size_label = 'External'
+            else:
+                size_label = file_size(size) if size is not None else 'Unknown'
+            item = ModelSizeItem(size_label)
             item.setData(Qt.UserRole, -1 if size is None else size)
             self.table.setItem(index, 4, item)
             if model.key in selected:
@@ -451,10 +458,13 @@ class ModelsDialog(QDialog):
             name = model.name + (" (Optional: HTD / 2D)" if self.tool.key == "gvhmr" and model.key == "pva" else "")
             if self.tool.key=='pear' and model.key in STAGE_REQUIREMENTS['pear_align']:name+=' (Optional: Camera Align)'
             available = ready(model)
+            status = "Ready" if available else "Missing"
+            if model.key in MODEL_FILES:
+                status += " (in place)"
             files = self.inspect_model_files(model)
             if files and all(item is not None for item in files):
                 self.removable.add(model.key)
-            for column, text in ((0, name), (1, self.usage_text(model.key)), (2, "Ready" if available else "Missing")):
+            for column, text in ((0, name), (1, self.usage_text(model.key)), (2, status)):
                 item = self.table.item(i, column)
                 if item is None:
                     item = QTableWidgetItem(); self.table.setItem(i, column, item)
@@ -479,12 +489,12 @@ class ModelsDialog(QDialog):
                 cell.manual.clicked.connect(lambda checked=False, key=model.key: self.manual_setup(key))
                 row.addWidget(cell.manual)
                 cell.local = QPushButton("Import...")
-                cell.local.setToolTip(tooltip_text("Choose a model file you already downloaded. The app checks it before replacing any existing file."))
+                cell.local.setToolTip(tooltip_text("Choose a model file you already downloaded. The app checks it before replacing any existing file, then copies it or uses it where it is."))
                 cell.local.clicked.connect(lambda checked=False, key=model.key: self.import_local_model(key))
                 row.addWidget(cell.local)
                 self.table.setCellWidget(i, 3, cell)
             if cell.automatic is not None:
-                cell.automatic.setEnabled(not self.window.busy and not available)
+                cell.automatic.setEnabled(not self.window.busy and not available and model.key not in MODEL_FILES)
             cell.manual.setEnabled(True)
             cell.local.setEnabled(not self.window.busy)
         self.download_all.setEnabled(not self.window.busy and bool(self.pending_downloads()))
@@ -575,7 +585,7 @@ class ModelsDialog(QDialog):
         from .model_manager import download_all_skips
         if self.inventory_tab:
             return []
-        excluded = set()
+        excluded = set(MODEL_FILES)
         if self.tool.key == 'flowhmr' and not self.window.flow_hamer.isChecked():
             excluded.update(MODEL_KEYS)
         return [model for model in self.models if model.key not in excluded and not download_all_skips(model.key)
@@ -617,8 +627,29 @@ class ModelsDialog(QDialog):
              'Kimodo model (model.safetensors);;All files (*)' if key=='kimodo' else
              'Kimodo text adapter (adapter_model.safetensors);;All files (*)' if key=='kimodo_text' else
              f'Model file ({model.path.name});;All files (*)'))
-        if name:
-            self.start_model_jobs([('import_model', ['--model', key, '--video', name])])
+        if not name:
+            return
+        arguments = ['--model', key, '--video', name]
+        from .models import GROUPS
+        from .paths import MODELS
+        # Anything outside the model's models-folder path can be copied there or used where it is.
+        # Group rows (Kimodo) always copy every member of the group.
+        if key != 'pear_geometry' and key not in GROUPS and Path(name).resolve() != (MODELS / model.relative).resolve():
+            box = QMessageBox(picker_parent or self)
+            box.setWindowTitle('Import ' + model.name)
+            box.setText('Use this file where it is, or copy it into the models folder?')
+            box.setInformativeText('Use in Place checks the file and remembers its location in config/local.json; nothing is copied. '
+                                   'Copy checks it and stores a copy in ' + str(MODELS) + '.')
+            in_place = box.addButton('Use in Place', QMessageBox.AcceptRole)
+            copy = box.addButton('Copy', QMessageBox.AcceptRole)
+            box.addButton(QMessageBox.Cancel)
+            box.setDefaultButton(copy)
+            box.exec()
+            if box.clickedButton() not in (in_place, copy):
+                return
+            if box.clickedButton() is in_place:
+                arguments.append('--in-place')
+        self.start_model_jobs([('import_model', arguments)])
 
 
 
@@ -1697,6 +1728,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             if self.current_stage=='save_project':
                 self.finish_project_save()
                 return
+            if self.current_stage=='import_model':
+                from .paths import reload_model_files
+                reload_model_files()  # The import worker may have changed where a model is read from.
             completion_message=self.status.text()
             self.finish_people_jobs()
             if self.failed or self.cancelled:self.status.setText(completion_message)
@@ -1784,6 +1818,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.next_job()
             return
         self.process = QProcess(self)
+        own_session(self.process)
         self.process.setWorkingDirectory(str(ROOT))
         environment = QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONIOENCODING", "utf-8")
@@ -2028,6 +2063,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 helper.finished.connect(cancelled)
                 helper.start("taskkill.exe", ["/PID", str(worker.processId()), "/T", "/F"])
             else:
+                kill_group(worker.processId())
                 worker.kill()
         self.status.setText("Cancelled. Completed stages will be reused next time.")
 

@@ -110,8 +110,8 @@ def prepare(path, job):
     from .paths import ROOT
     from .storage import sha256
     from .resource_cache import code_hash
-    # Exact-byte aliases retain inference after the download-only progress fix.
-    identity['code']={name:(code_hash if name in {'mamma_pipeline.py','worker_progress.py'} else sha256)(ROOT/'mocap'/name) for name in ('mamma_pipeline.py','mamma_sam_frames.py','mamma_camera.py','mamma_gravity.py','mamma_gravity_worker.py','mamma_inputs.py','image_io.py','memory_mode.py','gpu_offload.py','worker_progress.py','runtime_registry.py','pear/alignment_support.py')}
+    # Exact-byte aliases retain inference after the download-only progress and platform-only registry fixes.
+    identity['code']={name:(code_hash if name in {'mamma_pipeline.py','worker_progress.py','runtime_registry.py'} else sha256)(ROOT/'mocap'/name) for name in ('mamma_pipeline.py','mamma_sam_frames.py','mamma_camera.py','mamma_gravity.py','mamma_gravity_worker.py','mamma_inputs.py','image_io.py','memory_mode.py','gpu_offload.py','worker_progress.py','runtime_registry.py','pear/alignment_support.py')}
     if interpolation:
         identity['interpolation'] = interpolation
         identity['code']['mamma_pipeline.py'] = sha256(ROOT/'mocap/mamma_pipeline.py')

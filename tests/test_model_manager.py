@@ -26,7 +26,7 @@ class InstalledModelTests(unittest.TestCase):
         self.payload = self.model.path
         self.payload.parent.mkdir(parents=True)
         self.payload.write_bytes(b'Example installed model')
-        self.receipt = manager.receipt_path(self.model)
+        self.receipt = self.model.receipt
         self.receipt.write_bytes(b'Record')
         self.keys = [self.model.key]
         self.alias = next(path for path, _ in manager.runtime_aliases(self.model)
@@ -118,6 +118,41 @@ class InstalledModelTests(unittest.TestCase):
             self.assertFalse(pear_models.geometry_ready())
         self.assertFalse(active.parent.exists())
         self.assertEqual((old / relative).read_bytes(), b'Geometry')
+
+    def test_relocated_models_folder_keeps_its_own_removal_journal(self):
+        relocated = self.root.parent / 'model-storage'
+        with patch.object(manager, 'MODELS', relocated), patch.object(models, 'MODELS', relocated):
+            payload = self.model.path
+            payload.parent.mkdir(parents=True)
+            payload.write_bytes(b'Relocated model')
+            self.model.receipt.write_bytes(b'Relocated receipt')
+            plan = manager.removal_plan(self.keys)
+            self.assertEqual({item.path for item in plan}, {payload, self.model.receipt})
+            self.assertEqual(manager.journal_path().parent, relocated)
+            manager.remove_models(self.keys, plan)
+            self.assertFalse(payload.exists())
+            self.assertFalse(manager.journal_path().exists())
+        self.assertTrue(self.payload.is_file())
+
+    def test_in_place_registration_protects_a_file_in_the_models_folder(self):
+        with patch.dict(manager.MODEL_FILES, {self.model.key: self.payload}, clear=True):
+            self.assertIn(self.model, manager.installed_models())
+            self.assertEqual(manager.installed_files(self.model), ())
+            with self.assertRaisesRegex(ValueError, 'registered in place'):
+                manager.removal_plan(self.keys)
+        self.assertEqual(self.payload.read_bytes(), b'Example installed model')
+
+    def test_another_in_place_registration_protects_its_link_target(self):
+        self.external.unlink()
+        try:
+            self.external.symlink_to(self.payload)
+        except OSError as error:
+            self.skipTest(f'File symlinks unavailable on this system: {error}')
+        with patch.dict(manager.MODEL_FILES, {'flow_config': self.external}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'shares its storage path'):
+                manager.removal_plan(self.keys)
+        self.assertTrue(self.external.is_symlink())
+        self.assertEqual(self.payload.read_bytes(), b'Example installed model')
 
     def test_rejects_unrecognized_path_in_recovery_record(self):
         custom = manager.MODELS / 'my-model.ckpt'

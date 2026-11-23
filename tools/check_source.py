@@ -44,11 +44,17 @@ def main():
             except (SyntaxError,UnicodeError) as exc:errors.append(str(exc))
     for name in ['README.md','LICENSE','THIRD_PARTY_NOTICES.md','docs/USER_GUIDE.md','docs/BUILD.md','installer/runtime-lock.json','installer/external-assets.json']:
         if not (ROOT/name).is_file():errors.append('Missing '+name)
-    lock=json.loads((ROOT/'installer/runtime-lock.json').read_text(encoding='utf-8'))
     registry=ROOT/'mocap/runtime_registry.py'
-    if not registry.is_file() or hashlib.sha256(registry.read_bytes()).hexdigest()!=lock.get('registry_sha256'):
-        errors.append('Runtime registry differs from installer/runtime-lock.json. Review the registry change and update its locked hash before distributing.')
-    if {g['key'] for g in lock['groups']}!={'shared','gui','flow','hand','htd','exmr'}:errors.append('Runtime profile set changed')
+    registry_hash=hashlib.sha256(registry.read_bytes()).hexdigest() if registry.is_file() else None
+    for name in ('installer/runtime-lock.json','installer/runtime-lock-linux.json'):
+        try:
+            lock=json.loads((ROOT/name).read_text(encoding='utf-8'))
+            if registry_hash is None or registry_hash!=lock.get('registry_sha256'):
+                errors.append('Runtime registry differs from '+name+'. Review and update the locked hash.')
+            if {g['key'] for g in lock['groups']}!={'shared','gui','flow','hand','htd','exmr'}:
+                errors.append('Runtime profile set changed in '+name)
+        except (OSError, ValueError, TypeError, KeyError) as error:
+            errors.append('Invalid runtime lock '+name+': '+str(error))
     print(json.dumps(dict(files=count,errors=errors),indent=2))
     return bool(errors)
 

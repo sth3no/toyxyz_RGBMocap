@@ -1,5 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
+foreach ($marker in @('runtime/bin/python3.10', 'runtime_exmr/bin/python3.12', '.setup/bootstrap-git/uv')) {
+    if (Test-Path -LiteralPath (Join-Path $root $marker)) {
+        throw 'This folder contains a Linux RGB MoCap installation. Use a separate Windows checkout with its own runtimes.'
+    }
+}
 $setup = Join-Path $root '.setup'
 $resources = Join-Path $setup 'bootstrap-git'
 New-Item -ItemType Directory -Force -Path $resources | Out-Null

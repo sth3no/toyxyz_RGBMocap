@@ -8,6 +8,11 @@ This guide is for agents helping users operate or modify RGB MoCap. It describes
 - In a writable checkout, run `install.cmd` once. It sets up separate pinned profiles for ExMR, FlowHMR and GVHMR and their supported add-ons, PEAR support over the shared runtime, Blender 4.5, FFmpeg and the prebuilt native motion-correction module. It does not install only the selected model's runtime or obtain AI weights/body data. Downloading and disk space are required. Models are obtained separately. Optional MAMMA, PromptHMR and GEM-X have separate setup commands.
 - Run `RGBMoCap.cmd`. Keep its command window open; launch errors, processing messages and app Console output are also sent there, but long messages can be truncated and a saturated output queue can drop messages. Within the GUI, **Help > Check System** checks the system.
 - On Windows 11, Smart App Control in **On** mode can block the unsigned app-local Python at setup or launch. Check the blocked filename and CodeIntegrity events **3077** and **3089**. See the [installation troubleshooting guide](USER_GUIDE.md#smart-app-control-on-windows-11).
+- For Linux, use the [Linux installation guide](LINUX.md). If the AppImage
+  stops at native motion correction build, check CMake 3.24 or newer and the
+  C++17 compiler in the user's launch environment. The published preview
+  compiles this module on first launch. Have the user retry the AppImage and
+  check its setup log. See [AppImage build troubleshooting](LINUX.md#appimage-setup-cannot-find-cmake).
 - Base worker commands use explicit `-X utf8`, including isolated `-I` launches. Isolated mode ignores `PYTHONIOENCODING`/`PYTHONUTF8` from the parent environment. Any redirected/discarded text log stream must also specify UTF-8. Keep byte-oriented PEAR IPC unchanged.
 - Close the app before `update.cmd`. The updater requires a clean tracked worktree and the `main` branch, uses `git pull --ff-only`, then verifies/repairs runtime configuration. It refuses tracked local edits. A plain `git pull` does not perform runtime repair; use `install.cmd` after dependency changes when needed. Do not discard local edits or force an update.
 - `update.cmd` buffers its final command block before Git can replace it. Reporting/pause belongs to `tools/git_update.py`; failures preserve the subprocess status (ordinary exceptions use 1, Python-intercepted cancellation uses 130). Keep delayed expansion off for paths/arguments. The final `CALL` expands only a numeric exit status after clearing an environment shadow; never reparse paths or arguments with `CALL`. Already-running older launchers remain vulnerable during their first transition. From an open CMD in the app folder, `runtime\python.exe -I -X utf8 -B tools\git_update.py` bypasses the old wrapper. A stray command error after reported installation completion calls for rerunning the updated launcher, not deleting setup markers or models. See [update recovery](USER_GUIDE.md#installation-verification-and-repair) and the preceding transition note. Forced console termination/deletion of the running launcher is outside this guarantee.
@@ -69,7 +74,9 @@ Every workflow tab and **Installed Models** open the same confirmation for
 Removal identifies exact catalog paths and confirmed runtime hardlinks or
 symbolic links. It stages the files on the same volume and records the work for
 recovery when the manager next opens. Keep projects, external source files and
-unverified runtime copies out of removal. For troubleshooting, check the
+unverified runtime copies out of removal. On this branch, an in-place model
+stays protected even if its path is under the configured models folder. The
+configured models folder is the managed root for ordinary copies. Check the
 affected workflows and planned paths shown in the confirmation first.
 
 ExMR's integrated v0.1.5 uses public `pipeline.hand_boxes`, `model_inputs` and
@@ -157,7 +164,7 @@ pipeline-hash pair preserves valid existing inference receipts for this cache-on
 fix; do not extend that exception to numerical/weight changes. No optional-runtime
 rebuild is required. See [supporting downloads](models/PROMPTHMR.md#shared-supporting-model-download-cache).
 
-Model files are in `<installation>/models/` by default. To reuse a legitimate installation, close both apps, copy the complete models folder and its receipt/license files beside `RGBMoCap.cmd`, and check readiness in Model Manager. Do not copy old `runtime*` folders. SMPL Neutral is required by PromptHMR, although it is not required for ExMR/FlowHMR/GVHMR. Standard SMPL-X Neutral is shared by ExMR/GVHMR/PromptHMR; MAMMA uses its separate locked-head bodies. Exact requirements are defined by `mocap/models.py` and the chosen stages, not by guessed filenames.
+Model files are in `<installation>/models/` by default; the local `config/local.json` `models_dir` / `model_files` entries (written by Model Manager's **Use in Place**) relocate them or use checked files where they are, see [other folders](USER_GUIDE.md#keep-models-in-another-folder). To reuse a legitimate installation, close both apps, copy the complete models folder and its receipt/license files beside `RGBMoCap.cmd`, and check readiness in Model Manager. Do not copy old `runtime*` folders. SMPL Neutral is required by PromptHMR, although it is not required for ExMR/FlowHMR/GVHMR. Standard SMPL-X Neutral is shared by ExMR/GVHMR/PromptHMR; MAMMA uses its separate locked-head bodies. Exact requirements are defined by `mocap/models.py` and the chosen stages, not by guessed filenames.
 
 ### SAM 3.1 person discovery
 

@@ -761,13 +761,16 @@ their body model for export.
 The estimate counts known hardlinks once and accounts for links that remain.
 Protected paths, independent runtime copies and older PEAR geometry generations
 can remain on disk. The active PEAR geometry is removed as a bundle. Imports
-keep their original source file.
+keep their original source file. Files imported with **Use in Place** are
+marked **External** in **Installed Models** and are excluded from deletion
+and the total managed size. **Delete Selected** is available for app-managed
+copies in the configured models folder.
 
 | Action | Meaning |
 | --- | --- |
 | **Auto Download / Download All** | Download supported missing public files; completed files are kept if you cancel or retry. |
 | **Manual Download...** | Show the exact file, provider link and download instructions. Use for files requiring registration or access approval. |
-| **Import...** | Validate and register a file you already downloaded. |
+| **Import...** | Validate and register a file you already downloaded: copy it into the models folder, or use it where it is (see [other folders](#keep-models-in-another-folder)). |
 
 Automatic downloads can fail, especially for files hosted on **Google Drive**.
 If a download fails, use **Manual Download...** on that model's row, open the
@@ -830,6 +833,37 @@ Let `install.cmd` create the new runtime folders; do not copy the old `runtime*`
 folders over them. The `models` folder contains model files only. Saved work
 is in separate project folders, which can be copied separately and opened
 with **File → Open Project**.
+
+### Keep models in another folder
+
+When **Import...** is given a file outside the models folder, it asks **Use in
+Place** or **Copy** (the default). Both check the file first (its pinned SHA-256,
+or the body-model shape check). **Use in Place** copies nothing: it records the
+file's location in the local `config/local.json` and keeps its receipt in
+`models/.receipts/`. Such rows read **Ready (in place)**; the model name's tooltip
+shows the path. **Copy** stores a checked copy in the models folder and forgets
+any earlier in-place location for that row.
+
+`config/local.json` can also move the whole models folder. It is a local file,
+never saved in projects:
+
+```json
+{
+  "models_dir": "D:/SharedModels/RGBMocap",
+  "model_files": {
+    "flow_sam": "D:/ComfyUI/models/sam3dbody/model.ckpt"
+  }
+}
+```
+
+`models_dir` replaces `<installation>/models`; `model_files` maps a Model Manager
+row's key (see `mocap/models.py`) to a file used in place. Paths must be absolute;
+invalid entries are ignored with a warning in the console. A malformed
+`config/local.json` is never overwritten: Use in Place reports it, while Copy
+still works. In-place files must stay unchanged; if one is moved or replaced, its
+row returns to Missing until it is imported again. Auto Download preserves
+registered external files. Use Import to register a replacement or make a
+managed copy.
 
 ## Model and processing settings
 

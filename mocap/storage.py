@@ -27,6 +27,25 @@ def atomic_json(path: Path, value: Any) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def hard_link(source: Path, target: Path) -> None:
+    """os.link that keeps the source's timestamps.
+
+    Linux's NTFS driver stamps the file's mtime on link(); receipts, stage identities
+    and project keys compare mtimes, so the original value is restored exactly.
+    """
+    if os.name == 'nt':
+        os.link(source, target)
+        return
+    before = os.stat(source)
+    os.link(source, target)
+    try:
+        if os.stat(target).st_mtime_ns != before.st_mtime_ns:
+            os.utime(target, ns=(before.st_atime_ns, before.st_mtime_ns))
+    except OSError:
+        target.unlink(missing_ok=True)
+        raise
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

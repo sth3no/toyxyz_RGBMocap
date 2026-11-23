@@ -10,6 +10,9 @@ from .storage import sha256
 # Child storage metadata and the shared observation publisher changed.
 # Default detection and tracking math remain identical.
 DISCOVERY_STORAGE_COMPAT = {
+    '92138a2919704d18aa94f4138f8a96b6b7a6191f4a5f09a8f207c550fafc0600': '39f6422998f9d77a501cd4ac88c2a62cf312cf2be0f01129e9c0e7b8a0dd2b5f',
+    # Linux media links preserve source timestamps without changing tracking math.
+    'fc12544a7de909e5cbb93dab355d609467dee6e77b8025d237d5c3b550b36b43': '39f6422998f9d77a501cd4ac88c2a62cf312cf2be0f01129e9c0e7b8a0dd2b5f',
     '096f62724e78996b2c944db45a2a3151e03a5a72d92ea7aad2ae000c796e2135': 'fc7db0d237d87776f0f65388b615e9c00968f1b06c988f332ca91558e7d0fd2d',
     'bde10530aaa842d5fa67751b08796c5065d2d24ab8aecb4b3509f40f2006d928': '39f6422998f9d77a501cd4ac88c2a62cf312cf2be0f01129e9c0e7b8a0dd2b5f',
 }
