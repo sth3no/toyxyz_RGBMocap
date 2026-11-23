@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -19,6 +20,7 @@ from .theme import set_appearance_style, theme_color, ui_px
 
 OPENGL_VIEW = os.environ.get("QT_QPA_PLATFORM") != "offscreen"
 ViewportBase = QOpenGLWidget if OPENGL_VIEW else QWidget
+GL_VERSION = (4, 1) if sys.platform == "darwin" else (4, 3)
 
 
 class MotionView(ViewportBase):
@@ -30,7 +32,9 @@ class MotionView(ViewportBase):
         super().__init__()
         if OPENGL_VIEW:
             fmt = QSurfaceFormat()
-            fmt.setVersion(4,3)
+            # macOS provides at most OpenGL 4.1 Core; mesh_gl then uses its
+            # transform-feedback path instead of 4.3 compute shaders.
+            fmt.setVersion(*GL_VERSION)
             fmt.setProfile(QSurfaceFormat.CoreProfile)
             fmt.setDepthBufferSize(24)
             fmt.setStencilBufferSize(8)
