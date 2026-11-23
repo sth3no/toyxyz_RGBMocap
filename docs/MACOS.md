@@ -1,24 +1,90 @@
-# macOS on Apple Silicon (experimental, phase 1)
+# macOS on Apple Silicon (experimental)
 
 The macOS port installs and launches the app natively on Apple Silicon Macs.
-This first phase installs the GUI runtime, the native motion correction module
-and Blender 4.5 for export and character retargeting. **AI motion inference
-does not run on macOS yet.** Running the models on Apple GPUs (MPS)
-is the next phase of the port. Keep the macOS checkout separate from any
-Windows or Linux checkout; each platform has its own runtimes.
+It installs the GUI runtime, the ExMR runtime, the native motion correction
+module and Blender 4.5 for export and character retargeting. **ExMR and person
+tracking run on the Apple GPU (PyTorch MPS).** The other motion models need an
+NVIDIA CUDA GPU and do not run on macOS. Keep the macOS checkout separate from
+any Windows or Linux checkout; each platform has its own runtimes.
 
-## What works in phase 1
+## What works
 
 | Verified on the test Mac | Not yet |
 | --- | --- |
-| Installing the pinned shared and GUI runtimes (Python 3.10.22, PySide6 6.8.3, PyTorch 2.7.1 CPU/MPS build) | ExMR, FlowHMR, GVHMR, HaMeR and the other model runtimes (`flow`, `hand`, `htd`, `exmr`) are not installed, so the app cannot reconstruct motion. |
-| Launching the GUI on the managed runtime | MAMMA, PromptHMR, GEM-X, SAM 3.1 and PEAR need CUDA and have no macOS path. |
-| Native motion correction, built for arm64 during installation and checked against an x86 build on synthetic motion | Track Face, the Unreal Live Link sender and the other optional setups use Windows tooling. |
-| Installing Blender 4.5 (`--with-blender`) and finding it for retargeting | The 3D viewport is being ported separately. Until that work lands, meshes and skeletons may not draw. |
-| | Project, video import, export and retargeting workflows on macOS have not been tested end to end. Video import uses FFmpeg from Homebrew. |
+| Installing the pinned shared, GUI and ExMR runtimes (Python 3.10.22 and 3.12.10, PySide6 6.8.3, PyTorch 2.7.1 and 2.8.0 CPU/MPS builds) | GVHMR with HTD-Refine, FootMR and HandFlow, FlowHMR, MAMMA, PromptHMR, GEM-X, SAM 3.1 Find person and PEAR need CUDA. Their runtimes are not installed; starting them reports which models are CUDA-only. |
+| Launching the GUI on the managed runtime | ExMR's SAM 3D Body body features and the final ExMR motion stage have not run on MPS yet: their registered and gated files were not available on the test Mac (see [Model files](#model-files-for-exmr)). |
+| **Find person** (YOLOv8x, BoT-SORT, OSNet) and single-actor tracking on MPS | Track Face, the Unreal Live Link sender and the other optional setups use Windows tooling. |
+| ExMR keypoints (Sapiens2-1B, FP16) on MPS through the worker; HaMeR hand features (FP16 autocast) on MPS through the app's HaMeR adapter, with the registered MANO layer stubbed because `MANO_RIGHT.pkl` was absent (the compared token is read before MANO is used) | A complete ExMR reconstruction, correction, preview and export on macOS have not been tested end to end. |
+| Native motion correction, built for arm64 during installation and checked against an x86 build on synthetic motion | |
+| Installing Blender 4.5 (`--with-blender`) and finding it for retargeting | |
 
-Auto Setup shows the Mac's memory and says that inference is a later phase.
-It does not recommend a mode because there is no CUDA GPU.
+Auto Setup shows the Mac's memory and says that ExMR runs on the Apple GPU.
+It does not recommend a mode because the other models need CUDA.
+
+## ExMR on the Apple GPU
+
+`mocap/compute_device.py` chooses CUDA when it is available, else MPS, else
+the CPU. ExMR and person tracking accept MPS; on CUDA they run exactly as before.
+MPS results have their own cache identity (device `Apple MPS <chip>`), so a
+project moved between a Mac and a CUDA PC recomputes rather than mixing results.
+Precision is the same as on CUDA: Sapiens2 FP16, HaMeR FP16 autocast, SAM 3D Body
+BF16. MPS has no float64, so the two small float64 steps (Sapiens2's heatmap
+refinement and the rotation smoothing) run on the CPU. Workers set
+`PYTORCH_ENABLE_MPS_FALLBACK=1`, so an operator that MPS lacks runs on the CPU
+instead of failing. SimpleVO (moving camera) uses OpenCV on the CPU, as on Windows.
+
+### Measured speed and agreement
+
+Test Mac: Apple M5, 24 GiB unified memory, macOS 27, PyTorch 2.8.0 (ExMR) and
+2.7.1 (tracking). Other applications were open, so only about 5 GiB of RAM was
+available and macOS was swapping; Automatic therefore selected Low Memory for
+Sapiens2. These are single runs, not guarantees. The sample is
+`docs/samples/motion-capture.mp4` (1920x1080, 690 frames at the 30 fps working rate).
+
+| Stage | Apple GPU (MPS) | CPU (same Mac) | MPS vs CPU difference |
+| --- | --- | --- | --- |
+| Find person, 690 frames, two people, worker | 140.9 s (0.20 s/frame, including model loading) | 401 s | Same two people; boxes differ by at most 0.001 px (minimum IoU 0.999996) |
+| Single-actor tracking, 690 frames, worker | 68.2 s | not run | |
+| Sapiens2 keypoints, 60-frame take, worker, Low Memory, 5.0 GiB cap | 89.6 s stage, of which 48 s inference (0.81 s/frame) | 72.7 s/frame (4 frames) | Confident keypoints at most 0.057 px apart (mean 0.010 px; all keypoints at most 0.30 px; person about 370 px tall); scores at most 0.002 |
+| HaMeR hand features, 8 frames with both hands | 0.155 s/frame | 9.2 s/frame | Token differences at most 0.009 (mean token magnitude 0.33); cosine similarity at least 0.99999 |
+
+For comparison, the RTX 5090 in [the ExMR guide](models/EXMR.md#measured-effects)
+needs about 1.5 s of warm Sapiens2 inference for 60 frames, so this Mac is roughly
+30 times slower for that stage. Expect a full 60-frame ExMR reconstruction to take
+several minutes; it has not been measured yet.
+
+### Memory on unified memory
+
+CPU and GPU share one memory pool, so the Apple GPU budget is Metal's
+recommended working set (17.8 GiB on the 24 GiB test Mac) minus what the GPU
+already holds, limited by the RAM that is actually available above the usual RAM
+reserve. No separate GPU reserve is subtracted. With **Resource Safety** on, the
+worker sets `PYTORCH_MPS_HIGH_WATERMARK_RATIO=1.0` and
+`PYTORCH_MPS_LOW_WATERMARK_RATIO=0.8` and caps PyTorch at that budget, so a job
+that does not fit stops with an out-of-memory error instead of swapping.
+Automatic then retries once in Low Memory, as on CUDA. With Resource Safety off,
+the app sets neither the watermarks nor a cap and PyTorch's own limits apply
+(measured MPS driver allocation after Sapiens2 on the 60-frame take: 6.5 GiB instead of 4.4 GiB).
+Close other applications before long ExMR runs: free RAM is the limit on most Macs.
+
+## Model files for ExMR
+
+Use Model Manager as on Windows; the files go to the same places under `models/`.
+
+- **Downloaded by the app** (public): ExMR weights `exmr/exmr.safetensors`
+  (225 MiB) and `exmr/config.json`, Sapiens2 `exmr/sapiens2_1b_pose.safetensors`
+  (5.7 GiB), HaMeR `handflow/hamer.ckpt` (2.5 GiB) and `handflow/mano_mean_params.npz`,
+  YOLOv8x `yolo/yolov8x.pt` (131 MiB) and OSNet `reid/osnet_x0_25_msmt17.pth`
+  (8.9 MiB). About 8.5 GiB in total. YOLOv8x and OSNet come from Google Drive,
+  which sometimes refuses with "Too many users"; then use **Manual Download** and
+  **Import**. On the test Mac the official `yolov8x.pt` from the Ultralytics
+  `v8.1.0` release had the pinned SHA-256 and imported.
+- **Registration required, obtain yourself and Import**: SMPL-X v1.1
+  `SMPLX_NEUTRAL.npz` (smpl-x.is.tue.mpg.de), MANO `MANO_RIGHT.pkl`
+  (mano.is.tue.mpg.de) and the gated `facebook/sam-3d-body-dinov3` files
+  `model.ckpt`, `model_config.yaml` and `assets/mhr_model.pt` (accept the terms on
+  Hugging Face). Without them ExMR stops before body features with the list of
+  missing files.
 
 ## Requirements
 
@@ -28,14 +94,15 @@ It does not recommend a mode because there is no CUDA GPU.
   `xcode-select --install`.
 - [Homebrew](https://brew.sh) with CMake 3.24 or newer and FFmpeg:
   `brew install cmake ffmpeg`.
-- About 6 GiB of free space during installation (the installer checks 5.7 GiB).
-  The runtimes download 0.64 GiB and Blender 0.3 GiB. On the test Mac the
-  result was `runtime/` 1.0 GiB, `runtime_gui/` 1.1 GiB, Blender 0.8 GiB and the
-  reusable download cache in `.setup/` 1.3 GiB. Models and projects need
+- About 7 GiB of free space during installation (the installer checks 6.8 GiB).
+  The runtimes download 0.89 GiB and Blender 0.3 GiB. On the test Mac the
+  result was `runtime/` 1.0 GiB, `runtime_gui/` 1.1 GiB, `runtime_exmr/` 1.0 GiB,
+  Blender 0.8 GiB and the reusable download cache in `.setup/`. ExMR's public
+  model files need about 8.5 GiB more, plus the registered files; projects need
   additional space.
-- A fresh `./install.sh --with-blender` took 3 min 40 s on the test Mac,
-  including all downloads and the native build. A rerun with nothing to
-  repair took 27 s.
+- A fresh `./install.sh` (shared, GUI and ExMR runtimes, without Blender) took
+  4 min 49 s on the test Mac, including all downloads and the native build.
+  Replacing only the ExMR runtime after a lock change took 1 min 9 s.
 
 ## Install, launch and update
 
@@ -131,6 +198,13 @@ lock after changing the Windows lock or the registry:
 ```sh
 uv run --no-project --python 3.10 --with packaging python tools/macos_lock.py --uv-sha256 <sha256 of the extracted aarch64-apple-darwin uv>
 ```
+
+The lock converts the `shared`, `gui` and `exmr` profiles. `UNLOADABLE` in
+`tools/macos_lock.py` lists wheels that install but do not load on current macOS;
+the next best wheel of the same version is used instead. SciPy 1.15.2's
+`macosx_14_0_arm64` wheel is listed: dyld on macOS 27 rejects its gfortran-built
+`_spropack` ("`__DATA/__thread_bss` has a zero-fill section type"), which breaks
+`import scipy.spatial`. Its `macosx_12_0_arm64` wheel loads.
 
 The motion correction source compiles its SSE code on ARM64 through
 [sse2neon](https://github.com/DLTcollab/sse2neon) v1.8.0, pinned in

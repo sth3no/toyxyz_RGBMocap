@@ -14,11 +14,13 @@ This guide is for agents helping users operate or modify RGB MoCap. It describes
   C++17 compiler in the user's launch environment. The published preview
   compiles this module on first launch. Have the user retry the AppImage and
   check its setup log. See [AppImage build troubleshooting](LINUX.md#appimage-setup-cannot-find-cmake).
-- For Apple Silicon macOS, use the [macOS guide](MACOS.md). Phase 1 installs only
-  the `shared` and `gui` runtimes (`installer/runtime-lock-macos.json`, from
+- For Apple Silicon macOS, use the [macOS guide](MACOS.md). It installs the
+  `shared`, `gui` and `exmr` runtimes (`installer/runtime-lock-macos.json`, from
   `tools/macos_lock.py`), native motion correction (arm64 via sse2neon) and
-  optional Blender 4.5 (`./install.sh --with-blender`). AI inference does not run
-  on macOS yet; MPS support is a later phase, and MAMMA, PromptHMR, GEM-X,
+  optional Blender 4.5 (`./install.sh --with-blender`). ExMR and person tracking
+  run on the Apple GPU (PyTorch MPS) through `mocap/compute_device.py`, which keeps
+  CUDA arguments and cache identities unchanged and gives MPS its own identity and
+  unified-memory budget. GVHMR and its add-ons, FlowHMR, MAMMA, PromptHMR, GEM-X,
   SAM 3.1 and PEAR remain CUDA-only. FFmpeg comes from Homebrew. If Qt reports a
   missing `cocoa` plugin, check `ls -lO` for the `hidden` file flag; see the
   guide's troubleshooting.

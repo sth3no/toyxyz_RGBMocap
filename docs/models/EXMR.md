@@ -108,6 +108,10 @@ are individual runs, not minimum specifications. See [validation](../VALIDATION.
 for the tested PC and scope, and [licenses](../../THIRD_PARTY_NOTICES.md) for
 upstream restrictions.
 
+### Apple Silicon (MPS)
+
+On Apple Silicon Macs ExMR runs on the Apple GPU (PyTorch MPS) with the same precision and its own cache identity, about 30 times slower than the RTX 5090 for Sapiens2 keypoints; see [the macOS guide](../MACOS.md#exmr-on-the-apple-gpu) for the measured stages, the unified-memory budget and the upstream float64 and device guards.
+
 ## Integrated upstream update
 
 The app uses ExMR v0.1.5's public input helpers and model API. Its toe IK target
