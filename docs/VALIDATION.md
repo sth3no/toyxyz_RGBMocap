@@ -1,5 +1,28 @@
 # Source package validation
 
+## macOS OpenGL 4.1 viewport (2026-11-23)
+
+macOS returns OpenGL 4.1 Core ("4.1 Metal") for the viewport's 4.3 request,
+without compute shaders or storage buffers. The skinning kernels now also run
+as transform-feedback vertex shaders that read texture buffers. The 4.3 compute
+path is unchanged and still chosen when `QOpenGLFunctions_4_3_Core` initialises.
+
+- Apple M5, macOS 27, PySide6 6.12.0: `tests/test_gl_skinning.py` (4 tests,
+  native platform) passed. It compares the GPU with numpy for SMPL-X-sized
+  synthetic data (10475 vertices, all 506 blendshapes, 55 weights), the bound
+  mesh (`rig_mesh.reference_vertices`), rig, bone and raw meshes and character
+  skinning, and draws each path, including the textured character, into an
+  FBO. Largest SMPL-X differences: 1.2e-6 m in position and 8.0e-5 in normal
+  components; skin and normals together took 0.83 ms per frame.
+  Under `QT_QPA_PLATFORM=offscreen` macOS has no GL context and the test class
+  is skipped. Only the 4.1 path ran on this Mac; the 4.3 compute path was not
+  run in this check.
+- `app.py --smoke-gl-sample --smoke-screenshot` on the Mac's display: the
+  viewport drew a shaded synthetic body bent at the spine, the cyan bone
+  overlay and a checker-textured bent character, with name labels. The sample
+  is synthetic; no SMPL-X model, AI weights or real character was used.
+- Not run: real SMPL-X weights, a project, playback timing or any Windows check.
+
 ## Auto Setup (2026-11-23)
 
 **Auto Setup** in **AI Motion Model** offers **Fast**, **Detailed** and
@@ -3358,7 +3381,8 @@ and the official YOLOX archive, including extracting and registering the ONNX.
 
 These checks cover one Windows GPU and Blender version. The Qt checks exercised
 widget state and the real job queue offscreen. A separate OpenGL 4.3 context
-executed both the surface and 77-bone shaders at three frames. See the
+executed both the surface and 77-bone shaders at three frames. (macOS runs
+these shaders on OpenGL 4.1; see the macOS OpenGL 4.1 viewport entry.) See the
 [GEM-X guide](models/GEMX.md) for the supported scope and recorded resource use.
 
 ### Native SOMA Motion Correction

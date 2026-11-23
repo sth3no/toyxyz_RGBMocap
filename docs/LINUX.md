@@ -11,7 +11,7 @@ sender setups use Windows tooling.
 ## Requirements
 
 Use x86-64 Linux with a compatible NVIDIA driver for CUDA 12.8, OpenGL 4.3 or
-newer, FFmpeg and FFprobe, and a C++17 compiler with CMake 3.24 or newer. On
+newer (only macOS uses the viewport's OpenGL 4.1 transform-feedback path), FFmpeg and FFprobe, and a C++17 compiler with CMake 3.24 or newer. On
 Ubuntu 24.04, including WSL 2 with WSLg, install the system libraries first:
 
 ```sh
