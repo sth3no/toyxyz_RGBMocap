@@ -105,7 +105,7 @@ class MacSetupTests(unittest.TestCase):
         digest = hashlib.sha256((ROOT / 'mocap/runtime_registry.py').read_bytes()).hexdigest()
         for name, profiles in (('runtime-lock.json', {'shared', 'gui', 'flow', 'hand', 'htd', 'exmr'}),
                                ('runtime-lock-linux.json', {'shared', 'gui', 'flow', 'hand', 'htd', 'exmr'}),
-                               ('runtime-lock-macos.json', {'shared', 'gui'})):
+                               ('runtime-lock-macos.json', {'shared', 'gui', 'exmr'})):
             with self.subTest(lock=name):
                 lock = json.loads((ROOT / 'installer' / name).read_text(encoding='utf-8'))
                 self.assertEqual(lock['registry_sha256'], digest)

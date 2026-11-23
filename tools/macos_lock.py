@@ -3,8 +3,9 @@
 Maintainer tool; run it with any Python that has `packaging`, after changing the Windows lock or
 runtime_registry.py. It works like tools/linux_lock.py, with three differences:
 
-- Only the shared and gui profiles are converted. AI inference on macOS is a later phase, so
-  flow/hand/htd/exmr stay out of the lock and runtime_registry.command reports them as missing.
+- Only the shared, gui and exmr profiles are converted. ExMR runs on Apple GPUs (MPS); FlowHMR,
+  GVHMR and their add-ons are CUDA-only, so flow/hand/htd stay out of the lock and
+  runtime_registry.command reports them as missing.
 - CUDA local builds (for example torch 2.7.1+cu128) are replaced by the same public PyPI version,
   which is the CPU/MPS build for macOS. runtime_registry.version_matches accepts it on macOS only.
 - Each platform wheel is the best macOS arm64 (or universal2) wheel of the same version.
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from linux_lock import WINDOWS_ENV, candidates, entry, get, inspect_wheel, lock_id  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-PROFILES = ('shared', 'gui')
+PROFILES = ('shared', 'gui', 'exmr')
 # Newest deployment target up to macOS 14 first, then newer targets only when nothing older exists.
 MACOS = [*range(14, 10, -1), 15]
 PLATFORMS = ([f'macosx_{major}_0_arm64' for major in MACOS] + [f'macosx_{major}_0_universal2' for major in MACOS]

@@ -46,10 +46,10 @@ def main():
         if not (ROOT/name).is_file():errors.append('Missing '+name)
     registry=ROOT/'mocap/runtime_registry.py'
     registry_hash=hashlib.sha256(registry.read_bytes()).hexdigest() if registry.is_file() else None
-    # The macOS lock holds only the shared and GUI profiles until AI inference is ported.
+    # The macOS lock holds the shared, GUI and ExMR profiles; the other models need CUDA.
     for name,profiles in (('installer/runtime-lock.json',{'shared','gui','flow','hand','htd','exmr'}),
                           ('installer/runtime-lock-linux.json',{'shared','gui','flow','hand','htd','exmr'}),
-                          ('installer/runtime-lock-macos.json',{'shared','gui'})):
+                          ('installer/runtime-lock-macos.json',{'shared','gui','exmr'})):
         try:
             lock=json.loads((ROOT/name).read_text(encoding='utf-8'))
             if registry_hash is None or registry_hash!=lock.get('registry_sha256'):

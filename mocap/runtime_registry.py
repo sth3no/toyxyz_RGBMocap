@@ -22,7 +22,7 @@ WINDOWS = os.name == 'nt'
 MACOS = sys.platform == 'darwin'
 PLATFORM = 'windows' if WINDOWS else 'macos' if MACOS else 'linux'
 # Every platform pins the same package versions; only the wheel files differ.
-# The macOS (Apple Silicon) lock contains only the shared and GUI profiles so far.
+# The macOS (Apple Silicon) lock contains the shared, GUI and ExMR (MPS) profiles.
 LOCK = {'windows': 'installer/runtime-lock.json', 'linux': 'installer/runtime-lock-linux.json',
         'macos': 'installer/runtime-lock-macos.json'}[PLATFORM]
 SUPPORT_LOCK = {'windows': 'installer/git-support-lock.json', 'linux': 'installer/git-support-lock-linux.json',
