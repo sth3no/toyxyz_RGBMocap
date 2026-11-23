@@ -40,6 +40,8 @@ https://github.com/user-attachments/assets/3353f5ca-6393-40af-822f-210a77f51003
 The steps below cover Windows. For the experimental x86-64 Linux AppImage and
 source installation, see the [Linux guide](https://github.com/toyxyz/toyxyz_RGBMocap/blob/linux_support/docs/LINUX.md#test-the-appimage-on-linux-mint).
 The AppImage was tested on WSL 2. Native Linux Mint testing is welcome.
+For Apple Silicon Macs (experimental, without AI inference so far), see the
+[macOS guide](docs/MACOS.md).
 
 > [!IMPORTANT]
 > On Windows 11, Smart App Control in **On** mode may block the unsigned private

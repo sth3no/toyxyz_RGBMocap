@@ -137,4 +137,5 @@ RGB_MOCAP_SETUP_TEMP=/tmp/rgbmocap-setup ./install.sh
 
 Review both platform locks after changing the runtime registry or package
 pins. `tools/linux_lock.py` derives the Linux runtime lock from the Windows
-pins and adds exact versions for Linux-only requirements.
+pins and adds exact versions for Linux-only requirements. `tools/macos_lock.py`
+derives the macOS lock in the same way; see the [macOS guide](MACOS.md).

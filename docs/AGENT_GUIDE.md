@@ -13,6 +13,14 @@ This guide is for agents helping users operate or modify RGB MoCap. It describes
   C++17 compiler in the user's launch environment. The published preview
   compiles this module on first launch. Have the user retry the AppImage and
   check its setup log. See [AppImage build troubleshooting](LINUX.md#appimage-setup-cannot-find-cmake).
+- For Apple Silicon macOS, use the [macOS guide](MACOS.md). Phase 1 installs only
+  the `shared` and `gui` runtimes (`installer/runtime-lock-macos.json`, from
+  `tools/macos_lock.py`), native motion correction (arm64 via sse2neon) and
+  optional Blender 4.5 (`./install.sh --with-blender`). AI inference does not run
+  on macOS yet; MPS support is a later phase, and MAMMA, PromptHMR, GEM-X,
+  SAM 3.1 and PEAR remain CUDA-only. FFmpeg comes from Homebrew. If Qt reports a
+  missing `cocoa` plugin, check `ls -lO` for the `hidden` file flag; see the
+  guide's troubleshooting.
 - Base worker commands use explicit `-X utf8`, including isolated `-I` launches. Isolated mode ignores `PYTHONIOENCODING`/`PYTHONUTF8` from the parent environment. Any redirected/discarded text log stream must also specify UTF-8. Keep byte-oriented PEAR IPC unchanged.
 - Close the app before `update.cmd`. The updater requires a clean tracked worktree and the `main` branch, uses `git pull --ff-only`, then verifies/repairs runtime configuration. It refuses tracked local edits. A plain `git pull` does not perform runtime repair; use `install.cmd` after dependency changes when needed. Do not discard local edits or force an update.
 - `update.cmd` buffers its final command block before Git can replace it. Reporting/pause belongs to `tools/git_update.py`; failures preserve the subprocess status (ordinary exceptions use 1, Python-intercepted cancellation uses 130). Keep delayed expansion off for paths/arguments. The final `CALL` expands only a numeric exit status after clearing an environment shadow; never reparse paths or arguments with `CALL`. Already-running older launchers remain vulnerable during their first transition. From an open CMD in the app folder, `runtime\python.exe -I -X utf8 -B tools\git_update.py` bypasses the old wrapper. A stray command error after reported installation completion calls for rerunning the updated launcher, not deleting setup markers or models. See [update recovery](USER_GUIDE.md#installation-verification-and-repair) and the preceding transition note. Forced console termination/deletion of the running launcher is outside this guarantee.
