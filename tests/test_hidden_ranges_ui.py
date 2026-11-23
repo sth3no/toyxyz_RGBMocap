@@ -209,7 +209,7 @@ class AutoRowsTest(unittest.TestCase):
         self.assertEqual(json.dumps(choices),keep)
     def test_panel_state_reads_the_neighbours(self):
         from unittest import mock
-        root=Path(tempfile.gettempdir())/'scene';g=h.gaps(TAKES);read=[]
+        root=Path(tempfile.gettempdir()).resolve()/'scene';g=h.gaps(TAKES);read=[]  # safe_child resolves links (macOS /var -> /private/var)
         with mock.patch('mocap.motion_tools.selected_export',lambda p,kind:read.append(p) or p):
             self.assertIsNone(ui.panel_state(root,g,{'200_260':AUTO()},'gvhmr','initial',PEOPLE,1)[0])
         self.assertEqual(sorted(read),sorted(root/TAKES[i]['project'] for i in (1,2)))
@@ -227,7 +227,7 @@ class PendingAndReadinessTest(unittest.TestCase):
         self.assertEqual(ui.pending_state(g,both,{'200_260':(None,False,0)},None,PEOPLE,1)[0]['200_260'],'Choose a person to copy from.')
     def test_donor_take_not_ready(self):
         from unittest import mock
-        root=Path(tempfile.gettempdir())/'scene';g=h.gaps(TAKES);donor=PEOPLE[1]['takes'][0]['project']
+        root=Path(tempfile.gettempdir()).resolve()/'scene';g=h.gaps(TAKES);donor=PEOPLE[1]['takes'][0]['project']
         def run(waiting):
             with mock.patch('mocap.motion_tools.selected_export',lambda p,kind:None if any(p==root/w for w in waiting) else p):
                 return ui.panel_state(root,g,{'100_120':COPY()},'gvhmr','initial',PEOPLE,1)[0]
