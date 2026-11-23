@@ -1,5 +1,6 @@
 """Application appearance and installation-local preferences."""
 import re
+import sys
 
 from PySide6.QtCore import QLocale
 from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase
@@ -62,6 +63,9 @@ QScrollBar::handle:vertical { background:#555555; border-radius:3px; min-height:
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
 QToolTip { background:#202020; color:#eeeeee; border:1px solid #555555; padding:5px; }
 """
+if sys.platform == "darwin":
+    # Consolas is a Windows font; Menlo is the bundled macOS monospace face.
+    STYLE = STYLE.replace("font-family:Consolas;", "font-family:Menlo;")
 
 
 # Keep the workspace geometry shared across themes.

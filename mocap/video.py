@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import os
+import sys
 from fractions import Fraction
 from pathlib import Path
 
@@ -15,6 +16,8 @@ def executable(name: str) -> str:
     bundled = ROOT / "tools" / "bin" / f"{name}{EXE}"
     found = str(bundled) if bundled.exists() else shutil.which(name)
     if not found:
+        if sys.platform == "darwin":
+            raise RuntimeError("Video tools are missing. Install FFmpeg with: brew install ffmpeg")
         raise RuntimeError("Video tools are missing. Check the app installation.")
     return found
 

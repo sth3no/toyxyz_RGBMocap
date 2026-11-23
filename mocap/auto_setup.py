@@ -5,6 +5,7 @@ model is mixed into another's. The model order, its wording and the memory figur
 comparison and the Model Guide's records of our test PC; they are observations, not accuracy scores.
 """
 from dataclasses import dataclass, field
+import sys
 
 MODES = {'fast': 'Fast', 'detailed': 'Detailed', 'best': 'Best possible'}
 QUALITY = ('flowhmr', 'exmr', 'gvhmr')  # best overall quality first
@@ -173,6 +174,12 @@ def probe_hardware(window):
     from PySide6.QtCore import QProcess
     import psutil
     ram = psutil.virtual_memory().total / 2 ** 30
+    if sys.platform == 'darwin':
+        # macOS has no CUDA GPU or nvidia-smi; inference on Apple GPUs is a later port phase.
+        show_hardware(window, None, ram)
+        window.auto_hardware.setText(f'This PC: Mac, {ram:.0f} GiB unified memory.\n'
+                                     'AI inference on macOS comes in a later phase: there is no CUDA GPU, so there is no recommendation.')
+        return
     process = window.auto_probe = QProcess(window)
     done = []
     def finish(*_):
