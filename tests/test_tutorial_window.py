@@ -125,7 +125,7 @@ class MenuTest(WindowCase):
         w = self.window()
         tutorial.open_chapter(w, 'basics')
         holes = w.tutorial.overlay.holes
-        self.assertEqual(len(holes), 2)
+        self.assertEqual(len(holes), 3)  # the selector, Auto Setup and the Model Guide
         self.assertEqual(holes[0], w.model_choice.visibleRegion().boundingRect().translated(w.model_choice.mapTo(w, QPoint(0, 0))))
         self.assertEqual(w.settings_scroll.horizontalScrollBar().value(), 0)
         self.assertEqual(w.tutorial.overlay.geometry(), w.rect())

@@ -88,8 +88,9 @@ PEOPLE = Step('people', 'Find the people',
 BASICS = Chapter('basics', 'From video to export', (
     Step('model', 'Choose a motion model',
          'The AI Motion Model creates the 3D motion from the video. ExMR is the starting choice: body and finger tracking, '
-         'generally fast. ? Model Guide compares motion quality, finger support, speed and memory use.',
-         lambda w: [w.model_choice, w.model_help]),
+         'generally fast. Auto Setup selects the best installed model and switches on what its files allow. ? Model Guide '
+         'compares motion quality, finger support, speed and memory use.',
+         lambda w: [w.model_choice, w.auto_button, w.model_help]),
     Step('models', 'Prepare the model files',
          'The selected model needs its files before it can run. Open Model Manager and click Download All. If a download '
          'fails, use Manual Download and Import on that row. A file of an optional refinement, such as HTD Refine, is not '

@@ -28,11 +28,12 @@ class Stand(QMainWindow):
         self.model_help, self.find_person_button, self.run_button, self.details, self.cancel_button, self.play_button, self.correction_button = (
             QPushButton(name) for name in ('guide', 'find', 'run', 'console', 'cancel', 'play', 'apply'))
         self.models_group, self.correction_group = QGroupBox('models'), QGroupBox('correction')
+        self.auto_button = QPushButton('auto')
         self.people_list, self.progress, self.status = QListWidget(), QProgressBar(), QLabel('status')
         self.video_view, self.motion_view, self.bone_overlay = QWidget(), QWidget(), QCheckBox('bones')
         self.slider = TimelineSlider();self.slider.setRange(0, 99)
         self.person_takes, self.hidden_ranges = QComboBox(), HiddenRangesPanel()
-        for widget in (self.model_choice, self.model_help, self.models_group, self.find_person_button, self.people_list, self.person_takes,
+        for widget in (self.model_choice, self.auto_button, self.model_help, self.models_group, self.find_person_button, self.people_list, self.person_takes,
                        self.hidden_ranges, self.run_button, self.progress, self.status, self.details, self.cancel_button, self.video_view,
                        self.motion_view, self.play_button, self.bone_overlay, self.correction_group, self.correction_button, self.slider):
             layout.addWidget(widget)

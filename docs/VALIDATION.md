@@ -1,5 +1,25 @@
 # Source package validation
 
+## Auto Setup (2026-11-23)
+
+**Auto Setup** in **AI Motion Model** selects the best installed model of
+FlowHMR, ExMR and GVHMR (the order of the user guide's comparison) and switches
+on the refinements, the SAM 3.1 tracker and Motion Correction that its
+installed files allow. It sets controls only.
+
+- Tests, offscreen with the GUI runtime (`tests/test_auto_setup.py`, 17): the
+  files counted are the ones the window's readiness line counts; the order of
+  the three models; each refinement follows its own files; nothing ready
+  changes nothing; a running job is left alone; on the real `MainWindow` the
+  button sets the model, HaMeR, the GVHMR refinements, Motion Correction and
+  the tracker, with the installed files replaced by stand-in sets. The whole
+  `tests` folder in one process: 679 tests passed, 66 skipped, none failed.
+- The right panel was drawn offscreen for a FlowHMR and a GVHMR outcome and
+  looked at: the note fits under the buttons.
+- Not run: the button against the files of a real installation, on a real
+  screen, or followed by a reconstruction. No comparison of output quality was
+  made; the order is the guide's subjective one.
+
 ## Tutorial from Settings (2026-11-23)
 
 **File > Settings...** has a **Tutorial** row with one button per chapter. A
