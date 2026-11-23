@@ -27,8 +27,11 @@ def verify(app, version):
 def copy_from_image(image, app_name, destination):
     """Copy the app out of the read-only disk image without Finder, prompts or auto-open."""
     with TemporaryDirectory(prefix='rgbmocap-blender-mount-') as mount:
-        subprocess.run(['/usr/bin/hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-noverify',
-                        '-mountpoint', mount, str(image)], check=True, stdout=subprocess.DEVNULL, timeout=600)
+        # macOS 27 prints a deprecation notice for these flags; show hdiutil's text only on failure.
+        attached = subprocess.run(['/usr/bin/hdiutil', 'attach', '-nobrowse', '-readonly', '-noautoopen', '-noverify',
+                                   '-mountpoint', mount, str(image)], capture_output=True, text=True, timeout=600)
+        if attached.returncode:
+            raise RuntimeError('Could not open the Blender disk image: ' + (attached.stderr or attached.stdout).strip())
         try:
             source = Path(mount) / app_name
             if source.is_symlink() or not executable(source).is_file():
