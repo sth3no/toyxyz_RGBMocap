@@ -2,7 +2,7 @@
 import numpy as np
 from PySide6.QtOpenGL import QOpenGLShader,QOpenGLBuffer,QOpenGLTexture
 from PySide6.QtGui import QImage,QMatrix4x4,QVector4D
-from .mesh_gl import MeshRenderer
+from .mesh_gl import MeshRenderer,GL_TEXTURE0,R32F,RGBA32F
 
 SKIN='''#version 430 core
 layout(local_size_x=64) in;
@@ -45,28 +45,59 @@ void main(){vec4 c=hasTexture?texture(baseTexture,uv):baseColor;
 if(c.a<.1)discard;
 float light=.60+.35*max(0,dot(normalize(n),normalize(vec3(-.4,.8,-.6))));
 color=vec4(c.rgb*light,1);}'''
+# OpenGL 4.1 counterparts; see mesh_gl. Skinned positions and normals are read
+# from texture buffers on units 1 and 2; unit 0 keeps the base colour texture.
+FEEDBACK_SKIN='''#version 410 core
+uniform samplerBuffer modelScalars;
+uniform samplerBuffer poseRows;
+uniform int vertexCount;
+out vec4 position;
+void main(){
+ int i=gl_VertexID;
+ vec4 v=vec4(texelFetch(modelScalars,3*i).r,texelFetch(modelScalars,3*i+1).r,texelFetch(modelScalars,3*i+2).r,1);
+ int r=3*vertexCount+2*i;int a=int(texelFetch(modelScalars,r).r);int n=int(texelFetch(modelScalars,r+1).r);
+ vec3 p=vec3(0);
+ for(int k=0;k<n;k++){
+  int o=5*vertexCount+2*(a+k);int b=4*int(texelFetch(modelScalars,o).r);float w=texelFetch(modelScalars,o+1).r;
+  p+=w*vec3(dot(texelFetch(poseRows,b),v),dot(texelFetch(poseRows,b+1),v),dot(texelFetch(poseRows,b+2),v));
+ }
+ position=vec4(p,1);
+}'''
+FEEDBACK_TEXTURE_VERTEX='''#version 410 core
+uniform samplerBuffer skinnedPositions;uniform samplerBuffer skinnedNormals;
+layout(location=0) in vec3 corner;
+uniform mat4 mvp;uniform mat4 sceneTransform;out vec3 n;out vec2 uv;
+void main(){int i=int(corner.x);gl_Position=mvp*sceneTransform*texelFetch(skinnedPositions,i);
+n=mat3(sceneTransform)*texelFetch(skinnedNormals,i).xyz;uv=corner.yz;}'''
 
 class CharacterRenderer(MeshRenderer):
     def __init__(self):
         super().__init__()
         self.skin.removeAllShaders();self.surface.removeAllShaders()
-        self.skin=self.program(((QOpenGLShader.Compute,SKIN),))
-        self.surface=self.program(((QOpenGLShader.Vertex,VERTEX),(QOpenGLShader.Fragment,FRAGMENT)))
-        self.textured=self.program(((QOpenGLShader.Vertex,TEXTURE_VERTEX),(QOpenGLShader.Fragment,TEXTURE_FRAGMENT)))
-        self.textures={};self.batches=[]
+        self.skin=self.kernel(SKIN,FEEDBACK_SKIN)
+        self.surface=self.program(((QOpenGLShader.Vertex,self.surface_source(VERTEX)),(QOpenGLShader.Fragment,self.surface_source(FRAGMENT))))
+        texture_vertex=FEEDBACK_TEXTURE_VERTEX if self.feedback else TEXTURE_VERTEX
+        self.textured=self.program(((QOpenGLShader.Vertex,texture_vertex),(QOpenGLShader.Fragment,self.surface_source(TEXTURE_FRAGMENT))))
+        self.textures={};self.batches=[];self.surface_inputs=[]
 
     def load(self,asset,palette):
         if self.asset_key==asset['key']:return
         self.release_buffers();self.vertex_count=len(asset['vertices']);self.index_count=asset['faces'].size
         self.vao.bind()
         self.model=self.buffer(np.concatenate([asset['vertices'].ravel(),asset['rows'].ravel(),asset['weights'].ravel()]).astype('float32'))
-        self.vertices=self.buffer(self.vertex_count*32)
+        if self.feedback:self.feedback_outputs()
+        else:self.vertices=self.buffer(self.vertex_count*32)
         self.offsets=self.buffer(asset['offsets']);self.neighbors=self.buffer(asset['neighbors'])
         self.frame=self.buffer(palette*16*4)
         self.indices=self.buffer(asset['faces'],QOpenGLBuffer.IndexBuffer);self.indices.bind()
-        self.surface.bind();self.vertices.bind()
-        for i,offset in [(0,0),(1,16)]:
-            self.surface.enableAttributeArray(i);self.surface.setAttributeBuffer(i,0x1406,offset,3,32)
+        if self.feedback:
+            self.surface.bind();self.feedback_attributes(self.surface)
+            self.skin_inputs=[('modelScalars',self.view(self.model,R32F)),('poseRows',self.view(self.frame,RGBA32F))]
+            self.normal_inputs=self.normal_views()
+        else:
+            self.surface.bind();self.vertices.bind()
+            for i,offset in [(0,0),(1,16)]:
+                self.surface.enableAttributeArray(i);self.surface.setAttributeBuffer(i,0x1406,offset,3,32)
         self.colors=self.buffer(np.asarray(asset['colors'],np.float32))
         self.surface.enableAttributeArray(2);self.surface.setAttributeBuffer(2,0x1406,0,3,12)
         self.vao.release();self.surface.release()
@@ -77,6 +108,9 @@ class CharacterRenderer(MeshRenderer):
                 self.corners=self.buffer(data['corners'])
                 self.textured.enableAttributeArray(0);self.textured.setAttributeBuffer(0,0x1406,0,3,12)
                 self.vao.release();self.textured.release()
+                if self.feedback:
+                    self.surface_inputs=[('skinnedPositions',self.view(self.positions,RGBA32F)),
+                                         ('skinnedNormals',self.view(self.normal_buffer,RGBA32F))]
                 for name,pixels in data['images'].items():
                     h,w=pixels.shape[:2]
                     limit=int(self.gl.glGetIntegerv(0x0D33))
@@ -105,7 +139,12 @@ class CharacterRenderer(MeshRenderer):
         shader.setUniformValue('mvp',projection*QMatrix4x4(*view.ravel().tolist()))
         shader.setUniformValue('sceneTransform',QMatrix4x4(*np.asarray(transform if transform is not None else np.eye(4)).ravel().tolist()))
         gl.glUniform1i(shader.uniformLocation('baseTexture'),0)
-        gl.glBindBufferBase(0x90D2,1,self.vertices.bufferId())
+        if self.feedback:
+            for unit,(name,buffer_texture) in enumerate(self.surface_inputs,1):
+                gl.glActiveTexture(GL_TEXTURE0+unit);buffer_texture.bind()
+                gl.glUniform1i(shader.uniformLocation(name),unit)
+            gl.glActiveTexture(GL_TEXTURE0)
+        else:gl.glBindBufferBase(0x90D2,1,self.vertices.bufferId())
         gl.glEnable(0x0B71);gl.glDepthMask(True);gl.glDepthFunc(0x0201)
         for flag in (0x0B90,0x0C11,0x0B44,0x0BE2):gl.glDisable(flag)
         if clear_depth:gl.glClear(0x100)
@@ -117,11 +156,15 @@ class CharacterRenderer(MeshRenderer):
             if texture:texture.bind(0)
             gl.glDrawArrays(0x4,batch['start'],batch['count'])
         gl.glBindTexture(0x0DE1,0)
+        if self.feedback:
+            for unit,(_,buffer_texture) in reversed(list(enumerate(self.surface_inputs,1))):
+                gl.glActiveTexture(GL_TEXTURE0+unit);buffer_texture.release()
+            gl.glActiveTexture(GL_TEXTURE0)
         self.vao.release();shader.release();gl.glDisable(0x0B71)
 
     def release_buffers(self):
         for texture in self.textures.values():texture.destroy()
-        self.textures.clear();self.batches=[]
+        self.textures.clear();self.batches=[];self.surface_inputs=[]
         super().release_buffers()
 
     def close(self):
