@@ -6,6 +6,7 @@ App startup never installs packages or changes environments.
 from __future__ import annotations
 import json
 import os
+import sys
 from pathlib import Path
 
 PROFILES = {
@@ -18,10 +19,19 @@ PROFILES = {
 }
 
 WINDOWS = os.name == 'nt'
+MACOS = sys.platform == 'darwin'
+PLATFORM = 'windows' if WINDOWS else 'macos' if MACOS else 'linux'
 # Every platform pins the same package versions; only the wheel files differ.
-LOCK = 'installer/runtime-lock.json' if WINDOWS else 'installer/runtime-lock-linux.json'
-SUPPORT_LOCK = 'installer/git-support-lock.json' if WINDOWS else 'installer/git-support-lock-linux.json'
+# The macOS (Apple Silicon) lock contains only the shared and GUI profiles so far.
+LOCK = {'windows': 'installer/runtime-lock.json', 'linux': 'installer/runtime-lock-linux.json',
+        'macos': 'installer/runtime-lock-macos.json'}[PLATFORM]
+SUPPORT_LOCK = {'windows': 'installer/git-support-lock.json', 'linux': 'installer/git-support-lock-linux.json',
+                'macos': 'installer/git-support-lock-macos.json'}[PLATFORM]
 INSTALL_COMMAND = 'install.cmd' if WINDOWS else './install.sh'
+
+def version_matches(actual, pinned):
+    """PyPI has no CUDA builds for macOS; there a +cuXXX pin is met by the same public version."""
+    return actual == pinned or (MACOS and '+' in pinned and actual == pinned.split('+', 1)[0])
 
 def _minor(version):
     return 'python' + '.'.join(version.split('.')[:2])
@@ -75,7 +85,6 @@ def activate(root,key,base_root=None):
     """Validate effective imports before loading model or CUDA modules."""
     import importlib.metadata as metadata
     import importlib.util
-    import sys
     root=Path(root).resolve();spec=PROFILES[key];base=base_profile(key)
     base_root=Path(base_root).resolve() if base_root else root
     python=interpreter(base_root/base['folder'],base['python'])
@@ -90,7 +99,7 @@ def activate(root,key,base_root=None):
     paths={}
     for name,version in spec['packages'].items():
         dist=metadata.distribution(name);module=importlib.util.find_spec(name)
-        if dist.version!=version or module is None or not module.origin:
+        if not version_matches(dist.version,version) or module is None or not module.origin:
             raise RuntimeError('Incompatible '+name+' in '+key+'. Run Setup to repair it.')
         actual=Path(module.origin).resolve();expected=overlay if name in own else site
         if not actual.is_relative_to(expected.resolve()): raise RuntimeError('Unexpected '+name+' import path in '+key+': '+str(actual))
