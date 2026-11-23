@@ -9,6 +9,7 @@ import numpy as np
 from .paths import ROOT, HOME, UPSTREAM
 from .storage import atomic_json, hard_link, sha256
 from .resource_cache import code_hash
+from . import compute_device
 from .model_session import set_memory_budget
 from .compute_policy import gpu_memory_fraction
 from .result_artifacts import file_stat
@@ -49,6 +50,7 @@ def activate():
         if str(path) not in sys.path:sys.path.insert(0,str(path))
     os.environ.update(WANDB_MODE='disabled',PYTHONNOUSERSITE='1')
     if os.name=='nt':os.environ['PYOPENGL_PLATFORM']='win32'  # Elsewhere HaMeR's renderer defaults to EGL.
+    elif sys.platform=='darwin':os.environ['PYOPENGL_PLATFORM']='darwin'  # macOS has no EGL; the renderer is unused.
     weights=HOME/'cache/exmr/assets';weights.mkdir(parents=True,exist_ok=True)
     for key,name in LINKS.items():
         source=BY_KEY[key].path
@@ -130,6 +132,7 @@ def camera(project,emit):
 
 def identity(project,stage):
     from .models import BY_KEY,STAGE_REQUIREMENTS
+    import torch
     state=json.loads((project/'project.json').read_text(encoding='utf-8'))
     files={'exmr_preprocess':['input.mp4','tracking.npz'],
            'exmr_features':['input.mp4','tracking.npz','exmr_keypoints.pt'],
@@ -140,17 +143,22 @@ def identity(project,stage):
         root_input=file_stat(root/'input.mp4'),take=state.get('person_frames'),frames=state['frames'],fps=state['fps'],
         options=saved(root,root_state) if stage=='exmr' else {'pose':'Sapiens2-1B 448x336'},
         models={key:file_stat(BY_KEY[key].path) for key in STAGE_REQUIREMENTS[stage]},
-        image_readers={name:sha256(UPSTREAM/'ExMR/exmr/preprocessing'/name) for name in {
+        image_readers={name:code_hash(UPSTREAM/'ExMR/exmr/preprocessing'/name) for name in {
             'exmr_preprocess':('image_io.py','keypoints/sapiens2.py'),
             'exmr_features':('image_io.py','body_features.py','hand_features.py'),
             'exmr':(),
         }[stage]},
-        feature_decoder={name:sha256(UPSTREAM/'ExMR/third_party/sam-3d-body/sam_3d_body/models'/name)
+        feature_decoder={name:code_hash(UPSTREAM/'ExMR/third_party/sam-3d-body/sam_3d_body/models'/name)
             for name in ('decoders/promptable_decoder.py','meta_arch/sam3d_body.py')} if stage=='exmr_features' else {},
         upstream_api=sha256(UPSTREAM/'ExMR/exmr/pipeline.py'),
         motion_solver={name:sha256(UPSTREAM/'ExMR/exmr'/name) for name in
             ('model/exmr.py','model/global_traj.py','model/ik.py','geometry/camera.py')} if stage=='exmr' else {},
-        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'))
+        code=code_hash(Path(__file__)),upstream=sha256(UPSTREAM/'ExMR/RGB_MOCAP_PROVENANCE.json'),
+        # CUDA identities are unchanged; Apple MPS (or CPU) results never share their caches.
+        **({} if compute_device.kind(torch)=='cuda' else {'compute':dict(device=compute_device.device_name(torch),
+            torch=str(torch.__version__),policy=sha256(Path(__file__).with_name('compute_device.py')),
+            upstream={name:sha256(UPSTREAM/'ExMR'/name) for name in ('exmr/geometry/smoothing.py',
+                'third_party/sam-3d-body/sam_3d_body/models/heads/mhr_head.py')})}))
 
 
 def frame_dir(project,n):
@@ -164,7 +172,9 @@ def frame_dir(project,n):
         if json.loads((directory/'receipt.json').read_text(encoding='utf-8'))==identity and len(list(directory.glob('*.jpg')))==n:return directory
     except (OSError,ValueError):pass
     for path in directory.glob('*.jpg'):path.unlink()
-    subprocess.run([executable('ffmpeg'),'-v','error','-i',str(project/'input.mp4'),'-vsync','0','-q:v','2','-start_number','0','-threads','2','-y',str(directory/'%06d.jpg')],check=True,creationflags=NO_WINDOW)
+    # FFmpeg 7.1+ (Homebrew on macOS) removed -vsync; -fps_mode passthrough is the same frame mode.
+    passthrough=['-fps_mode','passthrough'] if sys.platform=='darwin' else ['-vsync','0']
+    subprocess.run([executable('ffmpeg'),'-v','error','-i',str(project/'input.mp4'),*passthrough,'-q:v','2','-start_number','0','-threads','2','-y',str(directory/'%06d.jpg')],check=True,creationflags=NO_WINDOW)
     if len(list(directory.glob('*.jpg')))!=n:raise ValueError('ExMR frame count differs from project')
     atomic_json(directory/'receipt.json',identity)
     return directory
@@ -224,15 +234,21 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
     except (OSError,ValueError,KeyError,RuntimeError,EOFError):cached=False
     if cached:
         complete_stage(project,stage,project/outputs[0],old.get('elapsed',0),True,emit);return
-    if not torch.cuda.is_available():raise RuntimeError('ExMR requires a supported NVIDIA CUDA GPU. Check System in Help for details.')
+    device=compute_device.kind(torch)
+    if device=='cpu':raise RuntimeError(compute_device.cuda_required('ExMR requires a supported NVIDIA CUDA GPU. Check System in Help for details.'))
     started=time.monotonic()
-    free,total=torch.cuda.mem_get_info();set_memory_budget(free,total)
+    if device=='cuda':free,total=torch.cuda.mem_get_info();set_memory_budget(free,total)
+    else:compute_device.set_mps_budget(torch)
     torch.set_num_threads(4);cv2.setNumThreads(2);torch.manual_seed(0);np.random.seed(0)
-    torch.cuda.reset_peak_memory_stats();atomic_json(pending,dict(identity=signature))
+    if device=='cuda':torch.cuda.reset_peak_memory_stats()
+    atomic_json(pending,dict(identity=signature))
     # Invalidate the old source generation as soon as new observations begin.
     atomic_json(project/'exmr_pending.json',dict(stage=stage,identity=signature))
     root,weights=activate()
-    from .model_session import acquire,model_key,release
+    from .model_session import model_key,release
+    def acquire(key,factory):return compute_device.acquire(key,factory,device)
+    def memory_run(stage,operation,fast_gib,emit):return compute_device.run(stage,operation,fast_gib,emit,device)
+    on=compute_device.model_kwargs(device)  # empty on CUDA: upstream CUDA defaults
     from exmr import pipeline as P
     with np.load(project/'tracking.npz',allow_pickle=False) as tracking:
         boxes=torch.from_numpy(tracking['boxes'].copy()).float();k=torch.from_numpy(tracking['K'].copy()).float()
@@ -242,11 +258,10 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
     if stage=='exmr_preprocess':
         from exmr.preprocessing.keypoints.sapiens2 import Sapiens2Keypoints
         emit('progress',current=0,total=n,message='ExMR: body, hand and foot keypoints (Balanced)')
-        from .memory_mode import run as memory_run
         directory=frame_dir(project,n)
         def keypoints(low):
             model=acquire(model_key('sapiens',BY_KEY['exmr_sapiens'].path,low_memory=low),
-                lambda:Sapiens2Keypoints(BY_KEY['exmr_sapiens'].path,resolution='448x336',num_workers=0,low_memory=low))
+                lambda:Sapiens2Keypoints(BY_KEY['exmr_sapiens'].path,resolution='448x336',num_workers=0,low_memory=low,**on))
             try:return model(directory,boxes)
             finally:release(model)
         values=memory_run('ExMR Sapiens',keypoints,6.,emit)
@@ -254,10 +269,9 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
     elif stage=='exmr_features':
         directory=frame_dir(project,n)
         from exmr.preprocessing.body_features import SamBodyFeatures
-        from .memory_mode import run as memory_run
         def body_features(low):
             model=acquire(model_key('exmr_sam',*[BY_KEY[key].path for key in ('flow_sam','flow_sam_config','flow_mhr')],low_memory=low),
-                lambda:SamBodyFeatures(weights/'sam-3d-body-dinov3',batch_size=8,num_workers=0,low_memory=low))
+                lambda:SamBodyFeatures(weights/'sam-3d-body-dinov3',batch_size=8,num_workers=0,low_memory=low,**on))
             try:return model(directory,boxes,k)
             finally:release(model)
         body_receipt=project/'exmr_body_partial.json'
@@ -276,7 +290,9 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
         if not body_valid:
             emit('progress',current=0,total=n,message='ExMR: SAM body features')
             values=memory_run('ExMR body features',body_features,5.5,emit)
-            save_tensor(values,project/'exmr_body_features.pt');del values;gc.collect();torch.cuda.empty_cache()
+            save_tensor(values,project/'exmr_body_features.pt');del values;gc.collect()
+            if device=='cuda':torch.cuda.empty_cache()
+            else:compute_device.empty_cache(torch)
             if identity(project,stage)!=signature:raise ValueError('ExMR inputs changed during body feature extraction')
             atomic_json(body_receipt,dict(identity=signature,output=file_stat(project/'exmr_body_features.pt')))
         if feature_phase=='body':
@@ -289,7 +305,7 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
         emit('progress',current=0,total=n,message='ExMR: left and right hand features')
         def hand_features(low):
             model=acquire(model_key('hamer',*[BY_KEY[key].path for key in ('hand_hamer','hand_mean','mano_right')],low_memory=low),
-                lambda:HamerHandFeatures(weights/'hamer',batch_size=8,num_workers=0,low_memory=low))
+                lambda:HamerHandFeatures(weights/'hamer',batch_size=8,num_workers=0,low_memory=low,**on))
             try:return model(directory,hand_boxes)
             finally:release(model)
         values=memory_run('ExMR hand features',hand_features,5.5,emit)
@@ -302,10 +318,10 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
         emit('progress',current=0,total=n,message='ExMR: reconstruct and refine full body, feet and fingers')
         from exmr.model.exmr import ExMR
         model=acquire(model_key('exmr',BY_KEY['exmr'].path,BY_KEY['smplx'].path),
-            lambda:ExMR.from_pretrained(BY_KEY['exmr'].path,BY_KEY['smplx'].path))
+            lambda:ExMR.from_pretrained(BY_KEY['exmr'].path,BY_KEY['smplx'].path,**on))
         try:
             with torch.inference_mode():
-                output=model(**{key:value[None].cuda() for key,value in data.items()},
+                output=model(**{key:value[None].to(device) for key,value in data.items()},
                     static_cam=config['static_camera'],snap_to_ground=False,
                     smooth_incam=False,smooth_global=config['smoothing']!='none',fps=state['fps'],
                     normalize_world=False)
@@ -326,7 +342,7 @@ def run_stage(project,stage,result,emit,force=False,feature_phase=None):
     if identity(project,stage)!=signature:raise ValueError('ExMR inputs changed during processing; retry the stage')
     atomic_json(receipt,dict(identity=signature,outputs={name:file_stat(project/name) for name in outputs},
         peak_vram_allocated_gib=torch.cuda.max_memory_allocated()/1024**3,peak_vram_reserved_gib=torch.cuda.max_memory_reserved()/1024**3,
-        elapsed=time.monotonic()-started,ground_snap=False,native_precision=True))
+        elapsed=time.monotonic()-started,ground_snap=False,native_precision=True,**compute_device.memory_report(device,torch)))
     pending.unlink(missing_ok=True)
     if stage=='exmr':(project/'exmr_pending.json').unlink(missing_ok=True)
     complete_stage(project,stage,project/outputs[0],time.monotonic()-started,False,emit)

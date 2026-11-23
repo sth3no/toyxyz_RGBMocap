@@ -72,6 +72,7 @@ class Sapiens2Keypoints:
             raise ValueError(f"Sapiens2 resolution must be one of {list(RESOLUTIONS)}")
         self.batch_size = RESOLUTIONS[resolution]
         self.num_workers = num_workers
+        self.device = device
         h, w = map(int, resolution.split("x"))
 
         # Build and load weights on the CPU to avoid holding the model and
@@ -117,7 +118,7 @@ class Sapiens2Keypoints:
         with batch_source(loader, batch_bytes=self.batch_size*3*1024*768*4) as batches, tqdm(total=len(boxes), desc="Sapiens2 keypoints", unit="frame") as pbar:
             for batch in batches:
                 prediction = _predict(
-                    batch["inputs"].cuda().half(), self.model, self.codec, batch["data_samples"]
+                    batch["inputs"].to(self.device).half(), self.model, self.codec, batch["data_samples"]
                 )
                 output[cursor : cursor + len(prediction)] = prediction[:, SAPIENS2_TO_COCO63]
                 cursor += len(prediction)
@@ -218,8 +219,12 @@ def _decode_udp(encoded, codec):
     dxx, dyy = ix1 - 2 * i_ + ix1_, iy1 - 2 * i_ + iy1_
     dxy = 0.5 * (ix1y1 - ix1 - iy1 + i_ + i_ - ix1_ - iy1_ + ix1_y1_)
     hessian = torch.stack((dxx, dxy, dxy, dyy), dim=-1).reshape(batch, channels, 2, 2)
-    eye = torch.eye(2, device=encoded.device, dtype=torch.float64)
+    if encoded.device.type == "mps":
+        # RGB MoCap: MPS has no float64; solve these 2x2 systems on the CPU in float64.
+        hessian, derivative = hessian.cpu(), derivative.cpu()
+    eye = torch.eye(2, device=hessian.device, dtype=torch.float64)
     inverse = torch.linalg.inv(hessian.to(torch.float64) + np.finfo(np.float32).eps * eye)
     correction = (inverse @ derivative.to(torch.float64)).squeeze(-1).to(torch.float32)
+    correction = correction.to(keypoints.device)
     keypoints.sub_(correction)
     return keypoints.cpu().numpy(), scores.cpu().numpy()

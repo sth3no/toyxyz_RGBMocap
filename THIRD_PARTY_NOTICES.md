@@ -97,6 +97,11 @@ is retained. x86 builds do not use it.
   from contact correction. Source revisions are recorded in retained
   `RGB_MOCAP_PROVENANCE.json` files and compatibility patches in
   `tools/prepare_upstream.py`.
+- ExMR's bundled sources carry small Apple MPS guards, each marked `RGB MoCap`:
+  Sapiens2's UDP decoder and the Gaussian rotation smoothing solve their float64
+  steps on the CPU when the tensors are on MPS, and SAM 3D Body uses the batch
+  device instead of `.cuda()`. CUDA execution is unchanged. See
+  [the ExMR guide](docs/models/EXMR.md#apple-silicon-mps).
 
 Code-license labels do not establish permission for every weight or training
 dataset. AGPL obligations, noncommercial restrictions and model redistribution

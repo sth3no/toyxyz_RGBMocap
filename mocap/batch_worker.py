@@ -21,6 +21,8 @@ def main(argv, emit):
     phase,jobs = validate(json.loads(args.request.read_text(encoding='utf-8')),args.stage)
     from .compute_policy import configure_worker_cpu
     threads=configure_worker_cpu(PHASES[args.stage][phase])
+    from .compute_device import configure_worker_environment,cuda_required,empty_cache
+    configure_worker_environment()  # macOS: MPS watermarks before torch allocates
     from .model_session import ModelSession,set_memory_budget
     from .storage import atomic_json
     import torch
@@ -58,7 +60,7 @@ def main(argv, emit):
                     elif phase in ('pose','features'):
                         import psutil
                         from .memory_mode import select_stage
-                        if not torch.cuda.is_available():raise RuntimeError('GVHMR requires a supported NVIDIA CUDA GPU')
+                        if not torch.cuda.is_available():raise RuntimeError(cuda_required('GVHMR requires a supported NVIDIA CUDA GPU'))
                         free,total=torch.cuda.mem_get_info();set_memory_budget(free,total)
                         select_stage('features',free+session.resident_bytes,total,0,observe)
                         from . import engines
@@ -75,7 +77,7 @@ def main(argv, emit):
                         finally:sys.argv=saved_argv;worker.emit=saved_emit
                     all_cached &= cached
                     gc.collect()
-                    if torch.cuda.is_initialized():torch.cuda.empty_cache()
+                    empty_cache(torch)  # CUDA when initialized, else the Apple GPU cache
                     import psutil
                     from .process_memory import open_handles
                     emit('batch_item_done',stage=stage,project=str(active),index=index,count=len(jobs),
