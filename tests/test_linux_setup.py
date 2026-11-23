@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
@@ -86,6 +87,56 @@ class LinuxSetupTests(unittest.TestCase):
                     models.download('gvhmr')
             self.assertEqual(source.read_bytes(), data)
             self.assertEqual(list(source.parent.iterdir()), [source])
+
+
+class MacSetupTests(unittest.TestCase):
+    def test_cuda_local_versions_are_relaxed_only_on_macos(self):
+        from mocap import runtime_registry as registry
+
+        for macos, expected in ((True, True), (False, False)):
+            with self.subTest(macos=macos), patch.object(registry, 'MACOS', macos):
+                self.assertTrue(registry.version_matches('2.7.1+cu128', '2.7.1+cu128'))
+                self.assertEqual(registry.version_matches('2.7.1', '2.7.1+cu128'), expected)
+                self.assertFalse(registry.version_matches('2.7.2', '2.7.1+cu128'))
+                self.assertFalse(registry.version_matches('1.23.4', '1.23.5'))
+
+    def test_every_runtime_lock_matches_the_registry(self):
+        import hashlib, json
+        digest = hashlib.sha256((ROOT / 'mocap/runtime_registry.py').read_bytes()).hexdigest()
+        for name, profiles in (('runtime-lock.json', {'shared', 'gui', 'flow', 'hand', 'htd', 'exmr'}),
+                               ('runtime-lock-linux.json', {'shared', 'gui', 'flow', 'hand', 'htd', 'exmr'}),
+                               ('runtime-lock-macos.json', {'shared', 'gui'})):
+            with self.subTest(lock=name):
+                lock = json.loads((ROOT / 'installer' / name).read_text(encoding='utf-8'))
+                self.assertEqual(lock['registry_sha256'], digest)
+                self.assertEqual({g['key'] for g in lock['groups']}, profiles)
+
+    def test_macos_lock_uses_public_versions_and_apple_silicon_wheels(self):
+        import json
+        lock = json.loads((ROOT / 'installer/runtime-lock-macos.json').read_text(encoding='utf-8'))
+        for group in lock['groups']:
+            for package in group['packages']:
+                with self.subTest(package=package['name']):
+                    self.assertNotIn('+', package['version'])
+                    if not package.get('bundled') and not package['filename'].endswith('-none-any.whl'):
+                        self.assertRegex(package['filename'], r'macosx_\d+_\d+_(arm64|universal2)\.whl$')
+
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS Blender bundle layout')
+    def test_macos_blender_accepts_an_app_bundle_and_the_managed_copy(self):
+        from mocap.retarget import runtime
+
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            managed = root / 'runtime_character/blender-macos/Blender.app/Contents/MacOS/Blender'
+            external = root / 'Applications/Blender.app'
+            for executable in (managed, external / 'Contents/MacOS/Blender'):
+                executable.parent.mkdir(parents=True)
+                executable.touch()
+            with patch.object(runtime, 'ROOT', root), patch.object(runtime.shutil, 'which', return_value=None):
+                for override, expected in ((external, external / 'Contents/MacOS/Blender'),
+                                           (root / 'missing', managed), ('', managed)):
+                    with self.subTest(override=override), patch.dict(os.environ, RGBMOCAP_BLENDER=str(override)):
+                        self.assertEqual(runtime.blender(), expected.resolve())
 
 
 if __name__ == '__main__':
