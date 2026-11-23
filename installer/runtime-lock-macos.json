@@ -1356,10 +1356,10 @@
         {
           "name": "scipy",
           "version": "1.15.2",
-          "filename": "scipy-1.15.2-cp312-cp312-macosx_14_0_arm64.whl",
-          "url": "https://files.pythonhosted.org/packages/a4/98/e5c964526c929ef1f795d4c343b2ff98634ad2051bd2bbadfef9e772e413/scipy-1.15.2-cp312-cp312-macosx_14_0_arm64.whl",
-          "sha256": "bad78d580270a4d32470563ea86c6590b465cb98f83d760ff5b0990cb5518a93",
-          "bytes": 22437211
+          "filename": "scipy-1.15.2-cp312-cp312-macosx_12_0_arm64.whl",
+          "url": "https://files.pythonhosted.org/packages/37/20/3d04eb066b471b6e171827548b9ddb3c21c6bbea72a4d84fc5989933910b/scipy-1.15.2-cp312-cp312-macosx_12_0_arm64.whl",
+          "sha256": "869269b767d5ee7ea6991ed7e22b3ca1f22de73ab9a49c44bad338b725603301",
+          "bytes": 30163558
         },
         {
           "name": "setuptools",
@@ -1525,14 +1525,14 @@
       "base": null
     }
   ],
-  "download_bytes": 945371202,
-  "installed_bytes_estimate": 2995054339,
-  "fresh_free_bytes_required": 7278109895,
+  "download_bytes": 953097549,
+  "installed_bytes_estimate": 3017412214,
+  "fresh_free_bytes_required": 7308194117,
   "uv_version": "0.13.1",
   "uv_sha256": "c7634fea71703a48913e793c65997d63351f492ee0c38f6c20f0878fb2795d18",
   "all_runtimes": false,
   "models_included": false,
   "registry_sha256": "62480b0fe5b9786e4e458d3883833e3f7e45e17f7ecfbc8e0d417810a2a497e5",
   "minimum_macos": "14.0",
-  "id": "db4a41e826472eb7c92dd7ebaa0877c81e28a6ebb297fdddb0ca15d20dc3f660"
+  "id": "5f9c90915aa1f4cca0b5709ce1f1c0dca9351fef26b172fa62ab493c9451a838"
 }

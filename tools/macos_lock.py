@@ -8,7 +8,8 @@ runtime_registry.py. It works like tools/linux_lock.py, with three differences:
   runtime_registry.command reports them as missing.
 - CUDA local builds (for example torch 2.7.1+cu128) are replaced by the same public PyPI version,
   which is the CPU/MPS build for macOS. runtime_registry.version_matches accepts it on macOS only.
-- Each platform wheel is the best macOS arm64 (or universal2) wheel of the same version.
+- Each platform wheel is the best macOS arm64 (or universal2) wheel of the same version, except
+  the wheels in UNLOADABLE, which fail to load on current macOS; the next best wheel is used.
 
 Nothing is installed.
 """
@@ -29,6 +30,10 @@ PROFILES = ('shared', 'gui', 'exmr')
 MACOS = [*range(14, 10, -1), 15]
 PLATFORMS = ([f'macosx_{major}_0_arm64' for major in MACOS] + [f'macosx_{major}_0_universal2' for major in MACOS]
              + [f'macosx_10_{minor}_universal2' for minor in range(16, 8, -1)])
+# scipy 1.15.2's Accelerate wheel ships a gfortran-built _spropack that dyld on macOS 27 rejects
+# ("__DATA/__thread_bss has a zero-fill section type"), breaking `import scipy.spatial`. Its
+# OpenBLAS macosx_12_0 wheel of the same version loads.
+UNLOADABLE = {'scipy-1.15.2-cp312-cp312-macosx_14_0_arm64.whl'}
 BASE_ENV = {'os_name': 'posix', 'sys_platform': 'darwin', 'platform_system': 'Darwin', 'platform_machine': 'arm64',
             'implementation_name': 'cpython', 'platform_python_implementation': 'CPython', 'extra': ''}
 
@@ -43,7 +48,8 @@ def macos_wheel(name, version, python):
                                              *compatible_tags((major, minor), platforms=PLATFORMS)])}
     def rank(filename):
         return min((order.get(Tag(t.interpreter, t.abi, t.platform), 10**9) for t in parse_wheel_filename(filename)[3]), default=10**9)
-    found = [row for row in candidates(name, version) if parse_wheel_filename(row[0])[1] == Version(version)]
+    found = [row for row in candidates(name, version)
+             if parse_wheel_filename(row[0])[1] == Version(version) and row[0] not in UNLOADABLE]
     best = min(found, key=lambda row: rank(row[0]), default=None)
     if best is None or rank(best[0]) == 10**9:
         raise RuntimeError(f'No macOS arm64 wheel for {name}=={version} (Python {python}).')
