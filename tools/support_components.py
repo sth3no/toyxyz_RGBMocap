@@ -1,6 +1,6 @@
 """Fetch pinned upstream support archives and stage them without touching active files."""
 from pathlib import Path, PurePosixPath
-import hashlib, json, os, shutil, stat, urllib.request, zipfile
+import hashlib, json, os, shutil, stat, sys, urllib.request, zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -54,7 +54,9 @@ def stage(destination,cache,lock):
         if not (out/'blender.exe').is_file():raise ValueError('Blender executable missing in archive')
     if 'system' in lock['ffmpeg']:
         missing=[name for name in lock['ffmpeg']['system'] if not shutil.which(name)]
-        if missing:raise RuntimeError('Install FFmpeg first (for example: sudo apt install ffmpeg); missing '+', '.join(missing))
+        if missing:
+            example='brew install ffmpeg' if sys.platform=='darwin' else 'sudo apt install ffmpeg'
+            raise RuntimeError('Install FFmpeg first (for example: '+example+'); missing '+', '.join(missing))
     else:
         ffmpeg=download(cache,'ffmpeg-7.1.1',lock['ffmpeg'])
         ffroot=destination/'ffmpeg-stage'; extract(ffmpeg,lock['ffmpeg']['archive_root'],ffroot,lambda p:bool(p) and (p[-1] in ('ffmpeg.exe','ffprobe.exe') or p[-1].lower() in ('license','license.txt','copying','readme.txt')))

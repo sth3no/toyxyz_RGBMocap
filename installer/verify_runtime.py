@@ -29,10 +29,11 @@ for p in group['packages']:
             if value!=entry.hash.value: raise RuntimeError('Damaged runtime file: '+str(path))
         checked+=1
 import torch,numpy,scipy,cv2,timm
+pinned={p['name']:p['version'] for p in group['packages']}
 if group['key']=='hand': import ultralytics
 if group['key']=='gui':
     import PySide6
     from PySide6 import QtWidgets,QtOpenGLWidgets
-    if PySide6.__version__!='6.8.3':raise RuntimeError('GUI Qt version mismatch')
+    if PySide6.__version__!=pinned.get('pyside6','6.8.3'):raise RuntimeError('GUI Qt version mismatch')
 report.update(checked_files=checked,torch=torch.__version__,numpy=numpy.__version__,scipy=scipy.__version__)
 print(json.dumps(report))
