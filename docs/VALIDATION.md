@@ -2,23 +2,33 @@
 
 ## Auto Setup (2026-11-23)
 
-**Auto Setup** in **AI Motion Model** selects the best installed model of
-FlowHMR, ExMR and GVHMR (the order of the user guide's comparison) and switches
-on the refinements, the SAM 3.1 tracker and Motion Correction that its
-installed files allow. It sets controls only.
+**Auto Setup** in **AI Motion Model** offers **Fast**, **Detailed** and
+**Best** (Best possible). Each selects a model of ExMR, FlowHMR and GVHMR from
+the installed files and sets its refinements, FlowHMR's speed-ups, the person
+tracker and Motion Correction. It sets controls only. A line names this PC's
+GPU, video memory and RAM and recommends one choice.
 
-- Tests, offscreen with the GUI runtime (`tests/test_auto_setup.py`, 17): the
-  files counted are the ones the window's readiness line counts; the order of
-  the three models; each refinement follows its own files; nothing ready
-  changes nothing; a running job is left alone; on the real `MainWindow` the
-  button sets the model, HaMeR, the GVHMR refinements, Motion Correction and
-  the tracker, with the installed files replaced by stand-in sets. The whole
-  `tests` folder in one process: 679 tests passed, 66 skipped, none failed.
-- The right panel was drawn offscreen for a FlowHMR and a GVHMR outcome and
-  looked at: the note fits under the buttons.
-- Not run: the button against the files of a real installation, on a real
-  screen, or followed by a reconstruction. No comparison of output quality was
-  made; the order is the guide's subjective one.
+- Tests, offscreen with the GUI runtime (`tests/test_auto_setup.py`, 31): the
+  files counted are the ones the window's readiness line counts; the model
+  order and the passes of each choice; nothing ready changes nothing; a
+  running job is left alone; the recommendation at the recorded limits; the
+  reading of `nvidia-smi` output; on the real `MainWindow` each button sets
+  the model, HaMeR, FlowHMR's four speed-ups, the GVHMR refinements, Motion
+  Correction and the tracker, with the installed files replaced by stand-in
+  sets, and the three buttons fit the settings panel of a 1100×700 window.
+  The whole `tests` folder in one process: 693 tests passed, 66 skipped,
+  none failed.
+- Real installation (RTX 5060 Ti, 16 GB; 31 GiB RAM): the probe read
+  `NVIDIA GeForce RTX 5060 Ti, 15.9 GiB video memory, 31 GiB RAM` from
+  `nvidia-smi` and recommended **Detailed**. Against the installed files the
+  plan was ExMR, because FlowHMR lacked files; the SAM 3.1 runtime was not
+  installed.
+- The right panel was drawn offscreen and looked at; a first layout cut the
+  third button off and was changed.
+- Not run: any button on a real screen or followed by a reconstruction. No
+  comparison of output quality or time between the three choices was made:
+  the order is the guide's subjective one, and whether **Best** gives a better
+  result than **Detailed** on a given video has not been measured.
 
 ## Tutorial from Settings (2026-11-23)
 

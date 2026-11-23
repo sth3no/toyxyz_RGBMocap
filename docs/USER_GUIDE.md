@@ -624,17 +624,31 @@ runtime is not installed. Opening a project restores its saved model. **Prepare 
 | **GEM-X** | Fast processing with relatively low overall motion quality in our tests. One fixed-camera video and one automatically selected primary person. | Included. |
 | **PEAR** | Live single-person bone preview from a webcam or video. Lightweight live foot lock; no offline correction, recording, retargeting or export. | Included. |
 
-**Auto Setup**, beside **? Model Guide**, selects the first of FlowHMR, ExMR
-and GVHMR whose required files are all installed, in the order of the table
-above, and switches on what its installed files allow: **HaMeR Finger
-Refinement** for FlowHMR; **HTD Refine**, **FootMR** and **HandFlow** for
-GVHMR; the **SAM 3.1** tracker when its runtime and model are installed; and
-**Enable Correction**. It only sets these controls and runs nothing. A note
-under the button says what it chose, what it left out because files are
-missing, and which higher-ranked model lacks files. It does not look at your
-video or your GPU, never chooses MAMMA, PromptHMR or GEM-X, and does not
-combine the results of two models: the add-ons of one model cannot be applied
-to another model's result in this version.
+**Auto Setup**, under the model selector, chooses the model and its options
+from the files that are installed. It only sets the controls of this panel and
+runs nothing; a note says what it chose, what it left off and why.
+
+| Choice | Model, in order of preference | Extra passes and speed-ups |
+| --- | --- | --- |
+| **Fast** | ExMR, GVHMR, FlowHMR: the shortest recorded time first | None: GVHMR's refinements, HaMeR and the SAM 3.1 tracker stay off. |
+| **Detailed** | FlowHMR, ExMR, GVHMR: the order of the table above | The model's standard settings: GVHMR's installed **HTD Refine**, **FootMR** and **HandFlow**; FlowHMR with its speed-ups on and without HaMeR; the default tracker. |
+| **Best** (Best possible) | FlowHMR, ExMR, GVHMR | Every installed extra pass: **HaMeR Finger Refinement**, the **SAM 3.1** tracker and GVHMR's refinements. For FlowHMR, **Adaptive Batching** and **GPU Hand Crops** are switched off, and **Fast SAM** and **4-Frame Hand Sampling** too unless HaMeR, which needs them, is on. The slowest choice. |
+
+All three switch **Enable Correction** on. A model is chosen only when all its
+required files are installed; the note names the models that come first but
+lack files.
+
+Above the note the app shows this PC's NVIDIA GPU, its video memory and the
+RAM, and marks one choice with a star: **Best** from 17.0 GiB of video memory
+and 22.2 GiB of RAM, **Detailed** from 14.9 GiB and 22.2 GiB, otherwise
+**Fast**. The limits are the peaks recorded for FlowHMR on our test PC (14.89
+GiB of video memory, 22.19 GiB of RAM) plus the 2.13 GiB that HaMeR added
+there; they are observations of one PC, not requirements. The other choices
+still run with less: Automatic **Resource Mode** switches stages to Low
+Memory, which is slower. Auto Setup does not look at your video, never chooses
+MAMMA, PromptHMR or GEM-X, and does not combine the results of two models: the
+add-ons of one model cannot be applied to another model's result in this
+version.
 
 All six offline models support contact correction and portable Blender bundles.
 ExMR, FlowHMR and GVHMR offer **Find person** for explicit people selection.

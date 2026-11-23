@@ -392,11 +392,37 @@ def build_workspace(w):
     w.refine_preview_note.setWordWrap(True)
     w.refine_preview_note.setVisible(False)
     selector.addWidget(w.refine_preview_note)
+    # Auto Setup: three ways to let the app choose the model and its options from the installed files.
+    # The label has its own line: beside three buttons it does not fit the narrow settings panel.
+    w.auto_button = QWidget()
+    auto_box = QVBoxLayout(w.auto_button)
+    auto_box.setContentsMargins(0, 0, 0, 0)
+    auto_box.setSpacing(4)
+    auto_label = QLabel('Auto Setup')
+    auto_label.setToolTip(tooltip_text('Let the app select the model and its options from the installed files. It only sets the controls here; a note below says what it chose and why.'))
+    auto_box.addWidget(auto_label)
+    auto_row = QHBoxLayout()
+    auto_row.setSpacing(4)
+    auto_box.addLayout(auto_row)
+    w.auto_buttons = {}
+    for mode, label, tip in (
+            ('fast', 'Fast', 'The model with the shortest recorded time (ExMR first), without extra passes.'),
+            ('detailed', 'Detailed', 'The model with the best overall quality in our tests (FlowHMR first), with its standard settings.'),
+            ('best', 'Best', 'Best possible: the best model plus every installed extra pass (HaMeR fingers, SAM 3.1 tracker), with speed-ups that can change the motion switched off. The slowest choice.')):
+        control = QPushButton(label)
+        control.setProperty('label', label)
+        control.setToolTip(tooltip_text(tip))
+        control.clicked.connect(lambda _=False, mode=mode: __import__('mocap.auto_setup', fromlist=['run']).run(w, mode))
+        control.setStyleSheet('padding-left:4px;padding-right:4px')
+        auto_row.addWidget(control, 1)
+        w.auto_buttons[mode] = control
+    selector.addWidget(w.auto_button)
+    w.auto_hardware = WrappedLabel()
+    w.auto_hardware.setObjectName("muted")
+    w.auto_hardware.setWordWrap(True)
+    w.auto_hardware.hide()  # filled by auto_setup.probe_hardware, which app.py starts
+    selector.addWidget(w.auto_hardware)
     model_help_row = QHBoxLayout()
-    w.auto_button = QPushButton('Auto Setup')
-    w.auto_button.setToolTip(tooltip_text('Select the best installed model and switch on every refinement its files allow. It only sets the controls here; the note below says what it chose and why.'))
-    w.auto_button.clicked.connect(lambda: __import__('mocap.auto_setup', fromlist=['run']).run(w))
-    model_help_row.addWidget(w.auto_button)
     model_help_row.addStretch()
     w.model_help = QPushButton('? Model Guide')
     w.model_help.setToolTip(tooltip_text('Compare motion quality, finger support, speed and memory use.'))
