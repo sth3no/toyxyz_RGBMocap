@@ -1,4 +1,4 @@
-"""Build the pinned Kimodo CPU backend; Windows users receive the built module, Linux builds it at install."""
+"""Build the pinned Kimodo CPU backend; Windows users receive the built module, Linux and macOS build it at install."""
 from pathlib import Path
 import argparse
 import os
@@ -32,6 +32,8 @@ def build(build_dir, output_dir, python=sys.executable, deps=ROOT/'.build-inputs
     if (deps/'eigen-3.4.0').exists():
         command+=['-DFETCHCONTENT_SOURCE_DIR_EIGEN='+str((deps/'eigen-3.4.0').resolve())]
     elif not WINDOWS:command+=['-DCMAKE_DISABLE_FIND_PACKAGE_Eigen3=ON']
+    if (deps/'sse2neon/sse2neon.h').is_file():  # ARM64 only; CMake checks its pinned hash
+        command+=['-DSSE2NEON_DIR='+str((deps/'sse2neon').resolve())]
     log_path=build/'build.log'
     with log_path.open('w',encoding='utf-8') as log:
         try:

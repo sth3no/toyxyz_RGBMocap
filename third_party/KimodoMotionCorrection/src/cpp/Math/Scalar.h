@@ -11,6 +11,7 @@
 #include "Constants.h"
 
 #include <math.h>
+#include <stdlib.h> // labs/llabs; not pulled in transitively by libc++
 #include <stdint.h>
 
 //

@@ -6,7 +6,23 @@
 #pragma once
 
 #include <stdint.h>
+#if defined(__aarch64__) || defined(_M_ARM64)
+// RGB MoCap: Apple Silicon/ARM64 maps the SSE intrinsics to NEON through the
+// pinned sse2neon header (see CMakeLists.txt). x86 builds are unchanged.
+#include <sse2neon.h>
+// AVX _mm_permutevar_ps (used by Vector::Swizzle with run-time indices) is not
+// part of sse2neon; select lanes by the low two bits of each control element.
+static inline __m128 _mm_permutevar_ps(__m128 a, __m128i control)
+{
+    alignas(16) float value[4];
+    alignas(16) int32_t index[4];
+    _mm_store_ps(value, a);
+    _mm_store_si128(reinterpret_cast<__m128i*>(index), control);
+    return _mm_setr_ps(value[index[0] & 3], value[index[1] & 3], value[index[2] & 3], value[index[3] & 3]);
+}
+#else
 #include <immintrin.h>
+#endif
 
 namespace SIMD
 {

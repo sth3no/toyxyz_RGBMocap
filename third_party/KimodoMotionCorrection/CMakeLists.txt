@@ -70,9 +70,37 @@ endif()
 target_compile_definitions(motion_correction_cpp_base PUBLIC EIGEN_MPL2_ONLY)
 
 # Compiler-specific settings
+# RGB MoCap: on Apple the target architecture comes from CMAKE_OSX_ARCHITECTURES
+# (CMAKE_SYSTEM_PROCESSOR is the host's). Other platforms use the system processor.
+set(MOTION_CORRECTION_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+    set(MOTION_CORRECTION_ARCH "${CMAKE_OSX_ARCHITECTURES}")
+endif()
 if(MSVC)
     # MSVC-specific flags
     target_compile_options(motion_correction_cpp_base PRIVATE /W4 /arch:AVX)
+elseif(MOTION_CORRECTION_ARCH MATCHES "^(arm64|aarch64|ARM64)$")
+    # RGB MoCap: ARM64 (Apple Silicon) translates the SSE intrinsics to NEON with
+    # sse2neon v1.8.0 (MIT), pinned by commit and SHA-256. Point SSE2NEON_DIR at a
+    # folder that already holds the same sse2neon.h to build offline.
+    set(SSE2NEON_SHA256 07723c9f9457dd4316f1fde3dd4eb6f31dd67d9955f6c21f4e609ac1698be48a)
+    set(SSE2NEON_DIR "${CMAKE_BINARY_DIR}/_deps/sse2neon" CACHE PATH "Folder containing sse2neon.h v1.8.0")
+    if(NOT EXISTS "${SSE2NEON_DIR}/sse2neon.h")
+        message(STATUS "Fetching sse2neon v1.8.0...")
+        file(DOWNLOAD
+            https://raw.githubusercontent.com/DLTcollab/sse2neon/3cf69760cc6fdc45a5d70f0d42a8f079489f9867/sse2neon.h
+            "${SSE2NEON_DIR}/sse2neon.h"
+            EXPECTED_HASH SHA256=${SSE2NEON_SHA256}
+            TLS_VERIFY ON)
+    endif()
+    file(SHA256 "${SSE2NEON_DIR}/sse2neon.h" SSE2NEON_ACTUAL)
+    if(NOT SSE2NEON_ACTUAL STREQUAL SSE2NEON_SHA256)
+        message(FATAL_ERROR "${SSE2NEON_DIR}/sse2neon.h is not the pinned sse2neon v1.8.0")
+    endif()
+    target_include_directories(motion_correction_cpp_base PUBLIC "${SSE2NEON_DIR}")
+    # x86 min/max NaN semantics; sqrt stays the exact NEON instruction.
+    target_compile_definitions(motion_correction_cpp_base PUBLIC SSE2NEON_PRECISE_MINMAX=1 SSE2NEON_SUPPRESS_WARNINGS)
+    target_compile_options(motion_correction_cpp_base PRIVATE -Wall -Wextra)
 else()
     # GCC/Clang flags (also applies to MinGW on Windows)
     # Enable SSE4.1 and AVX instructions for SIMD operations

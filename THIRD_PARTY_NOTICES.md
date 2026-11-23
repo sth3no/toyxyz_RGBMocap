@@ -72,6 +72,11 @@ Other runtime packages retain their included licenses. Supporting notices includ
 [PyTorch3D transforms (BSD)](native_compat/LICENSE),
 [Noto Sans KR (SIL OFL)](assets/fonts/OFL.txt), and
 [Eigen / pybind11 notices](third_party/KimodoMotionCorrection/notices).
+On Apple Silicon macOS the motion-correction build fetches
+[sse2neon](https://github.com/DLTcollab/sse2neon) v1.8.0 (MIT, copyright
+SSE2NEON Contributors), pinned by commit and SHA-256, to map its SSE intrinsics
+to NEON; its [license](third_party/KimodoMotionCorrection/notices/sse2neon-LICENSE)
+is retained. x86 builds do not use it.
 
 ## Attribution and local adaptations
 
@@ -82,7 +87,8 @@ Other runtime packages retain their included licenses. Supporting notices includ
   and the original GVHMR work. [Papers and BibTeX](docs/CITATIONS.md) cover
   the supported motion models, PEAR live preview and optional refinement models.
 - Kimodo MotionCorrection: copyright 2026, NVIDIA Corporation & Affiliates.
-  Local changes add explicit contact targets, bounded solving and anatomical guards.
+  Local changes add explicit contact targets, bounded solving and anatomical guards,
+  and guarded ARM64 build support (sse2neon, a clang `FORCE_INLINE`, `<stdlib.h>`).
 - OSNet: Kaiyang Zhou; original MIT notices and model-zoo provenance are retained.
 - Windows adapters add model import, selected-person processing, bounded workers,
   shared-scene placement, preview/export and compatibility fixes. Upstream-derived

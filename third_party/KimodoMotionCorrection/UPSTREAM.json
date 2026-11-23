@@ -4,6 +4,7 @@
   "subdirectory": "MotionCorrection",
   "patches": [
     "Explicit contact anchors for bounded windows; input validation and left toe height fix.",
-    "RGBMoCapAnatomical.h: optional native source-relative knee-axis contacts with preserved global ankle rotations. Generic upstream keyframe/toe paths retained. Anatomical mode rejects unsupported mixed constraints instead of silently overwriting them."
+    "RGBMoCapAnatomical.h: optional native source-relative knee-axis contacts with preserved global ankle rotations. Generic upstream keyframe/toe paths retained. Anatomical mode rejects unsupported mixed constraints instead of silently overwriting them.",
+    "ARM64 build support: sse2neon v1.8.0 (pinned in CMakeLists.txt) with a scalar _mm_permutevar_ps, clang FORCE_INLINE and <stdlib.h> for labs/llabs. x86 compiler flags and headers are unchanged."
   ]
 }
