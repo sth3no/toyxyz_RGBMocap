@@ -30,7 +30,7 @@ def setup():
     parser=argparse.ArgumentParser();parser.add_argument('--assets-root',type=Path,default=None)
     parser.add_argument('--verify-all',action='store_true',help='Recheck all installed runtime RECORD hashes and imports, ignoring recent verification metadata.')
     if os.name != 'nt':
-        parser.add_argument('--with-blender', action='store_true', help='Install the pinned Linux Blender for exports and retargeting.')
+        parser.add_argument('--with-blender', action='store_true', help='Install the pinned Blender 4.5 for exports and retargeting.')
     args=parser.parse_args();folder=ROOT/'.setup';resources=folder/'bootstrap-git';resources.mkdir(parents=True,exist_ok=True)
     cache_dependency_files(ROOT)
     from stage_assets import stage as stage_assets
@@ -114,7 +114,10 @@ def setup():
         from tools.optional_support import prepare as prepare_support
         prepare_support(ROOT)
         if getattr(args, 'with_blender', False):
-            from linux_blender import prepare as prepare_blender
+            if sys.platform == 'darwin':
+                from macos_blender import prepare as prepare_blender
+            else:
+                from linux_blender import prepare as prepare_blender
             try:
                 prepare_blender(ROOT)
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

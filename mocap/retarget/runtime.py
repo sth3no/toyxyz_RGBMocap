@@ -1,7 +1,9 @@
 """Dedicated character I/O runtime; never changes an AI environment."""
-import os,shutil
+import os,shutil,sys
 from pathlib import Path
 from mocap.paths import EXE,ROOT
+
+MACOS = sys.platform == 'darwin'
 
 def blender():
     name = 'blender' + EXE
@@ -10,6 +12,10 @@ def blender():
     if explicit:
         override = Path(explicit)
         candidates.extend((override, override / name))
+        if MACOS:  # RGBMOCAP_BLENDER may name the Blender.app bundle itself
+            candidates.append(override / 'Contents/MacOS/Blender')
+    if MACOS:
+        candidates.append(ROOT / 'runtime_character/blender-macos/Blender.app/Contents/MacOS/Blender')
     if not EXE:
         candidates.append(ROOT / 'runtime_character/blender-linux/blender')
     candidates.append(ROOT / 'runtime_character' / name)
@@ -21,6 +27,8 @@ def blender():
         candidates+=sorted(Path('C:/Program Files/Blender Foundation').glob('Blender 4.5/blender.exe'))
     for p in candidates:
         if p.is_file():return p.resolve()
+    if MACOS:
+        raise RuntimeError('Blender is missing. Run ./install.sh --with-blender or set RGBMOCAP_BLENDER to a Blender 4.5 LTS Blender.app.')
     if EXE == '':
         raise RuntimeError('Blender is missing. Run ./install.sh --with-blender or set RGBMOCAP_BLENDER to Blender 4.5 LTS.')
     raise RuntimeError('Character runtime is missing. Install the character-enabled application package, or set RGBMOCAP_BLENDER to Blender 4.5 LTS blender.exe.')
