@@ -73,7 +73,18 @@ def set_model_file(key: str, path: Path | None) -> None:
     reload_model_files()
 
 
+# Worker families that need NVIDIA CUDA; macOS (Apple GPU) runs only ExMR and person tracking.
+MACOS_CUDA_ONLY = ('flow', 'hand', 'htd')
+
+
 def worker_command(stage: str, *args: str) -> list[str]:
+    if sys.platform == 'darwin':
+        from .runtime_registry import profile_for
+        family = stage in ('sam31_people', 'gemx_reconstruct', 'gemx_correct') or (
+            stage.startswith(('prompthmr_', 'mamma_')) and stage not in ('prompthmr_prepare', 'prompthmr_publish', 'mamma_prepare', 'mamma_publish'))
+        if family or profile_for(stage, args) in MACOS_CUDA_ONLY:
+            from .compute_device import MACOS_MESSAGE
+            raise RuntimeError('This step needs an NVIDIA CUDA GPU. ' + MACOS_MESSAGE)
     if stage == 'face_track':
         from .face_runtime import command as face_command
         return face_command(args)

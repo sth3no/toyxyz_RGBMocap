@@ -199,5 +199,42 @@ class UnifiedBudgetTests(unittest.TestCase):
             self.assertFalse(any(key in os.environ for key in keys))
 
 
+class CudaIdentityTests(unittest.TestCase):
+    """The MPS port aliases the bytes it changed, so existing CUDA caches keep their identities.
+    A later numerical edit must change these values deliberately."""
+    PRE_MPS = {
+        'mocap/exmr_backend.py': '77c7162093f5bbf9b4dba46287f6542d5069cd3aef24444f531eac94335bd82f',
+        'mocap/engines.py': '74512a9b2fb87f4fafb9f0bc963f5b5887e4069ffc59c24f656f984b9c8066fd',
+        'mocap/worker.py': '97df91aacab5e68618e0b61752bce3844e08b47ff7e6a69315b6b8a32f96b0f1',
+        'third_party/ExMR/exmr/preprocessing/keypoints/sapiens2.py': 'd3a7364e0e50efca09f83843ee2ad95a06d38a458c34df04498c97b8d691c1b9',
+        'third_party/ExMR/third_party/sam-3d-body/sam_3d_body/models/meta_arch/sam3d_body.py':
+            '577a570d35889939bd3b0aacef4faa30598ec246b97b8f37b70c247d3fa0aa4f',
+        'third_party/ExMR/exmr/geometry/smoothing.py': 'b11435d96fdd7257667f8c46a04e7475813f783b349a6c583c060541cafcb7fa',
+    }
+
+    def test_changed_files_keep_their_cuda_cache_identity(self):
+        from mocap.paths import ROOT
+        from mocap.resource_cache import code_hash
+        from mocap.cache_compat import discovery_identity
+        for name, digest in self.PRE_MPS.items():
+            with self.subTest(file=name):
+                self.assertEqual(code_hash(ROOT / name), digest)
+        self.assertEqual(discovery_identity(ROOT / 'mocap/person_tracking.py'),
+                         '39f6422998f9d77a501cd4ac88c2a62cf312cf2be0f01129e9c0e7b8a0dd2b5f')
+
+    def test_macos_refuses_cuda_only_workers_with_the_model_list(self):
+        from mocap import paths
+        with patch.object(paths.sys, 'platform', 'darwin'):
+            for stage in ('flow_features', 'pva', 'handflow', 'sam31_people', 'mamma_masks', 'gemx_reconstruct'):
+                with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, 'needs an NVIDIA CUDA GPU.*ExMR and person tracking'):
+                    paths.worker_command(stage)
+            for stage in ('exmr_preprocess', 'people', 'track'):
+                with self.subTest(stage=stage):
+                    try:
+                        paths.worker_command(stage)
+                    except RuntimeError as error:  # a missing development runtime, never the CUDA refusal
+                        self.assertNotIn('NVIDIA CUDA', str(error))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -175,10 +175,10 @@ def probe_hardware(window):
     import psutil
     ram = psutil.virtual_memory().total / 2 ** 30
     if sys.platform == 'darwin':
-        # macOS has no CUDA GPU or nvidia-smi; inference on Apple GPUs is a later port phase.
+        # macOS has no CUDA GPU or nvidia-smi. ExMR runs on the Apple GPU (MPS); the other models need CUDA.
         show_hardware(window, None, ram)
         window.auto_hardware.setText(f'This PC: Mac, {ram:.0f} GiB unified memory.\n'
-                                     'AI inference on macOS comes in a later phase: there is no CUDA GPU, so there is no recommendation.')
+                                     'ExMR runs on the Apple GPU (MPS); the other models need an NVIDIA CUDA GPU, so there is no recommendation.')
         return
     process = window.auto_probe = QProcess(window)
     done = []
