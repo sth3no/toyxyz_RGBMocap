@@ -27,6 +27,9 @@ with app_lock(root):
         raise SystemExit('Run '+INSTALL_COMMAND+' before launching: '+str(exc)) from None
     from mocap.runtime_registry import activate
     activate(root,'gui')
+    if sys.platform=='darwin':
+        from tools.macos_qt import reveal_qt_plugins
+        reveal_qt_plugins()
     from app import main
     raise SystemExit(main())
 

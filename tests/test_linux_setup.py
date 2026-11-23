@@ -121,6 +121,27 @@ class MacSetupTests(unittest.TestCase):
                     if not package.get('bundled') and not package['filename'].endswith('-none-any.whl'):
                         self.assertRegex(package['filename'], r'macosx_\d+_\d+_(arm64|universal2)\.whl$')
 
+    @unittest.skipUnless(sys.platform == 'darwin', 'macOS file flags')
+    def test_hidden_flag_is_cleared_from_qt_plugins_only(self):
+        import stat
+        from tools.macos_qt import reveal_qt_plugins
+
+        with TemporaryDirectory() as temp:
+            plugins = Path(temp) / 'plugins'
+            plugin = plugins / 'platforms/libqcocoa.dylib'
+            plugin.parent.mkdir(parents=True)
+            plugin.write_bytes(b'x')
+            outside = Path(temp) / 'other'
+            outside.write_bytes(b'y')
+            for path in (plugins, plugin.parent, plugin, outside):
+                os.chflags(path, path.lstat().st_flags | stat.UF_HIDDEN)
+            self.assertEqual(reveal_qt_plugins(plugins), 3)
+            for path in (plugins, plugin.parent, plugin):
+                self.assertFalse(path.lstat().st_flags & stat.UF_HIDDEN)
+            self.assertTrue(outside.lstat().st_flags & stat.UF_HIDDEN)
+            self.assertEqual(plugin.read_bytes(), b'x')
+            self.assertEqual(reveal_qt_plugins(plugins), 0)
+
     @unittest.skipUnless(sys.platform == 'darwin', 'macOS Blender bundle layout')
     def test_macos_blender_accepts_an_app_bundle_and_the_managed_copy(self):
         from mocap.retarget import runtime
