@@ -1,5 +1,5 @@
 #!/bin/sh
-# Linux counterpart of update.cmd. The braces make sh read the whole body before
+# Linux and macOS counterpart of update.cmd. The braces make sh read the whole body before
 # Git can replace this running script; git_update.py reports the outcome.
 {
 root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

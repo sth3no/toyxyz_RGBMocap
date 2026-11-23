@@ -1,5 +1,5 @@
 #!/bin/sh
-# Linux counterpart of install.cmd.
+# Linux and macOS counterpart of install.cmd.
 cd -- "$(dirname -- "$0")" || exit 1
 status=0
 sh tools/git_bootstrap.sh "$@" || status=$?
