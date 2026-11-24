@@ -72,6 +72,16 @@ class LinksTest(unittest.TestCase):
         self.assertEqual(self.refusal((f,1),(b,1)),"Anna's take is not finished.")   # its last take 150-300 is the one continued
         d=self.joined('d').id
         self.assertEqual(self.refusal((a,1),(d,1)),"Person 1's take contains generated frames, which cannot be joined again.")
+    def test_a_block_reconstructed_without_find_person_cannot_receive(self):   # no people list: refused as the earlier block (also by the automatic link), allowed as the later one
+        a=self.clip('a',ANNA,(1,0,300)).id
+        root=self.base/'single';root.mkdir();(root/'project.json').write_text(json.dumps(dict(self.manifest,pipeline=dict(model='exmr',result='initial'))),encoding='utf-8')
+        write_result(root,'initial',b'single');s=self.add(root).id
+        self.assertEqual([(p.id,p.name) for p in self.states()[s].people],[(1,'Person 1')]);self.assertIsNone(self.states()[s].fingerprint)
+        self.assertIsNone(self.refusal((a,1),(s,1)))   # as the source of the import
+        b=self.clip('b',ANNA,(1,0,300)).id
+        self.assertEqual(self.refusal((s,1),(b,1)),'Run Find person in video.mp4 first. A block reconstructed without it has no person to continue.')
+        self.sequence.links=[];self.sequence.blocks=[self.sequence.block(i) for i in (s,b)]
+        self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[])
     def test_overlap_joined_take_can_link(self):
         a=self.clip('a',ANNA,(1,0,300)).id;b=self.joined('b')
         root=Path(b.folders['exmr']);overlap(root)

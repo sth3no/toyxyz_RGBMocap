@@ -258,17 +258,18 @@ class Controller(QObject):
     def _let_go(self):
         """The one place where links that left the sequence (`Sequence.dropped`: by an edit, Unlink, a relink or a changed
         people list) are let go: the copies their rows recorded are taken out of the first block's take list (files stay),
-        then the list is cleared. The actions that drop a joined row's link asked first."""
-        self._take_apart(self.sequence.dropped)
-        self.sequence.dropped.clear()
+        then the list is cleared; a list that cannot be saved keeps them, so the next change tries again. The actions that
+        drop a joined row's link asked first."""
+        if self._take_apart(self.sequence.dropped):self.sequence.dropped.clear()
 
     def _take_apart(self, links):
         """Withdraw the joined copies of the rows of `links` and clear their records; the window shows the changed take list.
         False with the reason in the status bar when a take list cannot be saved."""
-        try:roots = sequence_join.take_apart(self.sequence, links)
+        try:roots, lost = sequence_join.take_apart(self.sequence, links)
         except (OSError, ValueError, KeyError, TypeError) as error:
             self.w.status.setText(f'Cannot take the join back: {error}');return False
         for root in roots:self._reload(root)
+        if lost:self.w.status.setText(' '.join(sequence_join.REJOIN.format(name) for name in dict.fromkeys(lost)))
         return True
 
     def _may_take_apart(self, links):
@@ -815,7 +816,11 @@ class Controller(QObject):
         started."""
         if not self._may_link():return False
         if target is not None and tuple(target)[0] not in self._ids():return False
-        chains = self._chains(None if target is None else tuple(target))
+        chains, model, states = self._chains(None if target is None else tuple(target)), self.w.model_choice.currentData(), self._states()
+        joined = [chain for chain in chains if sequence_links.status(self.sequence, states, chain[0], model) == 'joined']
+        if chains and len(joined) == len(chains):   # Join never rebuilds what is current
+            self.w.status.setText(sequence_join.ALL_JOINED if target is None else sequence_join.ALREADY.format(self._name(states, chains[0][0])));return False
+        chains = [chain for chain in chains if chain not in joined]
         if not chains or not self.ask(sequence_join.QUESTION, 'Join'):return False
         self.joiner = sequence_join.Runner(self, chains);self.joiner.start()
         return True
@@ -859,7 +864,7 @@ class Controller(QObject):
 
     def _opened(self, block_id, person):
         """A double-click on a bar: the joined animation for a bar of a joined row, else the block as before."""
-        if person is not None and self.supported():
+        if person is not None and self.supported() and not self.busy():   # while a job runs the loaded block opens as before
             self.sequence.model = self.w.model_choice.currentData()
             if self._joined((block_id, person)) is not None:return self.open_joined((block_id, person))
         self.open_block(block_id, person)

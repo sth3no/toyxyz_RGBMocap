@@ -17,6 +17,7 @@ NO_TAKE = '{} has no finished take in the earlier block.'
 SEVERAL = '{} has several takes in this block. Fill their hidden ranges or reconstruct the block in one piece first.'
 FILLED = "{}'s take contains generated frames, which cannot be joined again."
 NOT_FINISHED = "{}'s take is not finished."
+NO_LIST = 'Run Find person in {} first. A block reconstructed without it has no person to continue.'
 
 
 def _person(state, ident) -> sequence_state.Person:
@@ -46,11 +47,14 @@ def row_count(rows) -> int:
 
 
 def refusal(sequence, states, source, target, model) -> str | None:
-    """Why `target` (later block id, person id) cannot continue `source` (earlier block id, person id), or None. The join
-    continues the earlier person's last take with the later person's one whole take in use."""
+    """Why `target` (later block id, person id) cannot continue `source` (earlier block id, person id) for `model`, or None. The join
+    continues the earlier person's last take with the later person's one whole take in use. The earlier block receives the
+    join, so it needs a people list (the import takes a clip folder without one as its source)."""
     if model == 'flowhmr':return FLOWHMR
     early, late = states.get(source[0]), states.get(target[0])
     if any(state is None or state.kind in ('missing', 'untracked') for state in (early, late)):return SAME_MODEL
+    block = sequence.block(source[0])
+    if not (Path(block.folders.get(model) or '')/'people.json').is_file():return NO_LIST.format(Path(block.video).name)
     giver, taker = _person(early, source[1]), _person(late, target[1])
     if not any(take.ready for take in giver.takes):return NO_TAKE.format(giver.name)
     if not max(giver.takes, key=lambda take: (take.end, take.first)).ready:return NOT_FINISHED.format(giver.name)

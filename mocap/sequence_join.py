@@ -22,24 +22,52 @@ NOT_LOADED = 'the first block could not be opened.'
 SCENE = 'the window shows another scene.'
 NOT_STARTED = 'the job did not start.'
 NOT_RECORDED = 'the imported take was not recorded.'
+REJOIN = 'Fill hidden ranges again for {} in the first block to rejoin their own takes.'
+ALL_JOINED = 'Every linked row is already joined.'
+ALREADY = '{} is already joined.'
 
 
-def withdraw(root, person_id, copies) -> int:
-    """Take the takes whose folder is in `copies` (relative to the clip folder `root` or absolute) out of the takes of person
-    `person_id` in `root`'s people.json, and drop every join of that person built on one of them; saved through
-    save_people, and only when something changes. How many takes were taken out; no file or folder is deleted."""
+_ANY = object()   # withdraw without a fingerprint check
+
+
+def _without(root, person, copies, joins=()) -> tuple[int, bool]:
+    """`person` (a people.json entry, changed in place) without the takes whose folder is in `copies` and the joins built
+    on them, with each recorded join of `joins` put back while it is current for the takes left. (takes taken out, whether
+    a recorded join could not be put back)."""
+    root = Path(root);gone = {(root/copy).resolve() for copy in copies}
+    out = lambda project:(root/project).resolve() in gone
+    takes = person.get('takes') or [];kept = [t for t in takes if not out(t['project'])]
+    have = [j for j in person.get('joins') or [] if not any(out(s) for s in j.get('sources') or [])];lost = False
+    if 'takes' in person:person['takes'] = kept
+    for join in joins or []:
+        if any(j.get('project') == join.get('project') for j in have):continue
+        try:current = people_store.join_current(root, {**person, 'joins':have+[join]}, join)
+        except Exception:current = False
+        if current:have.append(join)
+        else:lost = True
+    if have or 'joins' in person:person['joins'] = have
+    return len(takes)-len(kept), lost
+
+
+def _withdraw(root, person_id, copies, joins=(), fingerprint=_ANY) -> tuple[int, bool, str | None]:
+    """withdraw, also saying whether people.json changed and the name of a person whose own join could not be put back."""
     root = Path(root);state = people_store.load_people(root)
     person = next((p for p in state['people'] if p['id'] == person_id), None) if state else None
-    if person is None:return 0
-    gone = {(root/copy).resolve() for copy in copies}
-    out = lambda project:(root/project).resolve() in gone
-    takes = [t for t in person.get('takes') or [] if not out(t['project'])]
-    joins = [j for j in person.get('joins') or [] if not any(out(s) for s in j.get('sources') or [])]
-    if len(takes) == len(person.get('takes') or []) and len(joins) == len(person.get('joins') or []):return 0
-    count = len(person['takes'])-len(takes);person['takes'] = takes
-    if 'joins' in person:person['joins'] = joins
-    people_store.save_people(root, state)
-    return count
+    if person is None or fingerprint is not _ANY and state.get('fingerprint') != fingerprint:return 0, False, None
+    before = (list(person.get('takes') or []), list(person.get('joins') or []))
+    count, lost = _without(root, person, copies, joins)
+    changed = (person.get('takes') or [], person.get('joins') or []) != before
+    if changed:people_store.save_people(root, state)
+    return count, changed, str(person.get('name') or f'Person {person_id}') if lost else None
+
+
+def withdraw(root, person_id, copies, joins=(), fingerprint=_ANY) -> int:
+    """Take the takes whose folder is in `copies` (relative to the clip folder `root` or absolute) out of the takes of person
+    `person_id` in `root`'s people.json, drop every join of that person built on one of them and put back the person's own
+    recorded `joins` that are current again; saved through save_people, and only when something changes. With a
+    `fingerprint`, a people list made again since (another fingerprint) is left alone. How many takes were taken out; no
+    file or folder is deleted."""
+    return _withdraw(root, person_id, copies, joins, fingerprint)[0]
 
 
 def row(pool, link) -> list:
@@ -59,17 +87,24 @@ def rows(sequence, links) -> list:
     return out
 
 
-def take_apart(sequence, links) -> list[Path]:
-    """Withdraw the copies the rows of `links` recorded and clear their `built`; the clip folders whose people list changed.
-    A list that cannot be saved raises, and its links keep their record."""
+def take_apart(sequence, links) -> tuple[list[Path], list[str]]:
+    """Withdraw the copies the rows of `links` recorded (putting back the receiver's own joins they recorded) and clear their
+    `built`. (the clip folders whose people list changed, the names of receivers whose own join could not be put back). A
+    receiving list made again since (another fingerprint) is left alone. A list that cannot be saved raises, and its links
+    keep their record."""
     groups = {}
     for link in rows(sequence, links):
         if link.built:groups.setdefault((link.built.get('root'), link.built.get('person')), []).append(link)
-    roots = []
+    roots, lost = [], []
     for (root, person), group in groups.items():
-        if root is not None and withdraw(root, person, [l.built['copy'] for l in group if 'copy' in l.built]):roots.append(Path(root))
+        if root is not None:
+            built = [link.built for link in group]
+            mark = next((b['fingerprint'] for b in built if 'fingerprint' in b), _ANY)
+            _, changed, name = _withdraw(root, person, [b['copy'] for b in built if 'copy' in b], [j for b in built for j in b.get('joins') or []], mark)
+            if changed:roots.append(Path(root))
+            if name:lost.append(name)
         for link in group:link.built = None
-    return roots
+    return roots, lost
 
 
 def joined_take(root, ident, copies) -> Path | None:
@@ -161,22 +196,45 @@ class Runner(QObject):
         if folder is None:return self.stop(NOT_LOADED)
         self.root, self.ident = Path(folder), chain[0][1]
         if not c._open(first.id) or not self.ours():return self.stop(NOT_LOADED)
-        reason = self.refusal(states)
+        reason = self.refusal(*self.judged(states, first.id))
         if reason:return self.stop(reason)
         take_apart(sequence, self.links);c._save();c._reload(self.root)
+        self.own = [dict(j) for j in self.person().get('joins') or []]   # the receiver's own joins, which Unlink puts back
         w.activate_person(self.ident)
         self.i, self.stage = 0, 'importing'
         self.importing()
 
-    def refusal(self, states):
-        """Why this row cannot be joined at all: a link rule, a transition its method cannot fill, the Hidden ranges panel's
-        own reason (FlowHMR, ExMR without Static Camera, HTD Refine), Automatic not set up; or None."""
+    def judged(self, states, first):
+        """(states, receiving person) as they will be once the copies this row recorded are taken out, read without
+        changing anything: the link rules and the import judge the take list the run will continue."""
+        from copy import deepcopy
+        from dataclasses import replace
+        state = deepcopy(people_store.load_people(self.root))
+        person = next((p for p in state['people'] if p['id'] == self.ident), None) if state else None
+        if person is None:return states, None
+        built = [l.built for l in rows(self.c.sequence, self.links) if l.built and l.built.get('person') == self.ident
+                 and Path(l.built.get('root') or '').resolve() == self.root.resolve() and l.built.get('fingerprint', state.get('fingerprint')) == state.get('fingerprint')]
+        _without(self.root, person, [b['copy'] for b in built if 'copy' in b], [j for b in built for j in b.get('joins') or []])
+        fresh = sequence_state._people(self.root, {'people':[person]}, sequence_state.selected_kind(self.root))[0]
+        old = states[first]
+        return {**states, first:replace(old, people=[fresh if p.id == self.ident else p for p in old.people])}, person
+
+    def refusal(self, states, person):
+        """Why this row cannot be joined at all: a link rule, a transition its method cannot fill, the import's own refusal
+        as far as it can be known before the first import, the Hidden ranges panel's own reason (FlowHMR, ExMR without
+        Static Camera, HTD Refine), Automatic not set up; or None. Keeps the source take of each link."""
+        from . import take_import_check
         from .parts_runner import join_issue
-        sequence = self.c.sequence
+        sequence = self.c.sequence;self.sources = []
         for link in self.links:
-            reason = sequence_links.refusal(sequence, states, link.source, link.target, self.model) or \
-                sequence_links.gap_issue(link.method, sequence_links.gap_frames(sequence, link.target[0]))
+            frames = sequence_links.gap_frames(sequence, link.target[0])
+            reason = sequence_links.refusal(sequence, states, link.source, link.target, self.model) or sequence_links.gap_issue(link.method, frames)
             if reason:return reason
+            later = Path(sequence.block(link.target[0]).folders[self.model])
+            source = sequence_links._in_use(later, link.target[1])[0]   # the one take in use, as the row's state reads it
+            reason = person is not None and take_import_check.refusal(self.root, person, source, frames, self.w.active_result)
+            if reason:return reason
+            self.sources.append((later, source, frames))
         reason = join_issue(self.w)
         if reason or not any(link.method == 'auto' for link in self.links):return reason
         from . import kimodo_runtime  # standard library only
@@ -187,14 +245,12 @@ class Runner(QObject):
         """Imports the take of the next later bar, after the transition of its pair of blocks."""
         from . import take_import_check
         if self.i == len(self.links):return self.methods()
-        w, sequence, link = self.w, self.c.sequence, self.links[self.i]
-        later = Path(sequence.block(link.target[0]).folders[self.model])
-        self.source = sequence_links._in_use(later, link.target[1])[0]   # the one take in use, as the row's state reads it
-        self.later, self.frames = later, sequence_links.gap_frames(sequence, link.target[0])
+        w = self.w;self.later, self.source, self.frames = self.sources[self.i]
         person = self.person()
         reason = take_import_check.refusal(self.root, person, self.source, self.frames, w.active_result)
         if reason:return self.stop(reason)
         self.before, self.stamp = {t['project'] for t in person.get('takes') or []}, sequence_links.result_stamp(self.source)
+        self.mark = people_store.load_people(self.root).get('fingerprint')
         if not w.start_take_import(self.ident, self.source, self.frames):return self.stop(w.status.text() or NOT_STARTED)
         self.run(IMPORTING.format(self.name, self.i+1, len(self.links)))
 
@@ -204,7 +260,8 @@ class Runner(QObject):
         new = [t for t in self.person().get('takes') or [] if t['project'] not in self.before]
         if new:
             link.built = dict(copy=new[-1]['project'], take=_relative(self.source, self.later), stamp=self.stamp, gap=self.frames,
-                              method=link.method, root=str(self.root.resolve()), person=self.ident)
+                              method=link.method, root=str(self.root.resolve()), person=self.ident, fingerprint=self.mark,
+                              **({'joins':self.own} if self.i == 0 else {}))
             self.c._save()
         if cancelled or failed or not new:
             self.stop(CANCELLED if cancelled else status if failed else NOT_RECORDED);return False
@@ -220,7 +277,8 @@ class Runner(QObject):
         choices = person['gap_fill'] if isinstance(person.get('gap_fill'), dict) else {}
         methods = {link.built['copy']:link.method for link in self.links}
         for gap in gaps(person['takes']):
-            if gap['after']['project'] in methods:choose(choices, gap_key(gap), methods[gap['after']['project']])
+            method = methods.get(gap['after']['project'])
+            if method and (choices.get(gap_key(gap)) or {}).get('method') != method:choose(choices, gap_key(gap), method)   # a choice of that method keeps its seed and description
         person['gap_fill'] = choices
         people_store.save_people(self.root, state);w.people_state = state;w.refresh_hidden_ranges(w.current_person())
         w.fill_hidden_ranges(self.ident)

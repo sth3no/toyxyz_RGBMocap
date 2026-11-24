@@ -65,6 +65,9 @@ class WithdrawTest(unittest.TestCase):
         self.assertEqual({k:v for k, v in after.items() if k != 'people.json'}, {k:v for k, v in before.items() if k != 'people.json'})
         saved = after['people.json'];self.assertEqual(withdraw(root, 1, [copy]), 0);self.assertEqual(withdraw(root, 3, [other]), 0)
         self.assertEqual(files(root)['people.json'], saved)   # nothing to take out: nothing written
+        self.assertEqual(withdraw(root, 2, [other], fingerprint='made again'), 0);self.assertEqual(files(root)['people.json'], saved)   # another list: left alone
+        state = ps.load_people(root);del state['people'][1]['takes'];ps.save_people(root, state)
+        self.assertEqual(withdraw(root, 2, [other]), 0);self.assertEqual(ps.load_people(root)['people'][1]['joins'], [])   # a person without a takes key: its join on the copy still goes
 
 
 @unittest.skipUnless(importlib.util.find_spec('torch') and FFMPEG.is_file(), 'needs torch and the bundled ffmpeg')
@@ -105,34 +108,49 @@ class JoinTest(unittest.TestCase):
 
     # Building the blocks
 
-    def scene(self, video, people, W, receiver):
+    def scene(self, video, people, W, receiver, own=False):
         """A finished ExMR scene of the 3 s `video` after Find person and Reconstruct 3D: each person of `people` ((id, name))
-        has one whole take, frames 0-90; the people list's fingerprint is the video's name."""
+        has one whole take, frames 0-90, or with `own` two takes 0-40 and 50-90 joined by their own Smooth join; the people
+        list's fingerprint is the video's name. `people` None: reconstructed without Find person (no people list)."""
         root = self.base/'projects'/video.stem/'exmr';root.parent.mkdir(parents=True)
         manifest = dict(version=1, frames=90, fps=30, start=0., end=3., width=64, height=48, camera='static', source=dict(path=str(video), fps=30.),
                         pipeline=dict(model='exmr'), exmr_options=dict(static_camera=True, smoothing='none'), stages={})
+        if people is None:   # tests/test_sequence_window.py tracked()
+            root.mkdir();shutil.copy(video, root/'input.mp4')
+            (root/'project.json').write_text(json.dumps(dict(manifest, pipeline=dict(model='exmr', result='initial'))), encoding='utf-8')
+            tp.write_result(root, 'initial', b'result');return root
         tp.scene.video = video;tp.scene(root, manifest, [(ident, name, range(90)) for ident, name in people])
         np.save(root/'exmr_camera.npy', np.tile(np.eye(3, dtype=np.float32), (90, 1, 1)))
         state = ps.load_people(root)
         for person in state['people']:
-            ident = person['id'];relative = TAKE.format(ident);d = root/relative
-            motion = source(0, 90, W=W@rigid((0., .3*ident, 0.)), pelvis=self.pelvis, betas=.1 if receiver else -.2, walk=None if receiver else WALK)
-            Scene.write(None, root, relative, motion, 'exmr', hands=receiver)
-            m = json.loads((d/'project.json').read_text(encoding='utf-8'));m['person_id'] = ident
-            (d/'project.json').write_text(json.dumps(m), encoding='utf-8');os.link(root/'input.mp4', d/'input.mp4');preview(d)
-            person['takes'] = [dict(project=relative, first=0, end=90)]
+            ident = person['id'];person['takes'] = []
+            for a, b in ((0, 40), (50, 90)) if own else ((0, 90),):
+                relative = f'p{ident}/takes/{a:09d}_{b:09d}_scene_v1';d = root/relative
+                motion = source(a, b, W=W@rigid((0., .3*ident, 0.)), pelvis=self.pelvis, betas=.1 if receiver else -.2, walk=None if receiver else WALK)
+                Scene.write(None, root, relative, motion, 'exmr', hands=receiver)
+                m = json.loads((d/'project.json').read_text(encoding='utf-8'));m['person_id'] = ident
+                (d/'project.json').write_text(json.dumps(m), encoding='utf-8');os.link(root/'input.mp4', d/'input.mp4');preview(d)
+                person['takes'].append(dict(project=relative, first=a, end=b))
+            if own:person['gap_fill'] = {'40_50':{'method':'smooth'}}
         state['fingerprint'] = video.stem;ps.save_people(root, state)
+        if own:   # Fill hidden ranges of each person, as the job leaves it
+            from mocap import take_join
+            for person in state['people']:
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(take_join.main(['--project', str(root), '--person-id', str(person['id']), '--result', 'initial']), 0)
+                preview(root/f"p{person['id']}/takes/000000000_000000090_fill_v1")
         return root
 
-    def blocks(self, *people):
-        """A saved sequence of one block per entry of `people` (the people of its scene), opened in the window."""
+    def blocks(self, *people, own=False):
+        """A saved sequence of one block per entry of `people` (the people of its scene), opened in the window; with `own`
+        the people of the first block have their own filled hidden range."""
         sequence = Sequence();self.roots = []
         for k, (video, persons, W) in enumerate(zip(self.videos, people, (WA, WB, WC))):
-            root = self.scene(video, persons, W, k == 0);self.roots.append(root)
+            root = self.scene(video, persons, W, k == 0, own and k == 0);self.roots.append(root)
             sequence.add(video, 3., folders={'exmr':str(root)})
         path = self.base/'projects'/'sequences'/'s.json';path.parent.mkdir(parents=True, exist_ok=True);sequence.save(path)
         self.assertTrue(self.c.open(path), self.w.status.text());APP.processEvents()
-        self.assertEqual(self.w.people_root, self.roots[0].resolve())
+        if (self.roots[0]/'people.json').is_file():self.assertEqual(self.w.people_root, self.roots[0].resolve())
         return self.c.sequence.blocks
 
     def linked(self, n=2):
@@ -201,7 +219,7 @@ class JoinTest(unittest.TestCase):
         self.assertEqual((arg(job, '--person-id'), Path(arg(job, '--project'))), ('1', self.roots[0].resolve()))
         self.assertEqual(w.status.text(), 'Joining Anna: filling the transitions.')
         built = dict(copy='p1/takes/000000120_000000210_import_v1', take=TAKE.format(1), stamp=sequence_links.result_stamp(self.roots[1]/TAKE.format(1)),
-                     gap=30, method='smooth', root=str(self.roots[0].resolve()), person=1)
+                     gap=30, method='smooth', root=str(self.roots[0].resolve()), person=1, fingerprint='one', joins=[])
         self.assertEqual(link.built, built);self.assertEqual(self.saved()['links'][0]['built'], built)
         self.assertEqual(self.person()['gap_fill'], {'90_120':{'method':'smooth'}})   # the link's method for the new gap
         self.play_all()
@@ -383,6 +401,101 @@ class JoinTest(unittest.TestCase):
         self.assertEqual((w._people_batch, w._people_return_id, w._import_result, w._hidden_refresh), (True, 1, 'initial', True))
         self.play();self.play();self.assertFalse(w.busy)
         self.assertEqual(self.person()['takes'][-1], dict(project='p1/takes/000000120_000000210_import_v1', first=120, end=210))
+
+    # Fix round 1
+
+    def test_join_again_after_a_failed_export(self):   # import played, its export failed: the next Join takes the recorded copy out first and joins
+        first, second = self.linked();c, w = self.c, self.w;target = (second.id, 1)
+        self.join();self.wait_job('take_import');self.play();self.wait_job('export');self.fail_job()
+        self.assertTrue(pump(lambda:c.joiner is None));self.assertEqual(w.status.text(), 'Join stopped: Processing failed. The GPU ran out of memory.')
+        self.assertEqual(c.sequence.links[0].built['copy'], 'p1/takes/000000120_000000210_import_v1');self.assertEqual(self.status(target), 'out of date')
+        self.join();job = self.wait_job('take_import')   # not refused because of the copy without its preview
+        self.assertEqual(self.person()['takes'], [dict(project=TAKE.format(1), first=0, end=90)]);self.assertEqual(arg(job, '--gap'), '30')
+        self.play_all();self.assertEqual(self.status(target), 'joined')
+
+    def test_a_fill_that_fails_stops_cleanly(self):
+        first, second = self.linked();c, w = self.c, self.w;target = (second.id, 1)
+        self.join();self.wait_job('take_import');self.play();self.play();self.wait_job('take_join')
+        self.fail_job('Processing failed. Automatic fill could not connect the motion.')
+        self.assertTrue(pump(lambda:c.joiner is None))
+        self.assertEqual(w.status.text(), 'Join stopped: Processing failed. Automatic fill could not connect the motion.')
+        self.assertFalse(c.busy());self.assertEqual(self.status(target), 'out of date');self.assertEqual(c.current, first.id)
+
+    def test_an_error_inside_the_run_stops_it(self):
+        first, second = self.linked();c, w = self.c, self.w
+        with mock.patch('mocap.hidden_ranges_state.choose', side_effect=RuntimeError('boom')):
+            self.join();runner = c.joiner;self.wait_job('take_import');self.play();self.play()
+            self.assertTrue(pump(lambda:c.joiner is None))
+        self.assertEqual(w.status.text(), 'Join stopped: boom');self.assertFalse(runner.running);self.assertFalse(runner.timer.isActive())
+        self.assertFalse(c.busy());self.assertEqual(len(self.jobs), 2)
+
+    def test_a_receiver_without_a_people_list_cannot_be_linked(self):   # automatic link not made, link and menu entry refused with the reason, nothing runs
+        first, second = self.blocks(None, ((1, 'Ben'),));c, w = self.c, self.w
+        text = 'Run Find person in one.mp4 first. A block reconstructed without it has no person to continue.'
+        self.assertEqual(c.sequence.links, [])
+        self.assertFalse(c.link((first.id, 1), (second.id, 1)));self.assertEqual(w.status.text(), text)
+        from mocap.tooltips import plain_tooltip
+        menu = c._person_menu(second.id, 1);self.addCleanup(menu.deleteLater);entry = menu.actions()[0].menu().actions()[0]
+        self.assertFalse(entry.isEnabled());self.assertEqual(plain_tooltip(entry.toolTip()), text)
+        self.assertFalse(c.join());self.assertEqual(self.jobs, [])
+
+    def test_join_skips_rows_that_are_joined(self):   # Join all imports only the row not joined yet; with all joined it says so and asks nothing; the menu's Join of a joined row only says so
+        first, second = self.blocks(((1, 'Anna'), (2, 'Ben')), ((1, 'Cleo'), (2, 'Dan')));c, w = self.c, self.w
+        self.assertTrue(c.link((first.id, 1), (second.id, 1)));self.assertTrue(c.link((first.id, 2), (second.id, 2)))
+        self.join((first.id, 2));self.play_all();n = len(self.jobs)
+        self.join();self.play_all()
+        self.assertEqual([arg(a, '--person-id') for s, a in self.jobs[n:] if s in ('take_import', 'take_join')], ['1', '1'])
+        self.assertEqual(w.status.text(), 'Joined Anna across 2 blocks. Double-click the row to open it.')
+        with mock.patch.object(c, 'ask') as asked:
+            self.assertFalse(c.join());self.assertEqual(w.status.text(), 'Every linked row is already joined.')
+            self.assertFalse(c.join((second.id, 2)));self.assertEqual(w.status.text(), 'Ben is already joined.')
+        asked.assert_not_called();self.assertEqual(len(self.jobs), n+4);self.assertIsNone(c.joiner)
+
+    def test_a_choice_tuned_in_the_panel_is_kept(self):   # same gap, same method: the user's seed and description stay
+        first, second = self.linked();c, w = self.c, self.w;target = (second.id, 1)
+        self.assertTrue(c.set_transition(target, 'auto', 1.));self.join();self.play_all();self.assertEqual(self.status(target), 'joined')
+        w.gap_choice_changed('90_120', 'auto', seed=7);self.assertEqual(self.status(target), 'out of date')   # a description would need the text runtime
+        self.join();self.play_all()
+        self.assertEqual(self.person()['gap_fill']['90_120'], {'method':'auto', 'seed':7})
+        self.assertEqual(self.status(target), 'joined');self.assertEqual(len(self.generated), 2)
+
+    def test_unlink_puts_the_receivers_own_join_back(self):   # receiver with an own filled join -> Join -> Unlink -> the takes in use are the own join again
+        own = 'p1/takes/000000000_000000090_fill_v1'
+        first, second = self.blocks(((1, 'Anna'),), ((1, 'Ben'),), own=True);c, w = self.c, self.w;target = (second.id, 1)
+        self.assertEqual([t['project'] for t in ps.active_takes(self.roots[0], self.person(), 'initial')], [own])
+        self.assertEqual(len(c.sequence.links), 1, w.status.text())
+        self.join();self.play_all();self.assertEqual(self.status(target), 'joined')
+        self.assertEqual([t['project'] for t in ps.active_takes(self.roots[0], self.person(), 'initial')], ['p1/takes/000000000_000000210_fill_v1'])
+        with mock.patch.object(c, 'ask', return_value=True):self.assertTrue(c.unlink(target))
+        anna = self.person();self.assertEqual([t['project'] for t in ps.active_takes(self.roots[0], anna, 'initial')], [own])
+        self.assertEqual([j['project'] for j in anna['joins']], [own]);self.assertEqual(w.project, (self.roots[0]/own).resolve())
+        self.assertTrue(c.link((first.id, 1), target));self.join();self.play_all()   # the own join is recorded again by this Join
+        state = ps.load_people(self.roots[0]);state['people'][0]['gap_fill']['40_50'] = {'method':'auto', 'seed':0};ps.save_people(self.roots[0], state)
+        with mock.patch.object(c, 'ask', return_value=True):self.assertTrue(c.unlink(target))
+        self.assertEqual(w.status.text(), 'Fill hidden ranges again for Anna in the first block to rejoin their own takes.')
+        self.assertEqual(self.person().get('joins') or [], [])
+
+    def test_a_list_made_again_keeps_its_takes(self):   # Find person again in the receiving block: the stale link's record is cleared, its people list is not touched
+        first, second = self.linked();c, w = self.c, self.w
+        self.join();self.play_all()
+        state = ps.load_people(self.roots[0]);state['fingerprint'] = 'again';ps.save_people(self.roots[0], state);before = files(self.roots[0])['people.json']
+        c.refresh();self.assertEqual(c.sequence.dropped, []);self.assertEqual(files(self.roots[0])['people.json'], before)
+        self.assertEqual([(l.prints, l.built) for l in c.sequence.links], [(('again', 'two'), None)])   # linked again by itself, with no record
+
+    def test_a_failed_take_back_is_tried_again(self):   # a list that cannot be saved keeps the dropped links, and the next change takes the copies out
+        first, second = self.linked();c, w = self.c, self.w
+        self.join();self.play_all()
+        with mock.patch.object(ps, 'save_people', side_effect=OSError('disk full')), mock.patch.object(c, 'ask', return_value=True):
+            self.assertTrue(c.unlink((second.id, 1)))
+        self.assertEqual(w.status.text(), 'Cannot take the join back: disk full');self.assertEqual(len(c.sequence.dropped), 1)
+        self.assertEqual(len(self.person()['takes']), 2)
+        c._changed();self.assertEqual(c.sequence.dropped, []);self.assertEqual(self.person()['takes'], [dict(project=TAKE.format(1), first=0, end=90)])
+
+    def test_a_double_click_while_a_job_runs_opens_the_loaded_block(self):
+        first, second = self.linked();c, w = self.c, self.w
+        self.join();self.play_all();c.back();self.assertFalse(c.at_clip_level());w.busy = True
+        try:c.view.opened.emit(first.id, 1);self.assertTrue(c.at_clip_level())
+        finally:w.busy = False
 
 
 if __name__ == '__main__':
