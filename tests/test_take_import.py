@@ -63,6 +63,19 @@ class PlaceTest(unittest.TestCase):
         # The gap starts and ends at the same floor position: only the two takes' own heights differ.
         np.testing.assert_allclose(x[130,[0,2]],x[99,[0,2]],atol=1e-9)
         self.assertLess(np.linalg.norm((x[100:130]-x[99])[:,[0,2]],axis=1).max(),.5)
+    def test_a_receiver_with_an_earlier_take_continues_at_the_seam(self):
+        # The receiver's last take is not the first of the join chain: its own seam transform carries the import too.
+        later=source(130,200,W=WB,pelvis=P0,betas=.1);r=later['params']['initial'];later['params']['footmr_initial']=r
+        params,incam=self.ti.place(self.other['params'],PB,r,later['incam'],P0,r['betas'][0])
+        imported=dict(first=230,end=320,pelvis=P0,params=params,incam=incam,logits=self.other['logits'],boxes=np.full((90,4),np.nan),observed=np.zeros(90,bool))
+        out=assemble([self.recv,later,imported],[dict(first=100,end=130,method='smooth'),dict(first=200,end=230,method='smooth')])
+        g=out['params']['initial'];x=g['transl']+P0;own=params['initial']['transl']+P0
+        np.testing.assert_allclose(x[230,[0,2]],x[199,[0,2]],atol=1e-9)
+        h=forward(g['global_orient']);self.assertAlmostEqual(float(h[230]),float(h[199]),places=9)
+        np.testing.assert_allclose(np.linalg.norm(x[231:320]-x[230],axis=1),np.linalg.norm(own[1:]-own[0],axis=1),atol=1e-9)  # moved rigidly
+        np.testing.assert_allclose(np.diff(h[230:320]),np.diff(forward(params['initial']['global_orient'])),atol=1e-9)
+        np.testing.assert_allclose(out['incam']['transl'][230:],incam['transl'],atol=1e-12)
+        self.assertGreater(np.linalg.norm(x[199]-(r['transl'][-1]+P0)),.5)   # the chain did move the later take
     def test_lift_is_the_rest_leg_difference(self):
         rng=np.random.default_rng(1);model=dict(J_regressor=np.full((2,5),.2),v_template=rng.normal(size=(5,3)),shapedirs=rng.normal(size=(5,3,10))*.01)
         b0,b1=np.zeros(10),np.full(10,.5);leg=lambda b:(np.full(5,.2)@(model['v_template']+model['shapedirs']@b))[1]-(model['v_template'][:,1]+model['shapedirs'][:,1]@b).min()
@@ -99,7 +112,8 @@ class Scene:
     def build(self,base):
         models=base/'models';(models/'body_models/smplx').mkdir(parents=True)
         rng=np.random.default_rng(0);self.template=rng.normal(size=(5,3));self.pelvis=np.full(5,.2)@self.template
-        np.savez(models/'body_models/smplx/SMPLX_NEUTRAL.npz',J_regressor=np.full((2,5),.2),v_template=self.template,shapedirs=rng.normal(size=(5,3,10))*.01)
+        self.shapedirs=rng.normal(size=(5,3,10))*.01
+        np.savez(models/'body_models/smplx/SMPLX_NEUTRAL.npz',J_regressor=np.full((2,5),.2),v_template=self.template,shapedirs=self.shapedirs)
         patch=mock.patch.object(paths,'MODELS',models);patch.start();self.addCleanup(patch.stop)
         root=self.root=base/'scene';root.mkdir()
         subprocess.run([str(FFMPEG),'-v','error','-f','lavfi','-i','testsrc=size=64x48:rate=30','-frames:v','120','-pix_fmt','yuv420p','-c:v','libx264',str(root/'input.mp4')],check=True,creationflags=0x08000000)
@@ -182,6 +196,17 @@ class ImportWriteTest(Scene,unittest.TestCase):
         E=tpair(last['global_orient'][-1],lc['global_orient'][-1],last['transl'][-1],lc['transl'][-1],self.pelvis)
         np.testing.assert_allclose(tpair(G['global_orient'][40],C['global_orient'][40],G['transl'][40],C['transl'][40],self.pelvis),E,atol=1e-4)
         np.testing.assert_allclose(G['betas'],np.full((90,10),.1),atol=1e-7)
+    def test_placement_on_disk_uses_the_shaped_pelvis(self):
+        from mocap.take_import import Body
+        self.assertEqual(self.bring()[0],0)
+        body=Body(dict(J_regressor=np.full((2,5),.2),v_template=self.template,shapedirs=self.shapedirs));p,own=body.pelvis(np.full(10,.1)),body.pelvis(np.full(10,-.2))
+        self.assertGreater(np.linalg.norm(p-self.pelvis),1e-3)
+        G,C,last,lc=self.world(IMPORTED),self.world(IMPORTED,key='smpl_params_incam'),self.world(TAKE),self.world(TAKE,key='smpl_params_incam')
+        E=tpair(last['global_orient'][-1],lc['global_orient'][-1],last['transl'][-1],lc['transl'][-1],p)
+        for f in(0,40,89):np.testing.assert_allclose(tpair(G['global_orient'][f],C['global_orient'][f],G['transl'][f],C['transl'][f],p),E,atol=1e-6)
+        # Turned about +Y only: the pelvis joint keeps its height through the shape swap, plus the rest-leg lift.
+        S=self.world('../other/gvhmr/'+SOURCE)
+        np.testing.assert_allclose(G['transl'][:,1]+p[1],S['transl'][:,1]+own[1]+body.lift(np.full(10,-.2),np.full(10,.1)),atol=1e-6)
     def test_footmr_result_is_imported_too(self):
         from mocap.motion_tools import result_is_current
         self.assertEqual(self.bring(result='footmr_initial')[0],0)
@@ -235,6 +260,20 @@ class ImportWriteTest(Scene,unittest.TestCase):
             self.assertEqual((code,events),(1,[dict(type='failed',stage='take_import',message=message)]),message);self.assertEqual(self.stderr.getvalue(),'',message)
             self.assertEqual(self.snapshot(),before,message)
         self.assertFalse((self.root/IMPORTED).exists())
+    def test_scene_refusals_on_disk_write_nothing(self):
+        scene=self.root/'project.json';good=scene.read_bytes();m=json.loads(good)
+        later='p1/takes/000000100_000000110_scene_v1'
+        def unfinished_last():
+            import shutil
+            shutil.copytree(self.root/TAKE,self.root/later);(self.root/later/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')
+            state=ps.load_people(self.root);state['people'][0]['takes'].append(dict(project=later,first=100,end=110));ps.save_people(self.root,state)
+        cases=[(lambda:scene.write_text(json.dumps(dict(m,pipeline=dict(model='flowhmr'))),encoding='utf-8'),check.SCENE_MODEL),(unfinished_last,check.LAST.format('Anna'))]
+        if self.MODEL=='exmr':cases.append((lambda:scene.write_text(json.dumps(dict(m,exmr_options=dict(static_camera=False))),encoding='utf-8'),check.STATIC))
+        for damage,message in cases:
+            damage();before=self.snapshot()
+            self.assertEqual(self.bring(),(1,[dict(type='failed',stage='take_import',message=message)]),message);self.assertEqual(self.snapshot(),before,message)
+            scene.write_bytes(good)
+        self.assertEqual(len(cases),3 if self.MODEL=='exmr' else 2)
     def test_a_receiver_without_a_finished_take_is_refused(self):
         (self.root/TAKE/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8');before=self.snapshot()
         self.assertEqual(self.bring(),(1,[dict(type='failed',stage='take_import',message=check.RECEIVER.format('Anna'))]));self.assertEqual(self.snapshot(),before)
