@@ -20,8 +20,17 @@ codex mcp add rgbmocap -- (Join-Path $rgbMoCapInstall 'runtime\python.exe') -I -
 ## Run workflows
 
 Use the tool names returned by tools/list. CLI tools derive their arguments
-from the [command line](CLI.md) and return a job ID. Use `job_status` for the
-result, progress log or error, and `job_cancel` to stop a job from this session.
+from the [command line](CLI.md) and return a job ID. `job_list` shows active
+and recent jobs from the desktop, CLI and MCP in the same installation.
+`job_status` reads the latest phase, result or error by ID, including after
+reconnecting. `job_cancel` requests cancellation of a desktop or MCP job.
+
+MCP commands that write are run in submission order and wait for the shared
+installation lock if the desktop or another process holds it. Read-only
+checks can run while a write is waiting. Closing the MCP connection cancels
+its pending and active CLI commands and preserves their records. An owner
+that exits unexpectedly leaves records marked interrupted when read again.
+
 Examples include `models_list`, `project_inspect`, `reconstruct`, `correct`,
 `contacts_self_set`, `character`, `preview`, `export`, `stream`, and `pear`.
 For a generic native FBX, pass `format: "fbx"` and `fbx_profile: "generic"` to `export`.

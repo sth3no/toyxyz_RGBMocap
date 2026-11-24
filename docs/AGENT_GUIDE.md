@@ -3,7 +3,11 @@
 The local [MCP toolkit](MCP.md) derives headless tools from `mocap.cli.parser`.
 `tools/rgbmocap_mcp.py` owns the stdio protocol and CLI jobs.
 `mocap/mcp_desktop.py` handles desktop operations in the Qt thread of a
-managed window, behind the existing application lock.
+managed window, behind the existing application lock. `mocap/job_queue.py`
+stores workflow IDs, phases and outcomes in the installation's local SQLite
+registry. `mocap/job_queue_ui.py` reads and cancels jobs in the desktop.
+The MCP monitor claims queued writes in order and supervises its own CLI
+children. `parts_run.json` still determines which parts Resume can reuse.
 
 This guide is for agents helping users operate or modify RGB MoCap. It describes the Git/CMD version. User requests and newer verified behavior take precedence over historical benchmarks. The Windows distribution offers the English desktop interface and a command line for automation. Avoid asking for the user's videos or model weights if the existing local project is sufficient.
 

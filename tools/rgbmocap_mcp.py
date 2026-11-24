@@ -5,15 +5,17 @@ import os
 from pathlib import Path
 from queue import Empty, Queue
 import subprocess
+from sqlite3 import Error as DatabaseError
 import sys
 import tempfile
-from threading import Thread
+from threading import Event, Lock, Thread
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from mocap.cli import parser
+from mocap.cli import parser, writes_installation
+from mocap.job_queue import Jobs, failure_reason
 from mocap.mcp_cli import commands
 
 
@@ -33,8 +35,10 @@ def tool(name, description, properties=None, required=(), *, read=False):
 TEXT = {'type': 'string'}
 JOB = {'job_id': TEXT}
 CONTROLS = (
-    tool('job_status', 'Read a local CLI job result and its latest log lines.', JOB, JOB, read=True),
-    tool('job_cancel', 'Cancel a CLI job started by this MCP session.', JOB, JOB),
+    tool('job_list', 'List active and recent jobs from the desktop, CLI and MCP.',
+         {'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200}}, read=True),
+    tool('job_status', 'Read the phase, result and error of a local job.', JOB, JOB, read=True),
+    tool('job_cancel', 'Request cancellation of a desktop or MCP workflow job.', JOB, JOB),
     tool('desktop_start', 'Start a managed RGB MoCap window controlled by this MCP session.',
          {'path': TEXT}),
     tool('desktop_stop', 'Close the window started by this MCP session. Normal close prompts still apply.'),
@@ -63,37 +67,60 @@ def stop_tree(process):
         return
     if os.name == 'nt':
         subprocess.run(['taskkill.exe', '/PID', str(process.pid), '/T', '/F'],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, check=False)
-    else:
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, check=False,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    if process.poll() is None:
         process.terminate()
 
 
 @dataclass
 class Job:
-    name: str
-    process: subprocess.Popen
+    argv: list
     stdout: Path
     stderr: Path
-    cancelled: bool = False
+    queued: bool
+    process: subprocess.Popen | None = None
+    stopped: bool = False
 
-    def status(self):
-        code = self.process.poll()
-        state = 'running' if code is None else 'cancelled' if self.cancelled else 'done' if not code else 'failed'
-        with self.stderr.open('rb') as log:
-            log.seek(max(0, self.stderr.stat().st_size - LOG_BYTES))
-            tail = log.read(LOG_BYTES).decode('utf-8', errors='replace')
-        reply = dict(tool=self.name, state=state, returncode=code, log=tail)
-        if code is not None:
-            with self.stdout.open('rb') as output:
-                payload = output.read(REQUEST_BYTES + 1)
-            if len(payload) > REQUEST_BYTES:
-                reply['error'] = 'CLI result exceeds the MCP response limit.'
-            else:
-                try:
-                    reply['result'] = json.loads(payload)
-                except (UnicodeError, ValueError):
-                    reply['output'] = payload.decode('utf-8', errors='replace')
-        return reply
+    def start(self, job_id):
+        with self.stdout.open('wb') as output, self.stderr.open('wb') as log:
+            self.process = subprocess.Popen([*PYTHON, str(ROOT / 'cli_boot.py'), *self.argv], cwd=ROOT,
+                                            env=dict(os.environ, RGBMOCAP_MCP_JOB_ID=job_id),
+                                            stdin=subprocess.DEVNULL, stdout=output, stderr=log,
+                                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+
+    def log(self):
+        if not self.stderr.is_file():
+            return ''
+        with self.stderr.open('rb') as stream:
+            stream.seek(max(0, self.stderr.stat().st_size - LOG_BYTES))
+            return stream.read(LOG_BYTES).decode('utf-8', errors='replace')
+
+    def finish(self, jobs, job_id, code):
+        with self.stdout.open('rb') as output:
+            payload = output.read(REQUEST_BYTES + 1)
+        result, error = None, None
+        if len(payload) > REQUEST_BYTES:
+            error = 'CLI result exceeds the MCP response limit.'
+        elif payload:
+            try:
+                result = json.loads(payload)
+            except (UnicodeError, ValueError):
+                result = {'output': payload.decode('utf-8', errors='replace')}
+        log = self.log()
+        if self.stopped or code == 130:
+            state, error = 'cancelled', 'Cancelled.'
+        elif code:
+            state = 'failed'
+            error = error or (failure_reason(result) if result and 'output' not in result
+                              else log.strip() or f'CLI exited with code {code}.')
+        else:
+            state = 'done'
+        jobs.finish(job_id, state, result=result, error=error, returncode=code, log=log)
+
+    def discard_logs(self):
+        self.stdout.unlink(missing_ok=True)
+        self.stderr.unlink(missing_ok=True)
 
 
 class Desktop:
@@ -149,35 +176,92 @@ class Desktop:
 
 
 class Toolkit:
-    def __init__(self, folder):
+    def __init__(self, folder, *, jobs=None):
         self.folder = Path(folder)
-        self.commands = {command.name: command for command in commands(parser())}
+        self.parser = parser()
+        self.commands = {command.name: command for command in commands(self.parser) if command.path[0] != 'jobs'}
+        self.registry = jobs if jobs is not None else Jobs(ROOT)
         self.jobs = {}
         self.desktop = None
+        self.lock = Lock()
+        self.closed = Event()
+        self.wake = Event()
+        self.monitor = Thread(target=self.watch, name='rgbmocap-jobs', daemon=True)
+        self.monitor.start()
 
     def tools(self):
         return [command.tool() for command in self.commands.values()] + list(CONTROLS)
 
+    def advance(self):
+        with self.lock:
+            for job_id, job in list(self.jobs.items()):
+                if job.process is not None:
+                    code = job.process.poll()
+                    if code is None and (self.closed.is_set() or self.registry.cancel_requested(job_id)):
+                        stop_tree(job.process)
+                        job.stopped = True
+                        code = job.process.wait(timeout=10)
+                    if code is None:
+                        continue
+                    job.finish(self.registry, job_id, code)
+                elif self.closed.is_set() or self.registry.cancel_requested(job_id):
+                    self.registry.finish(job_id, 'cancelled', error='Cancelled before starting.')
+                elif not job.queued or self.registry.claim(job_id):
+                    try:
+                        job.start(job_id)
+                    except OSError as error:
+                        self.registry.finish(job_id, 'failed', error=str(error), returncode=1)
+                    else:
+                        continue
+                else:
+                    continue
+                del self.jobs[job_id]
+                job.discard_logs()
+
+    def watch(self):
+        while True:
+            try:
+                self.advance()
+            except (DatabaseError, OSError, ValueError, subprocess.SubprocessError) as error:
+                print(f'RGB MoCap job monitor: {error}', file=sys.stderr)
+            if self.closed.is_set() and not self.jobs:
+                return
+            self.wake.wait(.25)
+            self.wake.clear()
+
     def call(self, name, args):
         if name in self.commands:
-            command = self.commands[name]
-            argv = command.argv(args)
-            job_id = uuid4().hex
-            stdout = self.folder / (job_id + '.stdout')
-            stderr = self.folder / (job_id + '.stderr')
-            with stdout.open('wb') as output, stderr.open('wb') as log:
-                process = subprocess.Popen([*PYTHON, str(ROOT / 'cli_boot.py'), *argv], cwd=ROOT,
-                                           stdin=subprocess.DEVNULL, stdout=output, stderr=log)
-            self.jobs[job_id] = Job(name, process, stdout, stderr)
-            return {'job_id': job_id, 'state': 'running'}
+            argv = self.commands[name].argv(args)
+            try:
+                parsed = self.parser.parse_args(argv)
+            except SystemExit as error:
+                raise ValueError('Invalid command arguments.') from error
+            queued = writes_installation(parsed)
+            project = getattr(parsed, 'project', None) or getattr(parsed, 'video', None)
+            with self.lock:
+                job_id = self.registry.add('mcp', name, project=(ROOT / project).resolve() if project else None,
+                                           queued=queued)
+                self.jobs[job_id] = Job(argv, self.folder / (job_id + '.stdout'),
+                                        self.folder / (job_id + '.stderr'), queued)
+            self.wake.set()
+            return {'job_id': job_id, 'state': 'queued' if queued else 'running'}
+        if name == 'job_list':
+            if args.keys() - {'limit'}:
+                raise ValueError('Expected an optional job count.')
+            return {'jobs': self.registry.list(args.get('limit', 50))}
         if name in {'job_status', 'job_cancel'}:
-            if set(args) != {'job_id'} or args['job_id'] not in self.jobs:
+            if set(args) != {'job_id'}:
                 raise ValueError('Choose an existing local job_id.')
-            job = self.jobs[args['job_id']]
-            if name == 'job_cancel' and job.process.poll() is None:
-                stop_tree(job.process)
-                job.cancelled = True
-            return {'job_id': args['job_id'], **job.status()}
+            job_id = args['job_id']
+            if name == 'job_cancel':
+                result = self.registry.cancel(job_id)
+                self.wake.set()
+                return result
+            with self.lock:
+                result = self.registry.get(job_id)
+                if job_id in self.jobs and result['state'] == 'running':
+                    result['log'] = self.jobs[job_id].log()
+            return result
         if name == 'desktop_start':
             if args.keys() - {'path'} or ('path' in args and not isinstance(args['path'], str)):
                 raise ValueError('Expected an optional video or project path.')
@@ -192,12 +276,17 @@ class Toolkit:
         raise ValueError(f'Unknown tool {name!r}.')
 
     def close(self):
-        for job in self.jobs.values():
-            if job.process.poll() is None:
-                stop_tree(job.process)
-                job.process.wait(timeout=10)
+        self.closed.set()
+        self.wake.set()
         if self.desktop is not None:
             self.desktop.close()
+        self.monitor.join(timeout=20)
+        if self.monitor.is_alive():
+            # A failing registry must not prevent child cleanup on disconnect.
+            with self.lock:
+                for job in self.jobs.values():
+                    if job.process is not None:
+                        stop_tree(job.process)
 
 
 def reply(request, toolkit):
@@ -230,7 +319,7 @@ def reply(request, toolkit):
                 else:
                     result = dict(content=[dict(type='text', text=json.dumps(data, ensure_ascii=False))],
                                   structuredContent=data)
-            except (KeyError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as error:
+            except (DatabaseError, KeyError, OSError, RuntimeError, TypeError, ValueError, subprocess.SubprocessError) as error:
                 result = dict(isError=True, content=[dict(type='text', text=str(error))])
         case _:
             return {**header, 'error': dict(code=-32601, message='Method not found')}

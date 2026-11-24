@@ -188,6 +188,19 @@ after a worker or input failure. Outputs from completed jobs remain available.
 }
 ```
 
+### Job queue
+
+```powershell
+.\RGBMoCapCLI.cmd jobs list --json
+.\RGBMoCapCLI.cmd jobs status JOB_ID --json
+.\RGBMoCapCLI.cmd jobs cancel JOB_ID --json
+```
+
+The list includes active and recent jobs from the desktop, CLI and MCP in this
+installation. A foreground CLI result includes its `job_id`. Use it to read
+the last phase, result or error after the command exits. Use Ctrl+C for a
+foreground command and `jobs cancel` for a desktop or MCP job.
+
 Commands with `--dry-run` plan their operations without writing project or
 output files. `--json` emits a result with `schema_version` and `ok`.
 Progress and worker logs go to stderr. Exit status is 0 for success, 1 for

@@ -186,6 +186,8 @@ def file_list(files):
 def import_files(profile, files, report, *, dry_run=False):
     paths = file_list(files)
     from .paths import ROOT
+    if set_phase := getattr(report, 'set_phase', None):
+        set_phase('unreal_check' if dry_run else 'unreal_import', project=profile['project'])
     with tempfile.TemporaryDirectory(prefix='rgbmocap-unreal-') as folder:
         root = Path(folder)
         request, response = root / 'request.json', root / 'result.json'

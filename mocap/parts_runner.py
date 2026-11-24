@@ -166,6 +166,7 @@ class PartsRunner(QObject):
         self.view = (window.active_person_id, Path(window.project) if window.project is not None else None, (window.slider.clip_in, window.slider.clip_out))
         self.index, self.phase, self.wait, self.stopping, self.seen, self.batch = 0, 'next', 0, False, {}, None
         self.memory_failed = False
+        self.job_id = None
         self.timer = QTimer(self);self.timer.setInterval(200);self.timer.timeout.connect(self.tick)
 
     def save(self):
@@ -175,6 +176,10 @@ class PartsRunner(QObject):
         atomic_json(self.root/RECORD, self.record)
 
     def start(self):
+        from .job_queue_ui import note
+        self.job_id = note(self.w, 'add', 'gui', 'Reconstruct in parts', project=self.root)
+        if self.job_id:
+            self.w._queue_timer.start()
         try:
             if self.superseded:
                 self.mark()
@@ -198,6 +203,7 @@ class PartsRunner(QObject):
         """Stop scheduling and mark finished parts before the window closes."""
         self.stopping = True;self.timer.stop();self.phase = 'stopped'
         self.tidy(view=False)
+        self.finish_record('cancelled', 'The window closed before reconstruction finished.')
         if getattr(self.w, 'parts_runner', None) is self:self.w.parts_runner = None
 
     def label(self, k=None):return f'Part {(self.index if k is None else k)+1} of {len(self.plan)}'
@@ -324,6 +330,9 @@ class PartsRunner(QObject):
         for name, value in self.options.items():_restore(getattr(w, name), value)
         w.active_result = w.selected_result()
         w.status.setText(f'{self.label()}: frames {a+1}–{b}.');w.log.append(w.status.text())
+        if self.job_id:
+            from .job_queue_ui import note
+            note(w, 'phase', self.job_id, self.label(), message=w.status.text())
         self.phase, self.wait = 'video', 0
         self.step()
 
@@ -347,7 +356,7 @@ class PartsRunner(QObject):
                 return
             if self.memory_failed and not self.stopping:
                 status += ' No smaller retry is available. See Console for memory details.'
-            return self.stop(f'{self.label()} stopped: {status} {KEPT}')
+            return self.stop(f'{self.label()} stopped: {status} {KEPT}', state='failed')
         if cancelled:return self.stop(f'Reconstruct in parts was cancelled at {self.label().lower()}. {KEPT}')
         if not self.ours():return self.stop(f'The scene changed, so Reconstruct in parts stopped after {self.label().lower()}. {KEPT}')
         self.mark()
@@ -442,7 +451,7 @@ class PartsRunner(QObject):
         if Path(self.w.project or '') != project:self.w.activate_person(ident, project)
         if Path(self.w.project or '') == project and self.w.info and trim[1] <= self.w.info['frames']:self.w.slider.set_clip(*trim)
 
-    def stop(self, message):
+    def stop(self, message, *, state=None):
         self.timer.stop();self.phase = 'stopped'
         errors = self.tidy()
         if message is None:
@@ -451,8 +460,19 @@ class PartsRunner(QObject):
         new = [error for error in dict.fromkeys(errors) if error not in message]  # the error that stopped the run is said once
         if new:message += f' The People list could not be updated: {new[0]}'
         self.w.status.setText(message);self.w.log.append(message)
+        if state is None:
+            state = ('cancelled' if self.stopping else 'done'
+                     if self.record.get('complete') and not errors else 'failed')
+        self.finish_record(state, message)
         if getattr(self.w, 'parts_runner', None) is self:self.w.parts_runner = None
         self.w.update_readiness()
+
+    def finish_record(self, state, message):
+        if self.job_id:
+            from .job_queue_ui import note
+            result = dict(message=message, checkpoint=str(self.root / RECORD))
+            note(self.w, 'finish', self.job_id, state, result=result, error=message if state != 'done' else None)
+            self.job_id = None
 
     def summary(self):
         unready = [self.label(k) for k in range(len(self.plan)) if not self.part_ready(k)]

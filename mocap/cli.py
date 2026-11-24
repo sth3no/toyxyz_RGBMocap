@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
-from contextlib import nullcontext
+from contextlib import contextmanager, ExitStack, nullcontext
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 from .cli_arguments import camera_refinement_flag, option_parsers
 from .motion_tools import MOTION_TOOLS, RESULTS
@@ -128,6 +130,14 @@ def parser():
     unreal_import.add_argument('--profile', type=Path, required=True)
     unreal_import.add_argument('fbx', type=Path, nargs='+')
     unreal_import.add_argument('--dry-run', action='store_true', help='Check compatibility without importing assets.')
+    jobs = commands.add_parser('jobs', help='Read and manage local workflow jobs.')
+    actions = jobs.add_subparsers(dest='job_action', required=True)
+    listing = actions.add_parser('list', help='List active and recent workflow jobs.')
+    listing.add_argument('--limit', type=int, default=50)
+    for action in ('status', 'cancel'):
+        actions.add_parser(action).add_argument('job_id')
+    for action in actions.choices.values():
+        action.add_argument('--json', action='store_true', help='Print one JSON result to stdout.')
     option_parsers(commands, OFFLINE_MODELS, take_flags)
     for sub in (rec, correct, exp, inspect, copy, opn, check, profile, unreal_import):
         sub.add_argument('--json', action='store_true', help='Print one JSON result to stdout.')
@@ -160,38 +170,107 @@ def format_output(result, machine):
     print(json.dumps(result, ensure_ascii=False, indent=None if machine else 2))
 
 
-def main(argv=None):
-    args = parser().parse_args(argv)
+def writes_installation(args):
+    read_only = (args.command in {'open', 'check', 'jobs'}
+                 or args.command == 'project' and args.project_action == 'inspect'
+                 or args.command == 'models' and args.action == 'list'
+                 or args.command == 'face' and args.action == 'inspect'
+                 or args.command == 'pear' and args.list_devices
+                 or args.command == 'contacts' and args.action in {'list', 'self-list'})
+    return not read_only and not getattr(args, 'dry_run', False)
+
+
+class JobReport:
+    def __init__(self, jobs, job_id):
+        self.jobs, self.job_id = jobs, job_id
+
+    def __call__(self, message):
+        print(message, file=sys.stderr, flush=True)
+
+    def set_phase(self, phase, **fields):
+        self.jobs.phase(self.job_id, phase, **fields)
+
+    def check_owner(self):
+        if not self.jobs.owned(self.job_id):
+            raise KeyboardInterrupt
+
+
+@contextmanager
+def wait_for_installation(report):
+    from tools.session_lock import AppBusyError, app_lock
+    report.set_phase('waiting_for_installation', message='Waiting for RGB MoCap to release the installation lock.')
+    with ExitStack() as stack:
+        while True:
+            report.check_owner()
+            try:
+                stack.enter_context(app_lock(ROOT))
+            except AppBusyError:
+                time.sleep(.5)
+            else:
+                break
+        yield
+
+
+def dispatch(args, report, managed):
     from tools.session_lock import app_lock
     from tools.source_launch import verify
 
+    lock = nullcontext()
+    if writes_installation(args):
+        lock = wait_for_installation(report) if managed else app_lock(ROOT)
+    with lock:
+        if managed:
+            report.check_owner()
+        report.set_phase(args.command)
+        verify(ROOT)
+        from .runtime_registry import activate
+        activate(ROOT, 'gui')
+        from .runtime_limits import configure_preview_cpu
+        configure_preview_cpu()
+        if args.command == 'open':
+            return open_app(args.path)
+        from .cli_workflows import execute
+        return execute(args, report)
+
+
+def main(argv=None):
+    from sqlite3 import Error as DatabaseError
+    from .job_queue import Jobs, failure_reason
+
+    args = parser().parse_args(argv)
+    jobs = Jobs()
+    job_id = None
+    managed_id = os.environ.pop('RGBMOCAP_MCP_JOB_ID', None)
     code, result = 0, {}
     try:
-        read_only = (args.command in {'open','check'} or args.command == 'project' and args.project_action == 'inspect'
-                     or args.command == 'models' and args.action == 'list'
-                     or args.command == 'face' and args.action == 'inspect'
-                     or args.command == 'pear' and args.list_devices
-                     or args.command == 'contacts' and args.action in {'list', 'self-list'})
-        mutates = not read_only and not getattr(args, 'dry_run', False)
-        with app_lock(ROOT) if mutates else nullcontext():
-            verify(ROOT)
-            from .runtime_registry import activate
-            activate(ROOT, 'gui')
-            from .runtime_limits import configure_preview_cpu
-            configure_preview_cpu()
-            if args.command == 'open':
-                result = open_app(args.path)
+        if args.command == 'jobs':
+            if args.job_action == 'list':
+                result = {'jobs': jobs.list(args.limit)}
             else:
-                from .cli_workflows import execute
-                result = execute(args, lambda message: print(message, file=sys.stderr, flush=True))
-                if result.get('failed'):
-                    code = 1
+                action = jobs.get if args.job_action == 'status' else jobs.cancel
+                result = {'job': action(args.job_id)}
+        else:
+            if managed_id:
+                job_id = managed_id
+            else:
+                project = getattr(args, 'project', None) or getattr(args, 'video', None)
+                job_id = jobs.add('cli', args.command, project=project.resolve() if project else None)
+            result = dispatch(args, JobReport(jobs, job_id), bool(managed_id))
+            if result.get('failed'):
+                code = 1
     except KeyboardInterrupt:
         code, result = 130, {'error': 'Cancelled.'}
     except (FileNotFoundError, ValueError) as error:
         code, result = 2, {'error': str(error)}
-    except (KeyError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (DatabaseError, KeyError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         code, result = 1, {'error': str(error)}
+    if job_id and not managed_id:
+        state = 'cancelled' if code == 130 else 'failed' if code else 'done'
+        try:
+            jobs.finish(job_id, state, result=result, error=failure_reason(result) if code else None, returncode=code)
+        except (DatabaseError, OSError) as error:
+            print(f'Could not save the job result: {error}', file=sys.stderr)
+        result = {'job_id': job_id, **result}
     if args.json or not code:
         format_output({'schema_version': COMMAND_SCHEMA, 'ok': not code, **result}, args.json)
     else:

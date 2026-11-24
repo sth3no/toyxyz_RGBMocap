@@ -732,6 +732,8 @@ def build_workspace(w):
     w.export_preview_action.setToolTip(tooltip_text('Save the selected input video beside the current 3D viewport as MP4 over the timeline trim. Keeps the current view, visible people/characters and viewport overlays. Includes source audio when available. Not available in PEAR live mode.'))
     w.export_preview_action.setEnabled(False)
     file_menu.addAction("Open Project Folder", w.open_folder)
+    from .job_queue_ui import show as show_job_queue
+    file_menu.addAction('Job Queue...', lambda: show_job_queue(w))
     file_menu.addSeparator()
     file_menu.addAction("Settings...", lambda: show_appearance_settings(w))
     file_menu.addSeparator()

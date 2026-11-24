@@ -597,6 +597,14 @@ Automatic can overlap bounded CPU image preparation with GPU work when CPU/RAM
 headroom permits; Low Memory disables that prefetch. For measured worker-startup
 and feature-stage gains, see [resource modes and optimizations](PERFORMANCE.md).
 
+### Job Queue
+
+Choose **File > Job Queue...** to see active and recent workflow jobs from
+RGB MoCap, the CLI and MCP. Select a row to see its job ID, result or error.
+**Cancel Job** requests a stop for a desktop or MCP job. A foreground CLI
+command can be stopped with Ctrl+C in its terminal. To continue a stopped
+long reconstruction, use **Resume** in **Reconstruct in parts...**.
+
 ### Appearance
 
 Choose **File > Settings...** to select **Dark** or **Light** and adjust

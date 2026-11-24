@@ -289,9 +289,28 @@ which FBX failed the root check. A repeat import refused the existing asset.
 The round trip used the null renderer and existing synthetic motion files.
 The final subprocess launcher also completed a CLI dry run against a new
 destination with installation verification and runtime activation stubbed in
-the source worktree. The MCP schema exposed both Unreal tools and the export
-profile option. The import was checked with Generic FBX files. Manny/Quinn
-assets and the chained export-to-import CLI path were not exercised.
+the source worktree. A subsequent managed CLI run used `export --unreal-profile`
+with a committed synthetic 30-frame take. The native export worker wrote a
+Generic FBX, and Unreal saved an AnimSequence of 0.9667 s to the chosen
+Skeletal Mesh's Skeleton. Manny/Quinn and user character assets were not exercised.
+
+## Shared workflow job queue (2026-11-24)
+
+The offscreen desktop submitted a simulated batch and cancelled it through
+Job Queue. A foreground CLI failure remained visible through MCP with its
+original phase and error. SQLite tests exercised FIFO claims across connections,
+terminal states and recovery of records whose owner exited.
+
+A stdio client initialized, pinged and listed 43 tools from a scratch managed
+checkout. With the scratch installation lock held, its first write waited and
+the next stayed queued. CLI cancelled the second job. A real Unreal dry run
+completed while the first write waited, and releasing the lock let the first
+write finish. An EOF cancelled a waiting write. A new stdio session retrieved
+the earlier results and cancellation states. These checks used synthetic data
+and did not run motion inference on the GPU.
+
+The Windows suite ran 1,327 tests with 1,309 passing and 18 skipped. After
+the final job phase and cancellation edits, 81 targeted tests passed.
 
 ## Native FBX import in Unreal 5.8.4 (2026-11-24)
 
