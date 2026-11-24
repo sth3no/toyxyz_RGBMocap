@@ -984,6 +984,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         name, _ = QFileDialog.getOpenFileName(self, "Open Video", "", "Videos (*.mp4 *.mov *.avi *.mkv *.webm)")
         if name:
             self.load_video(Path(name))
+            self.sequence_ui.opened_video(Path(name))
 
     def load_video(self, path):
         if self._pear_active:return self.load_pear_videos([path])

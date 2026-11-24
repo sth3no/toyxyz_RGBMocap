@@ -716,6 +716,7 @@ def build_workspace(w):
 
     file_menu = w.menuBar().addMenu("File")
     w.open_actions = [file_menu.addAction("Open Video...", w.choose_video), file_menu.addAction("Open Project...", w.choose_project)]
+    from . import sequence_ui; sequence_ui.build(w, file_menu)
     w.import_character_action=file_menu.addAction('Import Character...',w.choose_character)
     w.import_character_action.setToolTip('Import a Mixamo FBX, VRM or PMX humanoid. Right-click its People row to retarget a source person.')
     w.save_project_action = file_menu.addAction('Save Project As...', w.save_project_as)
