@@ -59,6 +59,60 @@ frames they share.
   joining real parts, preview or export of a long joined take, the controls on
   a real screen.
 
+### Fixes after a review of Reconstruct in parts (2026-11-24)
+
+- What changed: a part is finished when its base motion is ready (as the
+  Hidden ranges panel decides), not the corrected result that every later part
+  makes out of date; take paths from `people.json` are resolved in the scene
+  before that check (the first version passed them unresolved, so the check
+  raised as soon as a part had a take); the runner's timer slot catches every
+  error and stops with it; it waits while another job runs, takes only its own
+  person batch for a part (`batch_serial`, `last_batch` recorded by the window),
+  and stops when the window shows another scene; Cancel Job works between
+  parts; closing the window stops the run; parts are planned with the frames
+  the person job makes of a trim; seam marks name their two takes; the user's
+  view, trim and checks come back on every exit; a frame held open is kept and
+  counted; the dialog and the end message say when the parts cannot be joined.
+- The window tests were rewritten (`tests/test_parts_window.py`, 52): the real
+  `run_full`, `input_jobs`, `input_person_jobs` and `start_jobs` run; only the
+  queue's `next_job` starts no worker but records the batch, and the test ends
+  a batch through the real end of `next_job` (`finish_people_jobs`, status).
+  `mocap.models.missing` returns nothing (no models in tests). Takes are
+  written from each job's own first and end frames with the files the real
+  `selected_export`, `result_is_current` and shared scene floor receipt read
+  (sources receipts, bone preview records, `scene_camera.json`,
+  `people_scene.json`, a `scene_floor_resolved.json` built with the real
+  `scene_floor.inputs` and `signature`, version 2 correction reports). New:
+  Motion Correction on with part 1's corrected result really out of date and
+  the run still finished and skipped the second time; parts without a ready
+  result named; Find person clicked between parts (the job is waited for, the
+  run stops, neither scene's `people.json` is written by the run); a bone
+  preview (`rig`) job between parts and right after a part or a failed part;
+  an error at the start and between parts; Cancel Job between parts; closing
+  the window; a frame held open; the view and trim restored; the join
+  message for ExMR without Static Camera; the whole class again with a scene
+  end one frame short (last part 225–299, all finished, nothing run twice).
+- Before the fix, the new window tests were run against the code of fdf8399 in
+  a scratch copy: they failed (the unresolved path raised in every run with a
+  take); with only the path resolved, the corrected-result test ended with `3
+  of 4 parts have no ready result`, the Find person and bone preview tests
+  showed the other job counted as part 2, and the error, close and cancel
+  tests left the run going. In that Find person run the original `people.json`
+  was not overwritten, because the new scene's people had no takes to mark.
+- `tests/test_parts.py` (17, 2 skipped): plus `job_range`, a frame held open
+  (kept and counted) and two directory-junction tests made with `mklink /J`
+  (a frame folder that is a junction, a junction named like a frame), which
+  ran; the two symbolic-link tests are still skipped (Developer Mode).
+  `tests/test_overlap_join.py` (26) and `tests/test_overlap_panel.py` (5) use
+  the new marks; old marks without take projects match nothing.
+- The whole `tests` folder in one process: 914 tests passed, 17 skipped, none
+  failed. An earlier whole-folder run hung in the Find person test (it passed
+  alone); after the test also replaced `mocap.gui.missing` and
+  `open_model_manager`, so no Model Manager dialog can open, it passed.
+- Not run: a real Reconstruct 3D inside a run, real workers, models or GPU, a
+  real long video, Motion Correction's real correct stage, a bone preview job
+  started by a real screen, the controls on a real screen.
+
 ## Take from another video (2026-11-24)
 
 **Import take from another project...** in the People list adds a finished
