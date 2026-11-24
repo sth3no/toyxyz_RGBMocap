@@ -8,7 +8,8 @@ TEXT_LIMIT=200  # characters of an automatic fill's description
 OVERLAP_NOTE='Parts overlap: blended'
 TOUCH_NOTE='These takes meet without a shared frame, so they cannot be joined. Reconstruct one of them with an overlap.'
 SHARED_NOTE='This overlap would blend every frame of a take, so it is not joined.'
-# Reconstruct in parts marks the seams between its own parts with this choice; other takes that share frames are not joined.
+# Reconstruct in parts marks the seams between its own parts with this choice and the two takes' projects (parts_mark);
+# other takes that share frames are not joined. A mark without the projects (the first version) matches no seam.
 PARTS_SEAM={'method':'parts'}
 
 def printable(text):
@@ -52,7 +53,9 @@ def gap_key(gap):return f"{gap['first']}_{gap['end']}"
 
 def seam_key(seam):return f"parts_{seam['first']}_{seam['end']}"
 
-def marked(seam,choices):return isinstance(choices,dict) and choices.get(seam_key(seam))==PARTS_SEAM
+def parts_mark(seam):return {**PARTS_SEAM,'takes':[seam['before']['project'],seam['after']['project']]}
+
+def marked(seam,choices):return isinstance(choices,dict) and choices.get(seam_key(seam))==parts_mark(seam)
 
 def listed(takes,choices):
     """The Hidden ranges rows: every gap, and each overlap or meeting point between two parts that Reconstruct in parts marked."""

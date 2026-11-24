@@ -667,7 +667,7 @@ def build_workspace(w):
         ask(w)
     w.parts_runner = None
     w.parts_button = button("Reconstruct in parts...", reconstruct_in_parts, action_buttons)
-    w.parts_button.setToolTip(tooltip_text('Reconstruct a long trimmed range one part after another for the people found by Find person. Join the parts afterwards with Fill hidden ranges.'))
+    w.parts_button.setToolTip(tooltip_text('Reconstruct a long trimmed range one part after another for the people found by Find person. Where Fill hidden ranges supports the model and settings, it joins the parts afterwards; the dialog says whether it can.'))
     w.mesh_button = button("Prepare Preview", w.prepare_mesh, action_buttons)
     w.mesh_button.setToolTip(tooltip_text('Prepare the 3D mesh and skeleton from the selected motion result. Available after reconstruction; does not run AI inference again.'))
     w.cancel_button = button("Cancel Job", w.cancel_job, action_buttons)

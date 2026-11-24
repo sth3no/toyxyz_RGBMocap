@@ -1,6 +1,9 @@
-"""Reconstruct in parts on the real main window offscreen; Reconstruct 3D itself is replaced by a stand-in that records the
-trim and the checked people and leaves the window busy, and the test plays the end of each batch. Needs PySide6 and ffmpeg."""
-import json,os,shutil,subprocess,tempfile,time,types,unittest
+"""Reconstruct in parts on the real main window offscreen. The Reconstruct 3D path is real (run_full, input_person_jobs,
+start_jobs) up to the job queue: the queue's next_job starts no worker but records the batch, and the test plays the
+batch's end through the real end of next_job. Takes are written on disk as the person job and the batch leave them, with
+the files the app's own readiness checks read (selected_export, result_is_current, the shared scene floor receipt).
+Needs PySide6 and ffmpeg."""
+import json,os,shutil,stat,subprocess,tempfile,time,types,unittest
 from pathlib import Path
 from unittest import mock
 
@@ -14,6 +17,8 @@ from mocap import parts_runner,paths,people_store as ps
 APP=QApplication.instance() or QApplication([])
 FFMPEG=paths.ROOT/'tools/bin/ffmpeg.exe'
 PLAN=[(0,90),(75,165),(150,240),(225,300)]   # 300 frames in parts of 3 s sharing 0.5 s
+SEEN={1:range(300),2:range(100)}   # Anna is seen all the time, Ben only in frames 0-99
+IDENTITY=[[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
 
 
 def application():
@@ -28,88 +33,168 @@ def pump(until,seconds=30):
     return until()
 
 
+def stamp(path):
+    s=Path(path).stat();return [s.st_size,s.st_mtime_ns]
+
+
+def write_result(d,kind,payload):
+    """A finished result of `kind` in take `d`: the motion file, its sources receipt and the bone preview with its BVH."""
+    from mocap.mixamo_data import VERSION
+    from mocap.motion_tools import RESULTS
+    result=d/RESULTS[kind][0];result.write_bytes(payload)
+    (d/f'{kind}_sources.json').write_text(json.dumps({result.name:stamp(result)}),encoding='utf-8')
+    bvh=d/f'{kind}_motion.bvh';bvh.write_bytes(b'bvh '+payload)
+    (d/f'{kind}_mixamo.json').write_text(json.dumps(dict(version=VERSION,kind=kind,fps=30.,code_stats={'mixamo_data.py':stamp(paths.ROOT/'mocap/mixamo_data.py')},
+                                                         sources={},outputs={bvh.name:stamp(bvh)},bvh_file=bvh.name)),encoding='utf-8')
+
+
+def correct(root,takes):
+    """The correct stage of a batch: one shared floor resolved over every take now in the scene (the real scene_floor
+    inputs and signature), then each new take's corrected result bound to it."""
+    from mocap import scene_floor
+    from mocap.correction_settings import effective_options
+    options=scene_floor.ensure_config(root);context=scene_floor.inputs(root)
+    record=dict(version=scene_floor.VERSION,options=options,inputs=context,floor=0.,samples=0,warning='',signature=scene_floor.signature(options,context,0.),method='test')
+    (root/'scene_floor_resolved.json').write_text(json.dumps(record),encoding='utf-8')
+    for d in takes:
+        state=json.loads((d/'project.json').read_text(encoding='utf-8'))
+        (d/'corrected_initial_correction.json').write_text(json.dumps(dict(version=2,options=effective_options(d,state),fps=30,
+                                                                             shared_floor=dict(signature=record['signature'],floor=0.))),encoding='utf-8')
+        write_result(d,'corrected_initial',b'corrected')
+
+
+def scene(root,manifest,people):
+    """A scene folder after Find person: the video, the person previews with their tracking, people.json."""
+    root.mkdir();shutil.copy(scene.video,root/'input.mp4')
+    (root/'project.json').write_text(json.dumps(manifest),encoding='utf-8')
+    rows=[]
+    for ident,name,seen in people:
+        preview=root/f'p{ident}';preview.mkdir();observed=np.zeros(manifest['frames'],bool);observed[list(seen)]=True
+        np.savez_compressed(preview/'tracking.npz',boxes=np.tile(np.array([10,10,30,40],np.float32),(manifest['frames'],1)),observed=observed,K=np.eye(3,dtype=np.float32))
+        (preview/'project.json').write_text(json.dumps(dict(manifest,people_root='..',person_id=ident,person_preview=True)),encoding='utf-8')
+        shutil.copy(root/'input.mp4',preview/'input.mp4')
+        rows.append(dict(id=ident,name=name,color='#b5b5b5' if ident==1 else '#3366aa',checked=True,first=0,last=len(seen),observations=len(seen),
+                         preview=f'p{ident}',takes=[]))
+    ps.save_people(root,dict(version=ps.VERSION,input=ps.media_receipt(root),people=rows,observations='x/observations.sqlite',active=1,method='default',max_gap_seconds=.5))
+
+
 @unittest.skipUnless(FFMPEG.is_file(),'needs the bundled ffmpeg')
 class RunnerTest(unittest.TestCase):
-    """A 10 s scene after Find person: Anna is seen all the time, Ben only in frames 0-99."""
+    """A 10 s ExMR scene with a static camera after Find person."""
     MODEL='exmr'
+    END=10.
     def setUp(self):
-        application();self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);base=Path(self.tmp.name)
+        application();self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);base=self.base=Path(self.tmp.name)
         home=mock.patch.object(paths,'HOME',base);home.start();self.addCleanup(home.stop)
-        root=self.root=base/'scene';root.mkdir()
+        video=scene.video=base/'video.mp4'
         subprocess.run([str(FFMPEG),'-v','error','-f','lavfi','-i','testsrc=size=64x48:rate=30','-frames:v','300','-pix_fmt','yuv420p','-c:v','libx264',
-                        str(root/'input.mp4')],check=True,creationflags=0x08000000)
-        self.manifest=dict(version=1,frames=300,fps=30,start=0.,end=10.,width=64,height=48,camera='static',source=dict(path=str(root/'input.mp4'),fps=30.),
+                        str(video)],check=True,creationflags=0x08000000)
+        self.manifest=dict(version=1,frames=300,fps=30,start=0.,end=self.END,width=64,height=48,camera='static',source=dict(path=str(video),fps=30.),
                            pipeline=dict(model=self.MODEL),exmr_options=dict(static_camera=True,smoothing='none'),stages={})
-        (root/'project.json').write_text(json.dumps(self.manifest),encoding='utf-8')
-        people=[]
-        for ident,name,seen in((1,'Anna',range(300)),(2,'Ben',range(100))):
-            preview=root/f'p{ident}';preview.mkdir();observed=np.zeros(300,bool);observed[list(seen)]=True
-            np.savez_compressed(preview/'tracking.npz',boxes=np.tile(np.array([10,10,30,40],np.float32),(300,1)),observed=observed,K=np.eye(3,dtype=np.float32))
-            (preview/'project.json').write_text(json.dumps(dict(self.manifest,people_root='..',person_id=ident,person_preview=True)),encoding='utf-8')
-            shutil.copy(root/'input.mp4',preview/'input.mp4')
-            people.append(dict(id=ident,name=name,color='#b5b5b5' if ident==1 else '#3366aa',checked=True,first=0,last=len(seen),observations=len(seen),
-                               preview=f'p{ident}',takes=[]))
-        ps.save_people(root,dict(version=ps.VERSION,input=ps.media_receipt(root),people=people,observations='x/observations.sqlite',active=1,method='default',max_gap_seconds=.5))
+        root=self.root=base/'scene';scene(root,self.manifest,((1,'Anna',SEEN[1]),(2,'Ben',SEEN[2])))
+        missing=mock.patch('mocap.models.missing',lambda *a,**k:[]);missing.start();self.addCleanup(missing.stop)   # no model files in tests
         from mocap.gui import MainWindow
         w=self.w=MainWindow()
         def close():
             w.close();w.deleteLater();APP.processEvents()
         self.addCleanup(close);w.show();APP.processEvents()
+        patch=mock.patch('mocap.gui.missing',lambda *a,**k:[]);patch.start();self.addCleanup(patch.stop)   # gui imported it by name
+        self.dialogs=[];patch=mock.patch.object(w,'open_model_manager',lambda:self.dialogs.append('Model Manager'));patch.start();self.addCleanup(patch.stop)   # never a modal dialog
+        w.people_tracker.setCurrentIndex(w.people_tracker.findData('default'))
         w.load_project(root/'p1');self.assertTrue(pump(lambda:w.video_readable),w.status.text())
         self.assertEqual((w.people_root,w.info['frames']),(root.resolve(),300))
-        self.calls,self.ready=[],set()
-        def run_full():   # the Reconstruct 3D button's path stops here: the queue would start the person jobs
-            self.calls.append(dict(trim=(w.slider.clip_in,w.slider.clip_out),range=w.processing_range(),people=sorted(p['id'] for p in w.checked_people()),
-                                   status=w.status.text(),footmr=w.footmr_refine.isChecked(),correction=w.motion_correction.isChecked()))
-            w.busy,w.failed,w.cancelled=True,False,False;w.update_readiness()
-        patch=mock.patch.object(w,'run_full',run_full);patch.start();self.addCleanup(patch.stop)
-    def take(self,ident,a,b,ready=True):
-        """What the person job and the batch leave behind: a take folder with ExMR's temporary frames, listed in people.json."""
+        self.calls,self.batches=[],[]
+        self.real_next=w.next_job
+        def next_job():   # the queue's next step: a worker would start for the first job here
+            if w.jobs and not w.failed and not w.cancelled:
+                jobs,w.jobs=w.jobs,[];self.batches.append(jobs);w.current_stage=jobs[0][0]
+                if jobs[0][0]=='person':
+                    arg=lambda args,name:args[args.index(name)+1]
+                    self.calls.append(dict(trim=(w.slider.clip_in,w.slider.clip_out),range=w.processing_range(),people=sorted(int(arg(a,'--person-id')) for _,a in jobs),
+                                           frames=(int(arg(jobs[0][1],'--first-frame')),int(arg(jobs[0][1],'--end-frame'))),result=arg(jobs[0][1],'--result'),
+                                           status=w.status.text(),footmr=w.footmr_refine.isChecked(),correction=w.motion_correction.isChecked()))
+                return
+            self.real_next()
+        patch=mock.patch.object(w,'next_job',next_job);patch.start();self.addCleanup(patch.stop)
+    def take(self,ident,a,b,kind='initial',ready=True):
+        """What the person job and the batch leave behind: a take folder with ExMR's temporary frames and, when `ready`, the
+        result and its preview, listed in people.json; the scene camera files the shared floor reads."""
         relative=f'p{ident}/takes/{a:09d}_{b:09d}_scene_v1';d=self.root/relative;(d/'exmr_frames').mkdir(parents=True,exist_ok=True)
         for i in range(b-a):(d/'exmr_frames'/f'{i:06d}.jpg').write_bytes(b'jpg')
-        (d/'exmr_frames'/'receipt.json').write_text('{}',encoding='utf-8');(d/'hmr4d_results.pt').write_bytes(b'result')
+        (d/'exmr_frames'/'receipt.json').write_text('{}',encoding='utf-8')
         if not (d/'input.mp4').exists():os.link(self.root/'input.mp4',d/'input.mp4')
         (d/'project.json').write_text(json.dumps(dict(self.manifest,frames=b-a,start=a/30,end=b/30,people_root='../../..',person_id=ident,person_preview=False,
-                                                    person_frames=[a,b],pipeline=dict(model=self.MODEL,result='initial'))),encoding='utf-8')
+                                                    person_frames=[a,b],pipeline=dict(model=self.MODEL,result=kind),correction={})),encoding='utf-8')
+        if ready:
+            write_result(d,'initial',b'result %d %d %d'%(ident,a,b))
+            (d/'scene_camera.json').write_text(json.dumps(dict(sources={'hmr4d_results.pt':stamp(d/'hmr4d_results.pt')},model=[1,2],world_to_camera=IDENTITY)),encoding='utf-8')
+            if not (self.root/'people_scene.json').exists():
+                (self.root/'people_scene.json').write_text(json.dumps(dict(anchor=relative,input=ps.media_receipt(self.root),
+                    sources={'hmr4d_results.pt':stamp(d/'hmr4d_results.pt')},world_to_camera=IDENTITY)),encoding='utf-8')
         state=ps.load_people(self.root);person=next(p for p in state['people'] if p['id']==ident)
         person['takes']=[t for t in person['takes'] if (t['first'],t['end'])!=(a,b)]+[dict(project=relative,first=a,end=b)];ps.save_people(self.root,state)
-        if ready:self.ready.add(relative)
         return d
-    def end(self,failed=False,cancelled=False,status=None):
-        """The end of the batch: on success each checked person's takes of the trim, then the window shows the last take."""
-        w=self.w;a,b=self.calls[-1]['trim'];seen={1:range(300),2:range(100)}
+    def end(self,failed=False,cancelled=False,status=None,then=None):
+        """The end of the last batch: on success each person job's takes (one per visible run of its frames, as the person
+        job makes them) and, for a corrected result, the correct stage; then the real end of the queue."""
+        w=self.w;call=self.calls[-1]
         if not failed and not cancelled:
-            for ident in self.calls[-1]['people']:
-                lo,hi=max(a,seen[ident][0]),min(b,seen[ident][-1]+1);self.take(ident,lo,hi)
+            made=[self.take(ident,a,b,call['result']) for ident in call['people'] for a,b in ps.visible_runs(SEEN[ident],30,*call['frames'])]
+            if call['result'].startswith('corrected_'):correct(self.root,made)
+        self.finish(failed,cancelled,status)
+        if then:then()
+    def finish(self,failed=False,cancelled=False,status=None,stage='export'):
+        w=self.w
         if status:w.status.setText(status)
-        w.failed,w.cancelled=failed,cancelled;w.busy=False
-        w.people_state=ps.load_people(self.root);w.activate_person(self.calls[-1]['people'][0]);w.update_readiness()
-    def start(self,delete=True):
+        w.failed,w.cancelled,w.current_stage=failed,cancelled,stage;self.real_next()
+    def start(self,delete=True,**kw):
         w=self.w;w.footmr_refine.setChecked(False)
-        runner=parts_runner.start(w,3.,.5,delete,ready=lambda project:project in self.ready)
+        runner=parts_runner.start(w,3.,.5,delete,**kw)
         self.assertIsNotNone(runner,w.status.text());return runner
     def wait_calls(self,n):self.assertTrue(pump(lambda:len(self.calls)>=n or self.w.parts_runner is None),(len(self.calls),self.w.status.text()))
     def finish_all(self):
         while self.w.parts_runner is not None:   # each part's call has been made: end it and wait for the next one
             n=len(self.calls);self.end();self.wait_calls(n+1)
+    def checks(self,root=None):return [p['checked'] for p in ps.load_people(root or self.root)['people']]
+    def gap(self,runner,index,action):
+        """Runs `action` once between parts, before the runner's step once part `index` (from 0) waits for its reloaded clip
+        and the clip is open: what the user, or the window itself, may do between two timer ticks of the runner."""
+        step,done=runner.step,[]
+        def wrapped():
+            if runner.index==index and runner.phase=='video' and self.w.video_readable and not done:done.append(1);action()
+            return step()
+        runner.step=wrapped
+    def rerun(self):
+        """A second run with the same settings; it may end at once when every part is finished."""
+        self.calls.clear();parts_runner.start(self.w,3.,.5,True);self.assertTrue(pump(lambda:self.w.parts_runner is None or self.calls))
 
     def test_parts_run_in_order_with_the_people_visible_in_each(self):
         w=self.w;self.start();self.finish_all()
-        self.assertEqual([c['trim'] for c in self.calls],PLAN)
+        self.assertEqual([c['trim'] for c in self.calls],PLAN);self.assertEqual([c['frames'] for c in self.calls],PLAN)
         self.assertEqual([c['people'] for c in self.calls],[[1,2],[1,2],[1],[1]])   # Ben leaves the picture at frame 100
         self.assertEqual([c['status'] for c in self.calls],['Part 1 of 4: frames 1–90.','Part 2 of 4: frames 76–165.','Part 3 of 4: frames 151–240.','Part 4 of 4: frames 226–300.'])
         self.assertEqual([tuple(round(x,6) for x in c['range']) for c in self.calls],[(a/30,b/30) for a,b in PLAN])
         self.assertTrue(all(c['footmr'] is False for c in self.calls))   # the settings survive reloading the scene clip
         self.assertEqual(w.status.text(),'All 4 parts are reconstructed. Choose Fill hidden ranges in the People panel to join them.')
         self.assertIn('Part 3 of 4: Ben is not visible, so this part has no take of them.',w.log.toPlainText())
-        self.assertEqual([p['checked'] for p in ps.load_people(self.root)['people']],[True,True])   # the user's checks are back
+        self.assertEqual(self.checks(),[True,True])   # the user's checks are back
         self.assertEqual(json.loads((self.root/'parts_run.json').read_text(encoding='utf-8')),dict(version=1,first=0,end=300,part=90,overlap=15))
         anna,ben=ps.load_people(self.root)['people']
         self.assertEqual(sorted(k for k in anna['gap_fill']),['parts_150_165','parts_225_240','parts_75_90'])
+        self.assertEqual(anna['gap_fill']['parts_75_90'],dict(method='parts',takes=['p1/takes/000000000_000000090_scene_v1','p1/takes/000000075_000000165_scene_v1']))
         self.assertEqual(list(ben['gap_fill']),['parts_75_90'])
-        w.activate_person(1);APP.processEvents()
+        w.activate_person(1,w.people_root/anna['takes'][0]['project']);APP.processEvents()
         self.assertEqual([x.text() for x in w.hidden_ranges._widgets][:2],['Frames 76–90 (0.5 s)','Parts overlap: blended'])
-        self.assertTrue(w.parts_button.isEnabled())
+        self.assertTrue(w.parts_button.isEnabled());self.assertFalse(w.cancel_button.isEnabled())
+    def test_the_view_and_trim_of_the_start_are_back_at_the_end(self):
+        w=self.w;w.slider.set_clip(0,240);self.start();self.finish_all()
+        self.assertEqual([c['trim'] for c in self.calls],[(0,90),(75,165),(150,240)])
+        self.assertEqual((w.project,(w.slider.clip_in,w.slider.clip_out)),((self.root/'p1').resolve(),(0,240)))
+    def test_the_view_is_back_after_a_failed_part(self):
+        w=self.w;w.slider.set_clip(0,240);self.start();self.wait_calls(1);self.end();self.wait_calls(2)
+        self.end(failed=True,status='ExMR stopped: the GPU ran out of memory.')
+        self.assertTrue(pump(lambda:w.parts_runner is None))
+        self.assertEqual((w.project,(w.slider.clip_in,w.slider.clip_out)),((self.root/'p1').resolve(),(0,240)))
     def test_finished_parts_are_skipped(self):
         for ident,a,b in((1,0,90),(2,0,90),(1,75,165),(2,75,100),(1,150,240)):self.take(ident,a,b)
         self.take(1,225,300,ready=False)   # stopped before its result was ready
@@ -117,6 +202,28 @@ class RunnerTest(unittest.TestCase):
         self.start();self.finish_all()
         self.assertEqual([c['trim'] for c in self.calls],[(225,300)])
         self.assertIn('Part 1 of 4: nothing to reconstruct, skipped.',self.w.log.toPlainText())
+    def test_with_motion_correction_a_part_is_finished_when_its_base_motion_is_ready(self):
+        """Every part adds takes to the shared scene floor, so the corrected results of the earlier parts go out of date;
+        joining reads the base motion, and the joined take is corrected after joining."""
+        from mocap.motion_tools import result_is_current,selected_export
+        w=self.w;w.motion_correction.setChecked(True);self.start();self.finish_all()
+        self.assertEqual({c['result'] for c in self.calls},{'corrected_initial'})
+        first=self.root/'p1/takes/000000000_000000090_scene_v1';last=self.root/'p1/takes/000000225_000000300_scene_v1'
+        self.assertFalse(result_is_current(first,'corrected_initial'))   # the real receipt check: the floor changed after part 1
+        self.assertTrue(result_is_current(last,'corrected_initial'))
+        self.assertIsNotNone(selected_export(first,'initial'))
+        self.assertEqual(w.status.text(),'All 4 parts are reconstructed. Choose Fill hidden ranges in the People panel to join them.')
+        w.motion_correction.setChecked(True);self.rerun()
+        self.assertEqual(self.calls,[]);self.assertEqual(w.status.text(),'All 4 parts are reconstructed. Choose Fill hidden ranges in the People panel to join them.')
+    def test_a_part_without_a_ready_result_is_named_at_the_end(self):
+        w=self.w;self.start();self.wait_calls(1);self.end();self.wait_calls(2)
+        for _ in range(2):   # parts 2 and 3: the batch ends without a result (the export did not finish)
+            n=len(self.calls);call=self.calls[-1]
+            for ident in call['people']:
+                for a,b in ps.visible_runs(SEEN[ident],30,*call['frames']):self.take(ident,a,b,ready=False)
+            self.finish();self.wait_calls(n+1)
+        self.end();self.assertTrue(pump(lambda:w.parts_runner is None))
+        self.assertEqual(w.status.text(),'Reconstruct in parts finished, but 2 of 4 parts have no ready result: Part 2 of 4, Part 3 of 4. See Console.')
     def test_a_failed_part_stops_the_run_and_keeps_the_finished_ones(self):
         self.start();self.wait_calls(1);self.end();self.wait_calls(2)
         self.end(failed=True,status='ExMR stopped: the GPU ran out of memory.')
@@ -124,6 +231,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(len(self.calls),2)
         self.assertEqual(self.w.status.text(),'Part 2 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept; Reconstruct in parts skips them next time.')
         self.assertTrue((self.root/'p1/takes/000000000_000000090_scene_v1/hmr4d_results.pt').is_file())
+        self.assertEqual(self.checks(),[True,True])
         self.calls.clear();self.start();self.wait_calls(1);self.assertEqual(self.calls[0]['trim'],(75,165))   # a later run goes on there
     def test_cancel_job_stops_the_run(self):
         self.start();self.wait_calls(1);self.assertTrue(self.w.cancel_button.isEnabled())
@@ -131,12 +239,101 @@ class RunnerTest(unittest.TestCase):
         self.assertTrue(pump(lambda:self.w.parts_runner is None))
         self.assertEqual(len(self.calls),1)
         self.assertEqual(self.w.status.text(),'Reconstruct in parts was cancelled at part 1 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+    def test_cancel_job_between_parts_stops_the_run(self):
+        w=self.w;runner=self.start();self.wait_calls(1)
+        def click():
+            self.assertFalse(w.busy);self.assertTrue(w.cancel_button.isEnabled());w.cancel_button.click()
+        self.gap(runner,1,click);self.end()
+        self.assertTrue(pump(lambda:w.parts_runner is None))
+        self.assertEqual(len(self.calls),1);self.assertFalse(w.cancel_button.isEnabled())
+        self.assertEqual(w.status.text(),'Reconstruct in parts was cancelled before part 2 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertIn('Part 1 of 4: deleted 182 temporary frame files.',w.log.toPlainText())   # part 1 was finished before the run stopped
+    def test_find_person_between_parts_stops_the_run_and_leaves_both_scenes_alone(self):
+        """The user clicks Find person while the next part's clip opens: the trim is a part's, so Find person prepares a new
+        clip scene and the window loads it when it ends. The run never takes that job for its part and never writes the new
+        scene's people into its own scene."""
+        w=self.w;runner=self.start();self.wait_calls(1)
+        clip=self.base/'clip';scene(clip,dict(self.manifest,frames=90),((1,'Someone',range(90)),))
+        def find():
+            w.find_people();self.assertEqual(self.dialogs,[]);self.assertEqual([s for s,_ in self.batches[-1]],['prepare','people'])
+        self.gap(runner,1,find);self.end()
+        self.assertTrue(pump(lambda:w.busy and len(self.batches)==2));before=(self.root/'people.json').read_bytes(),(clip/'people.json').read_bytes()
+        for _ in range(10):APP.processEvents();time.sleep(.02)
+        self.assertEqual(len(self.calls),1);self.assertIs(w.parts_runner,runner)   # waiting, not reconstructing
+        w._people_found_root=clip;self.finish(stage='people')   # Find person ends and the window opens the new scene
+        self.assertEqual(w.people_root,clip.resolve())
+        self.assertTrue(pump(lambda:w.parts_runner is None or (self.root/'people.json').read_bytes()!=before[0]))
+        self.assertEqual((clip/'people.json').read_bytes(),before[1])
+        self.assertEqual([p['name'] for p in ps.load_people(self.root)['people']],['Anna','Ben'])   # this scene's people, not the new scene's
+        anna,ben=ps.load_people(self.root)['people']
+        self.assertEqual([t['project'] for t in anna['takes']],['p1/takes/000000000_000000090_scene_v1'])
+        self.assertEqual([t['project'] for t in ben['takes']],['p2/takes/000000000_000000090_scene_v1'])
+        self.assertTrue(pump(lambda:w.parts_runner is None));self.assertEqual(len(self.calls),1)
+        self.assertEqual(w.status.text(),'The scene changed, so Reconstruct in parts stopped before part 2 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+    def test_a_bone_preview_job_between_parts_is_waited_for_and_not_taken_for_a_part(self):
+        """The window prepares a bone preview by itself when a loaded take's preview is out of date (prepare_target_preview,
+        scheduled by preview_loaded on a real screen): a 'rig' job that the run must wait for."""
+        w=self.w;runner=self.start();self.wait_calls(1)
+        rig=lambda:w.start_jobs([('rig',['--project',str(self.root/'p1/takes/000000000_000000090_scene_v1'),'--result','initial'])])
+        self.gap(runner,1,rig);self.end()
+        self.assertTrue(pump(lambda:len(self.batches)==2));self.assertEqual(self.batches[-1][0][0],'rig')
+        for _ in range(10):APP.processEvents();time.sleep(.02)
+        self.assertEqual(len(self.calls),1)
+        self.finish(stage='rig');self.wait_calls(2)
+        self.assertEqual(self.calls[1]['trim'],(75,165))
+        self.end();self.wait_calls(3);self.assertEqual(self.calls[2]['trim'],(150,240))
+    def test_a_job_that_starts_right_after_a_failed_part_does_not_hide_the_failure(self):
+        w=self.w;self.start();self.wait_calls(1)
+        rig=lambda:w.start_jobs([('rig',['--project',str(self.root/'p1'),'--result','initial'])])
+        self.end(failed=True,status='ExMR stopped: the GPU ran out of memory.',then=rig)
+        self.assertTrue(w.busy)
+        self.assertTrue(pump(lambda:w.parts_runner is None))
+        self.assertEqual(w.status.text(),'Part 1 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.finish(stage='rig');self.assertEqual(len(self.calls),1)
+    def test_a_job_that_starts_right_after_a_part_is_waited_for(self):
+        w=self.w;self.start();self.wait_calls(1)
+        rig=lambda:w.start_jobs([('rig',['--project',str(self.root/'p1'),'--result','initial'])])
+        self.end(then=rig)
+        self.assertTrue(pump(lambda:'Part 1 of 4: deleted 182 temporary frame files.' in w.log.toPlainText()))   # part 1 is done
+        for _ in range(10):APP.processEvents();time.sleep(.02)
+        self.assertEqual(len(self.calls),1)
+        self.finish(stage='rig');self.wait_calls(2);self.assertEqual(self.calls[1]['trim'],(75,165))
+    def test_an_error_at_the_start_stops_the_run_with_its_reason(self):
+        w=self.w;(self.root/'p2/tracking.npz').write_bytes(b'not a tracking file')
+        self.assertIsNone(parts_runner.start(w,3.,.5,True))
+        self.assertTrue(w.status.text().startswith('Part 1 of 4 stopped: '),w.status.text())
+        self.assertTrue(w.status.text().endswith(parts_runner.KEPT))
+        self.assertIsNone(w.parts_runner);self.assertTrue(w.parts_button.isEnabled());self.assertEqual(self.calls,[])
+    def test_an_error_between_parts_stops_the_run_and_gives_back_the_button(self):
+        w=self.w;runner=self.start();self.wait_calls(1)
+        def fail(*_):raise OSError('The disk is not ready.')
+        self.end(then=lambda:setattr(w,'activate_person',fail))
+        self.assertTrue(pump(lambda:w.parts_runner is None))
+        del w.activate_person
+        self.assertEqual(w.status.text(),'Part 2 of 4 stopped: The disk is not ready. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertFalse(runner.timer.isActive());self.assertTrue(w.parts_button.isEnabled());self.assertFalse(w.cancel_button.isEnabled())
+        self.assertEqual(self.checks(),[True,True])
+        for _ in range(20):APP.processEvents();time.sleep(.02)
+        self.assertEqual(len(self.calls),1)
+    def test_closing_the_window_between_parts_stops_the_run(self):
+        w=self.w;runner=self.start();self.wait_calls(1)
+        self.gap(runner,1,w.close);self.end()
+        self.assertTrue(pump(lambda:w.parts_runner is None))
+        self.assertFalse(runner.timer.isActive())
+        for _ in range(20):APP.processEvents();time.sleep(.02)
+        self.assertEqual(len(self.calls),1);self.assertEqual(self.checks(),[True,True])
     def test_temporary_frames_of_a_finished_part_are_deleted(self):
         self.start(delete=True);self.wait_calls(1);self.end();self.wait_calls(2)
         for ident in(1,2):
             d=self.root/f'p{ident}/takes/000000000_000000090_scene_v1'
             self.assertEqual(list((d/'exmr_frames').iterdir()),[]);self.assertTrue((d/'hmr4d_results.pt').is_file() and (d/'input.mp4').is_file())
         self.assertIn('Part 1 of 4: deleted 182 temporary frame files.',self.w.log.toPlainText())   # 90 frames and a receipt per person
+    def test_a_frame_held_open_is_kept_and_counted(self):
+        held=[]
+        def hold():
+            f=open(self.root/'p1/takes/000000000_000000090_scene_v1/exmr_frames/000005.jpg','rb');held.append(f);self.addCleanup(f.close)
+        self.start(delete=True);self.wait_calls(1);self.end(then=hold);self.wait_calls(2)
+        self.assertIn('Part 1 of 4: deleted 181 temporary frame files. 1 could not be deleted (another program may hold them) and stay on disk.',self.w.log.toPlainText())
     def test_temporary_frames_are_kept_when_asked(self):
         self.start(delete=False);self.wait_calls(1);self.end();self.wait_calls(2)
         self.assertEqual(len(list((self.root/'p1/takes/000000000_000000090_scene_v1/exmr_frames').glob('*.jpg'))),90)
@@ -168,6 +365,27 @@ class RunnerTest(unittest.TestCase):
         bottom=w.cancel_button.mapTo(w,QPoint(0,w.cancel_button.height())).y()
         self.assertLessEqual(bottom,w.status.mapTo(w,QPoint(0,0)).y())   # the pinned actions stay above the status bar
         self.assertTrue(w.parts_button.isVisible())
+    def test_the_join_is_promised_only_where_fill_hidden_ranges_joins(self):
+        w=self.w
+        self.assertIsNone(parts_runner.join_issue(w))
+        w.exmr_camera.setCurrentIndex(w.exmr_camera.findData(False))
+        self.assertEqual(parts_runner.join_issue(w),'Hidden ranges need a fixed camera in this version.')
+        self.start();self.finish_all()
+        self.assertEqual(w.status.text(),'All 4 parts are reconstructed. They cannot be joined into one take: Hidden ranges need a fixed camera in this version.')
+
+
+@unittest.skipUnless(FFMPEG.is_file(),'needs the bundled ffmpeg')
+class ShortSceneTest(RunnerTest):
+    """The scene's end is one frame short of its frame count, so Reconstruct 3D makes the last part's take a frame shorter."""
+    END=10.-1/30
+    def test_parts_run_in_order_with_the_people_visible_in_each(self):
+        self.start();self.finish_all()
+        self.assertEqual([c['frames'] for c in self.calls],PLAN[:-1]+[(225,299)])
+        self.assertEqual(self.w.status.text(),'All 4 parts are reconstructed. Choose Fill hidden ranges in the People panel to join them.')
+        self.rerun();self.assertEqual(self.calls,[])   # all finished
+        self.assertIn('parts_225_240',ps.load_people(self.root)['people'][0]['gap_fill'])
+    def test_finished_parts_are_skipped(self):pass
+    def test_with_motion_correction_a_part_is_finished_when_its_base_motion_is_ready(self):pass
 
 
 @unittest.skipUnless(FFMPEG.is_file(),'needs the bundled ffmpeg')
@@ -191,6 +409,12 @@ class DialogTest(unittest.TestCase):
         self.assertFalse(d.delete.isEnabled());self.assertEqual(d.line.text(),'5 parts.');self.assertIs(d.choice()[2],False)
     def test_a_saved_run_offers_its_sizes(self):
         d=self.dialog(part=3.,overlap=.5);self.assertEqual((d.part.value(),d.overlap.value()),(4.,.5))   # the field's minimum is 4 s
+    def test_the_intro_says_whether_the_parts_can_be_joined(self):
+        from PySide6.QtWidgets import QLabel
+        text=lambda d:d.findChildren(QLabel)[0].text()
+        self.assertTrue(text(self.dialog()).endswith('Neighbouring parts share the overlap, so Fill hidden ranges can join them into one take.'))
+        self.assertTrue(text(self.dialog(join_issue='Hidden ranges are available for GVHMR and ExMR in this version.')).endswith(
+            'Neighbouring parts share the overlap, but they cannot be joined into one take: Hidden ranges are available for GVHMR and ExMR in this version.'))
 
 
 if __name__=='__main__':unittest.main()

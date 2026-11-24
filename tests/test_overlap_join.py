@@ -7,6 +7,12 @@ from mocap.take_join import assemble
 from test_take_join import P0,PB,WA,WB,WC,rigid,source,tpair
 
 T=lambda a,b:dict(project=f'p/takes/{a:09d}_{b:09d}_scene_v1',first=a,end=b)
+
+
+def M(*takes):
+    """The marks Reconstruct in parts writes for the seams between these takes."""
+    from mocap import hidden_ranges as h
+    return {h.seam_key(s):h.parts_mark(s) for s in h.seams(list(takes)) if s.get('kind')}
 def overlap(a,b):return dict(first=b['first'],end=a['end'],method='overlap')
 def gap(a,b):return dict(first=a['end'],end=b['first'],method='smooth')
 def rot(v):return R.from_rotvec(np.asarray(v).reshape(-1,3)).as_matrix()
@@ -135,17 +141,26 @@ class SeamsTest(unittest.TestCase):
         x,y=h.seams([a,b,c]);self.assertTrue(x['joinable']);self.assertFalse(y['joinable'])
     def test_chains_join_marked_parts_without_a_method(self):
         from mocap import hidden_ranges as h
-        a,b,c=T(0,110),T(100,200),T(215,300);parts={'parts_100_110':{'method':'parts'}}
+        a,b,c=T(0,110),T(100,200),T(215,300);parts=M(a,b)
         self.assertEqual(h.chains([a,b,c],parts),[[a,b]])
         self.assertEqual(h.chains([a,b,c],{**parts,'200_215':{'method':'smooth'}}),[[a,b,c]])
         self.assertEqual(h.chains([a,b,c],{'200_215':{'method':'smooth'}}),[[b,c]])   # takes of other trims that share frames: as before
-        self.assertEqual(h.chains([T(0,100),T(100,200)],{'parts_100_100':{'method':'parts'}}),[])   # touching takes are refused
-        self.assertEqual(h.chains([T(0,110),T(100,210),T(105,300)],{'parts_100_110':{'method':'parts'},'parts_105_210':{'method':'parts'}}),[[T(0,110),T(100,210)]])
+        self.assertEqual(h.chains([T(0,100),T(100,200)],M(T(0,100),T(100,200))),[])   # touching takes are refused
+        self.assertEqual(h.chains([T(0,110),T(100,210),T(105,300)],M(T(0,110),T(100,210),T(105,300))),[[T(0,110),T(100,210)]])
+    def test_a_mark_belongs_to_the_two_takes_it_names(self):
+        from mocap import hidden_ranges as h
+        a,b=T(0,110),T(100,200);other=dict(project='p/takes/000000100_000000250_scene_v1',first=100,end=250)   # another trim, same seam frames
+        self.assertEqual(h.chains([a,b],M(a,b)),[[a,b]])
+        self.assertEqual(h.chains([a,other],M(a,b)),[]);self.assertEqual(h.listed([a,other],M(a,b)),[])
+        self.assertEqual(M(a,b)['parts_100_110'],dict(method='parts',takes=[a['project'],b['project']]))
+        old={'parts_100_110':{'method':'parts'}}   # as the first version wrote it: matches no seam, and nothing raises
+        self.assertEqual(h.chains([a,b],old),[]);self.assertEqual(h.listed([a,b],old),[]);self.assertFalse(h.marked(h.seams([a,b])[0],old))
+        self.assertFalse(h.marked(h.seams([a,b])[0],{'parts_100_110':'parts'}))
     def test_listed_rows_are_gaps_and_marked_seams(self):
         from mocap import hidden_ranges as h
         takes=[T(0,110),T(100,200),T(200,300),T(315,400)]
         self.assertEqual([(r.get('kind'),r['first']) for r in h.listed(takes,{})],[(None,300)])
-        self.assertEqual([(r.get('kind'),r['first']) for r in h.listed(takes,{'parts_100_110':{'method':'parts'},'parts_200_200':{'method':'parts'}})],
+        self.assertEqual([(r.get('kind'),r['first']) for r in h.listed(takes,M(*takes[:3]))],
                          [('overlap',100),('touch',200),(None,300)])
         self.assertEqual(h.seam_key(dict(first=100,end=110)),'parts_100_110')
     def test_the_overlap_label(self):
@@ -176,11 +191,11 @@ class OverlapWriteTest(unittest.TestCase):
         (root/'project.json').write_text(json.dumps(dict(frames=220,fps=30,start=0.,end=220/30,width=64,height=48,pipeline=dict(model=self.MODEL),stages={})),encoding='utf-8')
     def people(self,ranges,choices=None):
         takes=[self.take(a,b,W) for (a,b),W in zip(ranges,(WA,WB,WC))]
-        marks={h.seam_key(x):dict(h.PARTS_SEAM) for x in h.seams(takes) if x.get('kind')}   # as Reconstruct in parts marks its parts
+        marks=M(*takes)   # as Reconstruct in parts marks its parts
         person=dict(id=1,color='#b5b5b5',preview='p1',takes=takes,gap_fill={**marks,**(choices or {})})
         ps.save_people(self.root,dict(version=ps.VERSION,input=ps.media_receipt(self.root),people=[person]))
     def people_marks(self):
-        state=ps.load_people(self.root);state['people'][0]['gap_fill']={'parts_100_110':dict(h.PARTS_SEAM)};ps.save_people(self.root,state)
+        state=ps.load_people(self.root);state['people'][0]['gap_fill']=M(*state['people'][0]['takes']);ps.save_people(self.root,state)
         self.assertTrue(ps.join_current(self.root,ps.load_people(self.root)['people'][0],ps.load_people(self.root)['people'][0]['joins'][0]))
     def test_two_parts_become_one_current_joined_take(self):
         import torch

@@ -4,7 +4,8 @@ from mocap import hidden_ranges as h,hidden_ranges_state as ui
 
 T=lambda a,b:dict(project=f'p1/takes/{a:09d}_{b:09d}_scene_v1',first=a,end=b)
 PARTS=[T(0,110),T(100,200),T(215,300)]
-MARK={'parts_100_110':{'method':'parts'}};TOUCH={'parts_100_100':{'method':'parts'}}
+M=lambda *takes:{h.seam_key(s):h.parts_mark(s) for s in h.seams(list(takes)) if s.get('kind')}   # as Reconstruct in parts marks
+MARK=M(*PARTS[:2]);TOUCH=M(T(0,100),T(100,200))
 
 
 class RowsTest(unittest.TestCase):
@@ -24,7 +25,7 @@ class RowsTest(unittest.TestCase):
         rows=ui.gap_rows(h.listed([T(0,100),T(100,200),T(210,300)],TOUCH),{**TOUCH,'200_210':{'method':'smooth'}},30)
         self.assertTrue(ui.can_fill(rows,None))   # a touch elsewhere does not stop a chosen range
     def test_an_overlap_that_would_blend_a_whole_take_is_not_joined(self):
-        both={'parts_100_110':{'method':'parts'},'parts_105_210':{'method':'parts'}}
+        both=M(T(0,110),T(100,210),T(105,300))
         x,y=ui.gap_rows(h.listed([T(0,110),T(100,210),T(105,300)],both),both,30)
         self.assertEqual(x['method'],'overlap');self.assertEqual((y['kind'],y['method'],y['note']),('overlap','none',h.SHARED_NOTE))
 

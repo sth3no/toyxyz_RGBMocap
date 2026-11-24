@@ -877,8 +877,8 @@ line and Console report the result.
 | **Resource Mode** | Automatic uses the fast path when GPU memory is sufficient and selects supported Low Memory paths when needed. Low Memory uses CPU loading/offloading and existing bounded image processing; it can be slower and use more RAM. The selection and reason appear in Console and the CMD window. |
 | **Resource Safety** | Default on, directly below Resource Mode. On retains low-RAM/Windows headroom stopping and the PyTorch VRAM allocation limit. Off bypasses those limits; Automatic batching, Low Memory selection and actual allocation-error recovery remain. Saved locally, independently of projects. See [details](PERFORMANCE.md#resource-safety). |
 | **Prepare Preview** | Rebuild mesh/skeleton previews from existing motion without running the AI model again. Useful for older projects. |
-| **Reconstruct in parts...** | Below **Reconstruct 3D**. Reconstruct a long trimmed range one part after another for the people found by **Find person**, with GVHMR, ExMR or FlowHMR; join the parts afterwards with **Fill hidden ranges**. See [Reconstruct a long range in parts](#reconstruct-a-long-range-in-parts). |
-| **Cancel Job** | Stop queued processing; completed results are kept. During **Reconstruct in parts...** it stops the whole run. |
+| **Reconstruct in parts...** | Below **Reconstruct 3D**. Reconstruct a long trimmed range one part after another for the people found by **Find person**, with GVHMR, ExMR or FlowHMR; where **Fill hidden ranges** supports the model and settings, it joins the parts afterwards. See [Reconstruct a long range in parts](#reconstruct-a-long-range-in-parts). |
+| **Cancel Job** | Stop queued processing; completed results are kept. During **Reconstruct in parts...** it stops the whole run, also between two parts. |
 
 The mouse wheel scrolls the right settings panel even above a closed selection
 list or number field, without changing its value. Click/type, use keyboard arrows
@@ -1026,9 +1026,14 @@ people found by **Find person**.
    size; real pictures can be larger or smaller.
 4. Click **Reconstruct**. Before each part the status bar says, for example,
    `Part 3 of 31: frames 3481–5280.`, and the part runs like **Reconstruct 3D**
-   on that trim. **Cancel Job** stops the whole run.
+   on that trim. **Cancel Job** stops the whole run, also between two parts.
+   Closing the window stops it too.
 5. At the end the status bar says `All 31 parts are reconstructed. Choose Fill
-   hidden ranges in the People panel to join them.` The run does not join by
+   hidden ranges in the People panel to join them.` Where **Fill hidden
+   ranges** cannot join them (see the limits below), the dialog and this
+   message say so instead, with the reason, for example `All 31 parts are
+   reconstructed. They cannot be joined into one take: Hidden ranges need a
+   fixed camera in this version.` The run does not join by
    itself. Select the person: **Hidden ranges** lists each place where two
    parts share frames as `Parts overlap: blended` (see [Takes that share
    frames](#takes-that-share-frames)). Click **Fill hidden ranges** to write one
@@ -1043,11 +1048,29 @@ checked person is visible is skipped; the Console names who was not visible.
 If a part fails or is cancelled, the run stops and the finished parts are kept:
 `Part 2 of 31 stopped: <the reason> Finished parts are kept; Reconstruct in
 parts skips them next time.` Run **Reconstruct in parts...** again with the
-same part length and overlap: a part whose takes all have their result ready is
-skipped, and the run goes on with the next one. After a run the window shows a
-take; the dialog then offers the range, the part length and the overlap of the
-last run. To split another range, the whole scene must be shown again, as after
-**Find person**.
+same part length and overlap: a part whose takes all have their motion ready is
+skipped, and the run goes on with the next one. However the run ends, the window
+shows again what it showed when you started, with your trim, and your check
+boxes are back; the dialog then offers the same range, part length and overlap.
+
+Between two parts the run waits while another job runs, for example a bone
+preview that the window prepares by itself. If the window shows another scene
+when the next part would start, for example because **Find person** was run on
+a part's trim, the run stops: `The scene changed, so Reconstruct in parts
+stopped before part 3 of 31. ...`; it never writes into the other scene. If an
+error stops the run between parts, the status bar says `Part 3 of 31 stopped:
+<the error> ...` and the button works again. A temporary frame that another
+program holds open is not deleted; the Console says how many stay on disk.
+
+With **Motion Correction** on (the default), each part is corrected against the
+shared scene floor of the takes made so far. Every later part changes that
+floor, so after the run only the last part's correction is current; the others
+say that the last applied correction is outdated. A part counts as finished
+when its motion before correction is ready, so a later run does not reconstruct
+those parts again. **Fill hidden ranges** joins that motion and then corrects
+the joined take, which is the correction you export. Without joining, click
+**Apply Correction** once after the run: it corrects every take against one
+floor.
 
 It is refused, with the reason in the status bar, while a job runs (`Wait for
 the current job to finish.`), before **Find person** (`Run Find person on the

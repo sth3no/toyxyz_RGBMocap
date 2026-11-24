@@ -767,7 +767,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         for button in (self.models_button, self.analyze_button, self.run_button):
             button.setEnabled(not self.busy)
         self.parts_button.setEnabled(not self.busy and self.parts_runner is None)
-        self.cancel_button.setEnabled(self.busy)
+        self.cancel_button.setEnabled(self.busy or self.parts_runner is not None)
         self.check_system_action.setEnabled(not self.busy)
         self.model_choice.setEnabled(not self.busy and not self.contact_saving)
         self.htd_refine.setEnabled(not self.busy)
@@ -1604,6 +1604,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self._batch_has_motion = False
         self.task_state.reset(self._batch_started_at)
         self._task_manifests={}
+        self.batch_serial = getattr(self, 'batch_serial', 0) + 1  # tells a batch from the next one (Reconstruct in parts)
         self.jobs, self.busy, self.cancelled, self.failed = list(jobs), True, False, False
         self._task_preparing=any(stage=='prepare' for stage,_ in self.jobs)
         self.update_readiness()
@@ -1682,6 +1683,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             elapsed = (max(0., time.monotonic() - self._batch_started_at)
                        if self._batch_started_at is not None else None)
             self._batch_started_at = None
+            # How the batch ended, kept while a following job (a bone preview) sets failed, cancelled and the status again.
+            self.last_batch = (getattr(self, 'batch_serial', 0), self.failed, self.cancelled, self.status.text())
             self.busy = False
             self.finish_single_tracking()
             self.task_state.active=False
@@ -1999,9 +2002,13 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.finish_single_tracking()
             self.finish_people_jobs()
             self.status.setText("Cannot start the processing engine. Check the app installation.")
+            self.last_batch = (getattr(self, 'batch_serial', 0), True, self.cancelled, self.status.text())
             self.update_readiness()
 
     def cancel_job(self):
+        if self.parts_runner is not None:
+            self.parts_runner.cancel()  # Cancel Job stops the whole run, also between its parts
+            if not self.busy:return
         self.pear_leave()
         self._stream_timer.stop()
         self.close_stream()
@@ -2403,6 +2410,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             worker = self.process
             if worker:
                 worker.waitForFinished(3000)
+        if self.parts_runner is not None:self.parts_runner.close()  # nothing more starts in a closing window
         self.pear_leave()
         self.pear_stop_scan()
         if self.character_process is not None:

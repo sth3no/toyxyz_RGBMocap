@@ -1,5 +1,5 @@
 """Planning a long range in parts, and deleting a finished part's temporary ExMR frames; no Qt."""
-import json,tempfile,unittest
+import json,os,tempfile,unittest
 from pathlib import Path
 import numpy as np
 from mocap import parts
@@ -15,6 +15,11 @@ class PlanTest(unittest.TestCase):
     def test_a_remainder_of_a_third_of_a_part_gets_its_own_part(self):
         self.assertEqual(parts.plan(0,640,300,60),[(0,300),(240,540),(480,640)])   # 100 frames left = a third: a part of its own
         self.assertEqual(parts.plan(0,639,300,60),[(0,300),(240,639)])
+    def test_parts_are_the_frames_the_person_job_reconstructs(self):
+        self.assertEqual(parts.job_range((225,300),0.,10.,30,300),(225,300))
+        self.assertEqual(parts.job_range((225,300),0.,10.-1/30,30,300),(225,299))   # a scene end one frame short clips the last part
+        self.assertEqual(parts.job_range((75,165),12.5,22.5,30,300),(75,165))   # a scene that starts later in the video
+        self.assertEqual(parts.job_range((0,90),0.,10.,30,60),(0,60))   # the job keeps a range inside the scene's frames
     def test_seconds_become_frames_of_the_clip(self):
         self.assertEqual(parts.frames(60.,30),1800);self.assertEqual(parts.frames(2.,30),60);self.assertEqual(parts.frames(2.5,25),62)
     def test_invalid_settings_have_a_plain_reason(self):
@@ -46,9 +51,10 @@ class MarksTest(unittest.TestCase):
         T=lambda a,b:dict(project=f't{a}_{b}',first=a,end=b)
         takes=[T(0,90),T(75,165),T(150,240),T(160,250),T(240,300)]   # 160-250: a take of another trim
         runs={(0,90),(75,165),(150,240),(240,300)}
-        self.assertEqual(parts.marks(takes,runs),['parts_75_90','parts_150_165'])
-        self.assertEqual(parts.marks([T(0,90),T(90,165)],{(0,90),(90,165)}),['parts_90_90'])   # meeting parts are marked, and refused when joined
-        self.assertEqual(parts.marks([T(0,90),T(100,165)],{(0,90),(100,165)}),[])   # a gap keeps its own choice
+        self.assertEqual(parts.marks(takes,runs),{'parts_75_90':dict(method='parts',takes=['t0_90','t75_165']),
+                                                  'parts_150_165':dict(method='parts',takes=['t75_165','t150_240'])})
+        self.assertEqual(list(parts.marks([T(0,90),T(90,165)],{(0,90),(90,165)})),['parts_90_90'])   # meeting parts are marked, and refused when joined
+        self.assertEqual(parts.marks([T(0,90),T(100,165)],{(0,90),(100,165)}),{})   # a gap keeps its own choice
 
 
 class EstimateTest(unittest.TestCase):
@@ -76,11 +82,30 @@ class DeleteTest(unittest.TestCase):
     def files(self):return sorted(p.relative_to(Path(self.tmp.name)).as_posix() for p in Path(self.tmp.name).rglob('*') if p.is_file())
     def test_only_the_frames_and_their_receipt_go(self):
         from mocap.parts_runner import delete_frames
-        before=self.files();self.assertEqual(delete_frames(self.take),6)
+        before=self.files();self.assertEqual(delete_frames(self.take),(6,0))
         gone=[p for p in before if p not in self.files()]
         self.assertEqual(gone,[f'scene/p1/takes/000000000_000000300_scene_v1/exmr_frames/{i:06d}.jpg' for i in range(5)]+
                          ['scene/p1/takes/000000000_000000300_scene_v1/exmr_frames/receipt.json'])
-        self.assertTrue(self.frames.is_dir());self.assertEqual(delete_frames(self.take),0)   # nothing left: nothing more
+        self.assertTrue(self.frames.is_dir());self.assertEqual(delete_frames(self.take),(0,0))   # nothing left: nothing more
+    def test_a_frame_another_program_holds_open_stays_and_is_counted(self):
+        from mocap.parts_runner import delete_frames
+        with open(self.frames/'000002.jpg','rb'):
+            self.assertEqual(delete_frames(self.take),(5,1))
+        self.assertEqual(sorted(p.name for p in self.frames.iterdir()),['000002.jpg','notes.txt'])
+    def junction(self,link,target):
+        import subprocess
+        made=subprocess.run(['cmd','/c','mklink','/J',str(link),str(target)],capture_output=True,creationflags=0x08000000)
+        if made.returncode or not link.is_dir():self.skipTest('a directory junction could not be made: '+made.stdout.decode(errors='replace'))
+        self.addCleanup(lambda:link.exists() and os.rmdir(link))   # removes the junction itself, never what it leads to
+    def test_a_frame_folder_that_is_a_junction_is_left_alone(self):
+        import shutil
+        from mocap.parts_runner import delete_frames
+        shutil.rmtree(self.frames);self.junction(self.frames,self.outside)
+        self.assertEqual(delete_frames(self.take),(0,0));self.assertTrue((self.outside/'000001.jpg').is_file())
+    def test_a_junction_inside_the_frame_folder_is_not_followed(self):
+        from mocap.parts_runner import delete_frames
+        self.junction(self.frames/'000099.jpg',self.outside)   # a folder link named like a frame
+        self.assertEqual(delete_frames(self.take),(6,0));self.assertTrue((self.outside/'000001.jpg').is_file())
     def test_a_link_out_of_the_folder_is_not_followed(self):
         import os
         from mocap.parts_runner import delete_frames
@@ -93,10 +118,10 @@ class DeleteTest(unittest.TestCase):
         shutil.rmtree(self.frames)
         try:os.symlink(self.outside,self.frames,target_is_directory=True)
         except OSError:self.skipTest('symbolic links need Developer Mode on Windows')
-        self.assertEqual(delete_frames(self.take),0);self.assertTrue((self.outside/'000001.jpg').is_file())
+        self.assertEqual(delete_frames(self.take),(0,0));self.assertTrue((self.outside/'000001.jpg').is_file())
     def test_no_frame_folder(self):
         from mocap.parts_runner import delete_frames
-        import shutil;shutil.rmtree(self.frames);self.assertEqual(delete_frames(self.take),0)
+        import shutil;shutil.rmtree(self.frames);self.assertEqual(delete_frames(self.take),(0,0))
 
 
 if __name__=='__main__':unittest.main()

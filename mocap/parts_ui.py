@@ -11,14 +11,16 @@ NO_FRAMES = 'Only ExMR writes temporary frames.'
 
 
 class PartsDialog(QDialog):
-    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2.):
+    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2., join_issue=None):
         super().__init__(parent)
         self.setWindowTitle('Reconstruct in Parts')
         self.setMinimumWidth(ui_px(420))
         self.range, self.fps, self.size, self.people, self.writes = (first, end), fps, (width, height), people, writes_frames
         layout = QVBoxLayout(self)
-        intro = QLabel(f'Reconstruct frames {first+1}–{end} ({format_time((end-first)/fps)}) one part after another. Neighbouring parts '
-                       'share the overlap, so Fill hidden ranges can join them into one take.')
+        # The Hidden ranges panel's own reason, so the dialog never promises a join that Fill hidden ranges refuses.
+        join = (f'Neighbouring parts share the overlap, but they cannot be joined into one take: {join_issue}' if join_issue else
+                'Neighbouring parts share the overlap, so Fill hidden ranges can join them into one take.')
+        intro = QLabel(f'Reconstruct frames {first+1}–{end} ({format_time((end-first)/fps)}) one part after another. {join}')
         intro.setWordWrap(True);layout.addWidget(intro)
         form = QFormLayout();layout.addLayout(form)
         self.part = self._seconds('Part length, in seconds', 4., 3600., part, 10.);form.addRow('Part length:', self.part)
@@ -59,7 +61,8 @@ def ask(w):
     # The same range offers the last run's sizes, so its finished parts are planned again and skipped.
     record = parts_runner.saved(w.people_root);same = record is not None and (record['first'], record['end']) == (first, end)
     sizes = dict(part=record['part']/fps, overlap=record['overlap']/fps) if same and record['overlap'] > 0 else {}
-    dialog = PartsDialog(w, first, end, fps, scene['width'], scene['height'], len(w.checked_people()), w.model_choice.currentData() == 'exmr', **sizes)
+    dialog = PartsDialog(w, first, end, fps, scene['width'], scene['height'], len(w.checked_people()), w.model_choice.currentData() == 'exmr', **sizes,
+                         join_issue=parts_runner.join_issue(w))
     try:
         if dialog.exec() != QDialog.Accepted:return None
         part, overlap, delete = dialog.choice()

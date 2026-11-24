@@ -36,6 +36,15 @@ def plan(first, end, part, overlap):
         out.append((start, stop));start = stop-overlap
 
 
+def job_range(part, start, end, fps, frames):
+    """The scene frames the person job reconstructs for the trim `part`, as input_person_jobs and the job compute them for a
+    scene that starts `start` and ends `end` seconds into the video: the trim's end is clipped to the scene's end, both
+    edges are rounded to frames and kept inside the scene's `frames`."""
+    a, b = part
+    first, last = start+a/fps, min(end, start+b/fps)
+    return max(0, round((first-start)*fps)), min(frames, round((last-start)*fps))
+
+
 def visible(observed, fps, part):
     """Visible runs of a person inside a part, as the person job finds them: `observed` is the person's whole-scene
     tracking mask (the person preview's tracking.npz), and each run becomes one take."""
@@ -49,11 +58,12 @@ def finished(takes, runs, ready):
 
 
 def marks(takes, runs):
-    """gap_fill keys of the seams (shared frames, or a meeting point) between two takes that are both runs of the planned
-    parts (`runs`, a set of (first, end)); Hidden ranges lists and joins only these, so overlapping takes of other trims stay apart."""
-    from .hidden_ranges import seam_key, seams
+    """{gap_fill key: mark} of the seams (shared frames, or a meeting point) between two takes that are both runs of the
+    planned parts (`runs`, a set of (first, end)); Hidden ranges lists and joins only these, so overlapping takes of other
+    trims stay apart. A mark names its two takes, so another take with the same seam frames does not inherit it."""
+    from .hidden_ranges import parts_mark, seam_key, seams
     span = lambda t: (t['first'], t['end'])
-    return [seam_key(s) for s in seams(takes) if s.get('kind') and span(s['before']) in runs and span(s['after']) in runs]
+    return {seam_key(s): parts_mark(s) for s in seams(takes) if s.get('kind') and span(s['before']) in runs and span(s['after']) in runs}
 
 
 def frame_bytes(width, height):return round(FRAME_BYTES*width*height/(1920*1080))
