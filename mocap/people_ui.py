@@ -157,6 +157,7 @@ class PeopleWorkspace:
         self._join_result=None
         self._import_result=None
         self._hidden_refresh=False
+        self.scene_hidden={}  # unfilled hidden ranges per person; the 3D view shows a checked person inside one as a ghost
         from .scene_data import SceneDataLoader
         self.scene_data=None;self._scene_key=None
         self.scene_cache=OrderedDict()
@@ -274,6 +275,10 @@ class PeopleWorkspace:
         self.motion_view.scene_visible={person['id'] for person in self.checked_people()}
         from .scene_notes import waiting_people
         self.motion_view.scene_waiting=waiting_people(self.people_state['people'],self.motion_view.scene_visible) if self.people_state else []
+        from .scene_ghosts import unfilled
+        self.scene_hidden=unfilled(self.people_root,self.people_state['people'],self.active_result,self.model_choice.currentData()) if self.people_state else {}
+        self.motion_view.scene_hidden=self.scene_hidden
+        if self.scene_data is not None:self.scene_data.hidden=self.scene_hidden
         self.motion_view.scene_colors={p['id']:p['color'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.scene_names={p['id']:p['name'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.actor_name=self._single_actor['name'] if self._single_actor else 'Person 1'

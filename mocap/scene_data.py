@@ -61,6 +61,7 @@ class PeopleScene:
         self.root=root;self.reference=reference;self.takes={};self.starts={};self.spans={};self.by_project={}
         self.warnings=[];self.active=[];self.asset=None;self.summary=None
         self.contact_floor=None
+        self.hidden={}  # unfilled hidden ranges per person (scene_ghosts.unfilled), set by the window
 
     def finish(self):
         centers=[];bounds=[];heights=[]
@@ -105,11 +106,14 @@ class PeopleScene:
     def actors_at(self,seconds,visible,preferred=None):
         result=[entry for ident in sorted(visible)
                 if (entry:=self.take_at(ident,seconds,preferred)) is not None]
-        used={id(take) for take,_ in result}
+        # A ghost stands at the last frame of its take, so that take stays mapped while the ghost is drawn.
+        from .scene_ghosts import ghosts
+        held=[take for take,_ in result]+[take for take,_,_ in ghosts(self,seconds,visible,self.hidden)]
+        used={id(take) for take in held}
         for take in self.active:
             if id(take) not in used:
                 for array in take.arrays.values():array.release_windows()
-        self.active=[take for take,_ in result]
+        self.active=held
         return result
 
     def close(self):

@@ -70,11 +70,12 @@ FRAGMENT = """#version 430 core
 in vec3 surfaceNormal;
 out vec4 color;
 uniform vec3 bodyColor;
+uniform float bodyAlpha;
 void main() {
     vec3 n=normalize(surfaceNormal);
     float key=max(0,dot(n,normalize(vec3(-.4,.8,-.6))));
     float fill=max(0,dot(n,normalize(vec3(.6,.3,.7))));
-    color=vec4(bodyColor*(.40+.55*key+.20*fill),1);
+    color=vec4(bodyColor*(.40+.55*key+.20*fill),bodyAlpha);
 }
 """
 
@@ -178,7 +179,8 @@ class MeshRenderer:
         self.frame_key = key
         self.dispatches += 1
 
-    def draw(self, eye, basis, width, height, color=(.71,.71,.71),transform=None,clear_depth=True):
+    def draw(self, eye, basis, width, height, color=(.71,.71,.71),transform=None,clear_depth=True,alpha=1.):
+        """`alpha` below 1 draws a see-through body (a hidden person's ghost) over what is already in the picture."""
         projection = QMatrix4x4()
         projection.perspective(40,width/max(1,height),.03,2000)
         view = np.eye(4)
@@ -188,6 +190,7 @@ class MeshRenderer:
         self.surface.setUniformValue("mvp",projection * QMatrix4x4(*view.reshape(-1).tolist()))
         self.surface.setUniformValue('sceneTransform',QMatrix4x4(*np.asarray(transform if transform is not None else np.eye(4)).reshape(-1).tolist()))
         self.surface.setUniformValue('bodyColor',QVector3D(*color))
+        self.gl.glUniform1f(self.surface.uniformLocation('bodyAlpha'),float(alpha))
         self.gl.glEnable(0x0B71)  # Depth test; true surface occlusion, not face sorting.
         self.gl.glDepthMask(True)
         self.gl.glDepthFunc(0x0201)
@@ -196,7 +199,17 @@ class MeshRenderer:
         self.gl.glDisable(0x0B44)
         if clear_depth:self.gl.glClear(0x100)
         self.vao.bind()
+        if alpha<1:
+            # Depth only first, so the blended pass colours just the nearest surface: one even layer, no inner faces.
+            self.gl.glColorMask(False,False,False,False)
+            self.gl.glDrawElements(0x4,self.index_count,0x1405,VoidPtr(0))
+            self.gl.glColorMask(True,True,True,True)
+            self.gl.glEnable(0x0BE2)
+            self.gl.glBlendFuncSeparate(0x0302,0x0303,1,0x0303)  # the picture itself stays opaque
+            self.gl.glDepthFunc(0x0203);self.gl.glDepthMask(False)
         self.gl.glDrawElements(0x4,self.index_count,0x1405,VoidPtr(0))
+        if alpha<1:
+            self.gl.glDisable(0x0BE2);self.gl.glDepthMask(True);self.gl.glDepthFunc(0x0201)
         self.vao.release()
         self.gl.glDisable(0x0B44)
         self.gl.glDisable(0x0B71)
