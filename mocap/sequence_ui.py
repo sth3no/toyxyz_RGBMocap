@@ -33,7 +33,7 @@ MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the
 TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a video at the end of the sequence.',
         'cut': 'Split the block under the playhead at the playhead.', 'delete': 'Remove the selected block from the sequence. Its files stay on disk.',
         'frame': 'Fit the whole sequence in the timeline.',
-        'join': 'Join every linked row into one animation in the scene of its first block. The later blocks are not changed.'}
+        'join': 'Join every linked row that is not joined yet into one animation in the scene of its first block. The later blocks are not changed.'}
 STALE = 'The people of {} changed, so their links were removed.'
 AUTOMATIC = '{} now continues {}. Drag the bar to change it.'
 EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
@@ -911,12 +911,15 @@ class Controller(QObject):
         form.addRow(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         form.addRow(buttons)
+        def say(text):   # the dialog grows when the note wraps onto more lines than it had room for
+            note.setText(text);form.activate()
+            dialog.resize(dialog.width(), max(dialog.height(), dialog.heightForWidth(dialog.width()), dialog.sizeHint().height()))
         def explain():
-            note.setText(EXPERIMENTAL if method.currentData() == 'auto' else '')
+            say(EXPERIMENTAL if method.currentData() == 'auto' else '')
         def apply():
             issue = transition_issue(method.currentData(), length.value())
             if issue:
-                note.setText(issue);return
+                say(issue);return
             self.set_transition(target, method.currentData(), length.value())   # a refusal of its own is in the status bar
             dialog.accept()
         method.currentIndexChanged.connect(explain)

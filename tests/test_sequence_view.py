@@ -350,7 +350,7 @@ class LinkViewTest(unittest.TestCase):
         self.assertEqual(piece_text(3., 'auto'), '3.0 s Automatic')
         self.assertEqual(piece_tip(3., 'auto', 'Person 2', 'Person 3'),
                          "3.0 s Automatic (Experimental)\nGenerated transition between the end of Person 2's last take and the start of "
-                         "Person 3's take. Click to change it.")
+                         "Person 3's take, wherever they sit in their blocks. Click to change it.")
 
     def test_paints_row_states(self):
         from mocap.theme import apply_appearance

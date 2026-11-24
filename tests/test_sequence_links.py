@@ -66,7 +66,7 @@ class LinksTest(unittest.TestCase):
         self.assertEqual(self.refusal((a,1),(c,1)),"Anna's take is not finished.")
         e=self.clip('e',ANNA,(1,0,100),(1,150,300)).id   # two takes in use, both finished
         self.assertEqual([[(t.first,t.end,t.ready) for t in p.takes] for p in self.states()[e].people],[[(0,100,True),(150,300,True)]])
-        self.assertEqual(self.refusal((a,1),(e,1)),'Anna has several takes in this block. Fill their hidden ranges or reconstruct the block in one piece first.')
+        self.assertEqual(self.refusal((a,1),(e,1)),'Anna has several takes in this block. Reconstruct the block in one piece, or join parts that share frames with Fill hidden ranges, first.')
         self.assertIsNone(self.refusal((e,1),(b,1)))   # the earlier person may have several: the last one is continued
         f=self.clip('f',ANNA,(1,0,100),(1,150,300,False)).id
         self.assertEqual(self.refusal((f,1),(b,1)),"Anna's take is not finished.")   # its last take 150-300 is the one continued

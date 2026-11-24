@@ -698,7 +698,7 @@ class SequenceWindowTest(unittest.TestCase):
         first, second = self.linkable(BEN, ((1, 0, 40), (1, 50, 90)));c, w = self.c, self.w
         self.assertEqual(c.sequence.links, [])   # not linked by itself either
         c.view.linked.emit((first.id, 1), (second.id, 1))
-        self.assertEqual(w.status.text(), 'Ben has several takes in this block. Fill their hidden ranges or reconstruct the block in one piece first.')
+        self.assertEqual(w.status.text(), 'Ben has several takes in this block. Reconstruct the block in one piece, or join parts that share frames with Fill hidden ranges, first.')
         self.assertEqual(c.sequence.links, []);self.assertFalse(c.link((first.id, 1), (second.id, 1)));self.assertNotIn('links', self.saved())
 
     def test_transition_dialog_applies_and_refuses(self): # set_transition(target, smooth, 2.0) -> False with the panel's limit text; (auto, 3.0) -> True, starts() moved by 3.0
@@ -730,6 +730,22 @@ class SequenceWindowTest(unittest.TestCase):
         self.assertEqual((c.sequence.gap(second.id), c.sequence.link_into(*target).method), (2.5, 'auto'));self.assertEqual(self.saved()['gaps'], {second.id:2.5})
         with mock.patch.object(c, 'edit_transition') as edit:c.view.transition_clicked.emit(target)
         edit.assert_called_once_with(target)
+
+    def test_transition_note_is_shown_whole(self):      # the note that appears after the dialog opened (Experimental, a refusal) is not cut off
+        first, second = self.linkable();c = self.c;seen = []
+        def step():
+            dialog = APP.activeModalWidget()
+            try:
+                combo, spin = dialog.findChild(QComboBox), dialog.findChild(QDoubleSpinBox)
+                note = next(label for label in dialog.findChildren(QLabel) if label.objectName() == 'muted')
+                ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+                for change in (lambda:combo.setCurrentIndex(combo.findData('auto')), lambda:(combo.setCurrentIndex(combo.findData('smooth')), spin.setValue(3.), ok.click())):
+                    change();APP.processEvents()
+                    seen.append((bool(note.text()), note.height() >= note.heightForWidth(note.width()), dialog.height() >= dialog.sizeHint().height()))
+            finally:
+                if dialog.isVisible():dialog.reject()
+        QTimer.singleShot(0, step);c.edit_transition((second.id, 1))
+        self.assertEqual(seen, [(True, True, True), (True, True, True)])
 
     def test_find_person_again_drops_links(self):         # rewrite the later block's people.json with a new fingerprint -> refresh drops the link with the status text
         first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c, w = self.c, self.w;later = Path(second.folders['exmr'])

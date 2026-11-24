@@ -1,5 +1,126 @@
 # Source package validation
 
+## Sequence: people who continue across videos, stage 2 (2026-11-24)
+
+A person of one block linked to a person of the block before (by drag, the
+bar's menu, or by the app when both neighbouring blocks have one tracked
+person), the transition between them with its method and length, **Join**
+(import of each later take into the first block's scene, the export after it,
+the links' methods, Fill hidden ranges) through the window's own job queue,
+taking a join back, opening and exporting the joined animation. Everything
+below ran offscreen on one PC (Windows 11). **Stage 2 has not run with real
+models yet:** no real video was tracked for it, no worker process ran, and no
+GPU was used.
+
+- **Tests** (unittest, Qt offscreen, `paths.HOME` in a temporary folder), one
+  covering run after the last change: `test_sequence` 21, `test_sequence_state`
+  15, `test_sequence_links` 10, `test_sequence_view` 28, `test_sequence_window`
+  66, `test_sequence_join` 27, `test_tutorial_window` 36: **203 run, 203
+  passed** in 197 s; the output holds only ffmpeg metadata lines and
+  `moov atom not found` from existing fixtures. `test_sequence_join` uses the
+  real `MainWindow` with blocks of 3-second 64×48 ffmpeg videos whose ExMR clip
+  folders hold synthetic finished takes; the queue starts no worker: each job
+  is played as it would end, with `take_import.main` and `take_join.main` run
+  in-process for real and their events sent through the window's handler, and
+  the export job writing the bone preview it leaves. The whole `tests` folder
+  was not run in this step.
+- **Pictures looked at** (records, not in the package): the real window
+  rendered offscreen at 1440×880, dark and light, with two blocks built as
+  `test_sequence_join` builds them (Anna and Dan in the first video, Ben and
+  Cleo in the second), Ben linked to Anna, the Join answered **Yes** and its
+  jobs played in-process: `{dark,light}_linked.png` (hatched `1.0 s Smooth
+  join` piece, Dan and Cleo unlinked), `{dark,light}_dialog_automatic.png`
+  and `{dark,light}_dialog_refused.png` (the Transition dialog with the
+  Experimental note, and OK refused with `Smooth join is limited to 30 frames;
+  this range has 90.`), `{dark,light}_join_question.png`,
+  `{dark,light}_joined.png` (solid piece, one outline, `Anna | joined`, the
+  loaded joined take 7.00 s long), `{dark,light}_out_of_date.png` (after the
+  transition was changed to 0.5 s: dashed outline, `join out of date`) and
+  the same three timelines as `*_window.png`. The first dialog pictures showed
+  the second line of the note cut off; the dialog now grows with its note, and
+  a test checks it. The synthetic takes are not real motion files, so the 3D
+  view of the window pictures is empty and the status bar says `Cannot load
+  the motion preview. 'frames_file'`; the timeline is what they show.
+- **Not run:** real videos and models for any stage 2 step (link, Join with
+  Smooth join or Automatic, Join again, open, export), a real worker, a real
+  export file, Kimodo, a real screen and real mouse gestures on it, UI scales
+  other than 100 %, three or more linked blocks outside the tests, long blocks.
+
+## Sequence: real run of stage 1 with ExMR (2026-11-24)
+
+The real `MainWindow`, Qt offscreen at 1440×880, ExMR with **Static Camera**
+and default options (HTD Refine, FootMR and HandFlow off, Compute mode
+Automatic, result `corrected_initial`, Motion Correction on), Resource Safety
+on. Video A: the looped juggler clip of the long-video runs (464×832, 10,934
+frames, 59.64 fps variable, 183.32 s). Video B: 10 s cut from A at 60 s with
+the bundled ffmpeg (596 frames, 59.70 fps, 9.98 s). The job workspace and the
+sequences folder were redirected to a scratch folder, and a guard refused any
+job outside it (it refused none). The final run took 182 s.
+
+| Step | Wall | Outcome |
+| --- | --- | --- |
+| 1 Open Video A + Add Video B | 3.2 s | OK |
+| 2 Cut A at 6 s, delete the second piece | 6.6 s | OK |
+| 3 Open A, Find person, Reconstruct 3D | 132.5 s | OK |
+| 4 Back to the sequence | 1.0 s | OK |
+| 5 Select B, select A again | 4.6 s | OK |
+| 6 GVHMR and back to ExMR | 20.5 s | OK for the workspace; once an error status, not reproduced |
+| 7 Save / New / Open | 4.6 s | OK |
+| 8 Pictures | 6.4 s | OK |
+
+1. **Open / Add.** One block `juggler_3min.mp4` 0–183.3217 s, loaded, `not
+   tracked`; the second block 0–9.9833 s, `not tracked`. The view went to level
+   1 and the sequence was saved at once in the redirected folder.
+2. **Cut / Delete.** The cut at frame 358 (6.0023 s, the window's own frame,
+   not exactly 6.000 s) gave 3 blocks 0–6.0023, 6.0023–183.3217 and B; the
+   second piece was loaded with trim 358–10934. Delete left 2 blocks, summary
+   `2 blocks | 0:16.0`, and loaded the next block (B), trim 0–596.
+3. **Track A.** Level 3, trim 0–358, processing range 0–6.0023 s. Find person:
+   36.7 s wall (Console `Find People: 29.02 s`), 1 person, peak tree RSS 1.85
+   GiB, GPU 1608 MiB. Reconstruct 3D: 93.7 s wall, status `Complete. Total
+   time: 1m 31s.` (Prepare Person Motion 1.48 s, keypoints 47.25 s, body
+   features 20.98 s, hand features 6.38 s, Reconstruct Motion 2.36 s, Process
+   ExMR Motion 77.83 s, Motion Correction 3.25 s, Export 4.55 s);
+   peak driver-tree RSS 12.01 GiB, peak GPU used 7235 MiB (whole GPU, baseline
+   about 950), least free RAM 8.67 GiB; no memory stop, no modal dialog. One
+   take of 180 frames at 30 fps.
+4. **Back.** Level 1; block A `tracked`, 180 frames, Person 1 checked with one
+   finished take 0–180, its ExMR folder inside the scratch workspace.
+5. **Select.** B: video B, no project, trim = its range, `not tracked`. A again:
+   its project loaded in 2.5 s with motion, still `tracked`.
+6. **Model switch.** GVHMR: the window kept A's workspace with `GVHMR has no
+   saved motion in this project. Use Reconstruct 3D.`, block A read `not
+   tracked` for GVHMR and kept its ExMR folder. Back to ExMR: A's take and
+   motion again, `tracked`. The status bar then read `Cannot load the motion
+   preview. Target motion changed while loading`, although the motion was
+   loaded; four control runs (project opened with and without the sequence,
+   and twice through the saved sequence file) did not show it again. The
+   result in use changed on the switch, so a preview load raced with it; a
+   part of the sequence in it could not be shown. Recorded as a timing
+   observation.
+7. **Save / reopen.** The file held both blocks (A 0–6.002300774343028 with its
+   ExMR folder, B 0–9.98333). New Sequence: one block of the whole video, no
+   file, the window kept A's project. Open: blocks A and B with the same ids, A
+   `tracked` and loaded first, level 1, `2 blocks | 0:16.0`.
+8. **Pictures** (dark, 100 %): level 1 with both block labels and the bar, level
+   2 with one `Person 1` bar under block 1, level 3 with `Clip: 1–180 | 6.00 s`
+   and the Motion and contact rows; nothing clipped. The window skips the rig
+   preview offscreen, so its 3D view showed no body.
+
+No defect of the sequence feature was found: every step behaved as the user
+guide describes, with no exception and no modal dialog. Console warnings came
+from the ExMR worker only (the MANO 10 shape coefficients warning and a HaMeR
+`torch.cross` deprecation). The owner's projects folder was the same before
+and after, with no `sequences` folder in it.
+
+**Not covered:** drag-resize and move of blocks, wheel navigation between the
+levels, the "Change it?" question on cutting a tracked block, Reconstruct in
+parts and Fill on a block, a job on block B, GVHMR or FlowHMR tracking of a
+block, Review Range and Auto-advance playback, Open Project and Add Project to
+Sequence, a missing video, two people, the light theme and other UI scales, a
+real on-screen window with its 3D rendering, and real mouse clicks (signals and
+button clicks from code were used).
+
 ## Combined Windows integration (2026-11-24)
 
 The local integration combines the fork toolkit, current sequence timeline and

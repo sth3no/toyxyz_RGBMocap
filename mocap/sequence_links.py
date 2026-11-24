@@ -14,7 +14,7 @@ from .take_import_check import gap_frames as _frames
 SAME_MODEL = 'Both blocks must be tracked with the same model.'
 FLOWHMR = 'FlowHMR results cannot be joined.'
 NO_TAKE = '{} has no finished take in the earlier block.'
-SEVERAL = '{} has several takes in this block. Fill their hidden ranges or reconstruct the block in one piece first.'
+SEVERAL = '{} has several takes in this block. Reconstruct the block in one piece, or join parts that share frames with Fill hidden ranges, first.'
 FILLED = "{}'s take contains generated frames, which cannot be joined again."
 NOT_FINISHED = "{}'s take is not finished."
 NO_LIST = 'Run Find person in {} first. A block reconstructed without it has no person to continue.'

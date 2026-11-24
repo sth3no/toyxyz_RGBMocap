@@ -21,7 +21,8 @@ VIDEO = '#6289ad'
 GENERATED = ('#d8a24a', '#8a4809')   # generated frames, as TimelineSlider paints its fill_runs
 METHOD_LABELS = {'smooth': 'Smooth join', 'auto': 'Automatic (Experimental)'}   # the Hidden ranges panel's names
 SUFFIX = {'joined': 'joined', 'out of date': 'join out of date'}
-PIECE_TIP = "Generated transition between the end of {}'s last take and the start of {}'s take. Click to change it."
+PIECE_TIP = ("Generated transition between the end of {}'s last take and the start of {}'s take, wherever they sit in "
+             "their blocks. Click to change it.")
 
 
 def piece_text(seconds, method):
