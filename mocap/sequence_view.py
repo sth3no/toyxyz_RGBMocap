@@ -196,7 +196,7 @@ class SequenceView(QWidget):
         if self.level() == 1:
             return []
         rects, out = {block.id: rect for block, _, rect in layout or self._layout()}, []
-        for link in self.sequence.links:
+        for link in self.sequence.model_links():
             earlier, later = rects.get(link.source[0]), rects.get(link.target[0])
             people = self._people(self.sequence.block(link.target[0])) if later is not None else []
             index = next((i for i, person in enumerate(people) if person.id == link.target[1]), None)
@@ -441,7 +441,7 @@ class SequenceView(QWidget):
         layout = sorted(self._layout(), key=lambda item: -item[2].width())  # a tiny block is drawn over a long one
         people_rows = self._row_count() if self.level() == 2 else 0
         pieces = self._pieces(layout) if people_rows else []
-        chains = {self.sequence.chain(*link.target)[0]: self._row_state(link.target) for link in self.sequence.links}
+        chains = {self.sequence.chain(*link.target)[0]: self._row_state(link.target) for link in self.sequence.model_links()}
         track = self._track()
         p.save()
         p.setClipRect(track)

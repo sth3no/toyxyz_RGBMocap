@@ -188,14 +188,37 @@ class SequenceTests(unittest.TestCase):
         self.assertIsNone(s.unlink((b.id, 7))); self.assertEqual(s.gap(b.id), 0.0); self.assertEqual(s.dropped, [])
         self.assertEqual(s.starts(), [0.0, 10.0])
 
+    def test_links_of_two_models(self):   # coexist on one pair, each seen only under its model, one in and one out per model, edits drop both, round trip keeps both and decided per model
+        s, a, b, c = _three(); s.model = 'exmr'
+        ex = s.link((a.id, 1), (b.id, 7)); self.assertEqual(ex.model, 'exmr'); self.assertEqual(s.decided, {b.id})
+        s.model = 'gvhmr'
+        self.assertEqual((s.model_links(), s.link_into(b.id, 7), s.link_out(a.id, 1), s.gap(b.id), s.decided), ([], None, None, 0.0, set()))
+        self.assertEqual(s.starts(), [0.0, 10.0, 20.0]); self.assertEqual(s.chain(b.id, 7), [(b.id, 7)])
+        gv = s.link((a.id, 2), (b.id, 7)); self.assertEqual(gv.model, 'gvhmr')   # into the same person: the ExMR link stays
+        self.assertEqual(s.links, [ex, gv]); self.assertEqual(s.model_links(), [gv]); self.assertEqual(s.chain(b.id, 7), [(a.id, 2), (b.id, 7)])
+        self.assertIsNone(s.unlink((b.id, 8))); s.set_method((b.id, 7), 'auto'); self.assertEqual((gv.method, ex.method), ('auto', 'smooth'))
+        self.assertEqual(s.unlink((b.id, 7)), gv); self.assertEqual(s.links, [ex]); gv = s.link((a.id, 1), (b.id, 3))   # out of Anna too
+        s.model = 'exmr'
+        self.assertEqual((s.model_links(), s.link_into(b.id, 7), s.link_out(a.id, 1), s.link_into(b.id, 3)), ([ex], ex, ex, None))
+        self.assertEqual(s.starts(), [0.0, 11.0, 21.0]); self.assertEqual(len(s.links_touching(b.id)), 2)   # every model's links
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'seq.json'; s.save(path)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['decided'], {'exmr': [b.id], 'gvhmr': [b.id]})
+            loaded = Sequence.load(path); self.assertIsNone(loaded.model); self.assertEqual(loaded.links, [ex, gv])
+            loaded.model = 'gvhmr'; self.assertEqual((loaded.model_links(), loaded.decided), ([gv], {b.id}))
+            loaded.model = 'exmr'; self.assertEqual((loaded.model_links(), loaded.decided), ([ex], {b.id}))
+        s.cut(b.id, 5.0); self.assertEqual(s.links, []); self.assertEqual(s.dropped, [ex, gv])
+        s, a, b, c = _three(); s.model = 'exmr'; s.link((a.id, 1), (b.id, 7)); s.model = 'gvhmr'; s.link((a.id, 1), (b.id, 7))
+        s.delete(b.id); self.assertEqual((len(s.dropped), s.decided), (2, set())); s.model = 'exmr'; self.assertEqual(s.decided, set())
+
     def test_links_round_trip_and_old_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'seq.json'
-            s, a, b, c = _three()
+            s, a, b, c = _three(); s.model = 'exmr'
             first = s.link((a.id, 1), (b.id, 'p7'), prints=('x', 'y'))
             first.built = {'copy': 'takes/t2', 'take': 'C:/b/takes/t0', 'stamp': [123, 456789], 'gap': 30, 'method': 'smooth'}
             s.link((b.id, 'p7'), (c.id, 2), 'auto'); s.set_gap(c.id, 2.5); s.decided.add(a.id)
-            s.save(path); loaded = Sequence.load(path)
+            s.save(path); loaded = Sequence.load(path); loaded.model = 'exmr'
             self.assertEqual(loaded.links, s.links); self.assertEqual(loaded.gaps, s.gaps); self.assertEqual(loaded.decided, s.decided)
             self.assertEqual(loaded.links[0].built, first.built); self.assertEqual(loaded.links[0].prints, ('x', 'y'))
             self.assertIsInstance(loaded.links[0].source[1], int); self.assertIsInstance(loaded.links[0].target[1], str)
@@ -204,21 +227,25 @@ class SequenceTests(unittest.TestCase):
         good = {'id': 'x', 'video': 'a', 'start': 0, 'end': 5, 'length': 9, 'folders': {}}
         old = Sequence.from_dict({'version': 1, 'blocks': [good, dict(good, id='y')]})
         self.assertEqual((old.links, old.gaps, old.decided, old.starts()), ([], {}, set(), [0.0, 5.0]))
-        link = {'source': ['x', 1], 'target': ['y', 2], 'method': 'smooth', 'prints': [None, None]}
+        link = {'source': ['x', 1], 'target': ['y', 2], 'method': 'smooth', 'prints': [None, None], 'model': 'exmr'}
+        unstamped = dict(link, source=['x', 6], target=['y', 6]); del unstamped['model']
         data = {'version': 1, 'blocks': [good, dict(good, id='y')],
-                'links': [link, dict(link, source=['x', 3], target=['z', 2]), dict(link, source=['x', 4], target=['y', 5], method='copy')],
-                'gaps': {'y': 2.0}, 'decided': ['y', 'z']}
-        loaded = Sequence.from_dict(data)
-        self.assertEqual(loaded.links, [Link(('x', 1), ('y', 2), 'smooth', (None, None), None)])
+                'links': [link, dict(link, source=['x', 3], target=['z', 2]), dict(link, source=['x', 4], target=['y', 5], method='copy'),
+                          unstamped, dict(link, source=['x', 7], target=['y', 7], model=3)],
+                'gaps': {'y': 2.0}, 'decided': {'exmr': ['y', 'z']}}
+        loaded = Sequence.from_dict(data); loaded.model = 'exmr'
+        self.assertEqual(loaded.links, [Link(('x', 1), ('y', 2), 'smooth', (None, None), None, 'exmr')])   # unusable links dropped
         self.assertEqual((loaded.gap('y'), loaded.decided, loaded.dropped), (2.0, {'y'}, []))
-        for bad in ({'links': {}}, {'gaps': []}, {'decided': 'y'}, {'links': [5]}, {'links': [dict(link, source='x')]},
+        old = Sequence.from_dict(dict(data, decided=['y']));old.model = 'exmr'; self.assertEqual(old.decided, set())   # decided for no model
+        for bad in ({'links': {}}, {'gaps': []}, {'decided': 'y'}, {'decided': {'exmr': 'y'}}, {'decided': {'exmr': [1]}},
+                    {'links': [5]}, {'links': [dict(link, source='x')]},
                     {'links': [dict(link, target=['y', True])]}, {'links': [dict(link, built=3)]}, {'gaps': {'y': 'a'}}):
             with self.assertRaisesRegex(ValueError, 'not a sequence file'): Sequence.from_dict(dict(data, **bad))
 
     def test_review_survives(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'seq.json'
-            s = Sequence(); a = s.add('a', 10.0); b = s.add('b', 5.0)
+            s = Sequence(); s.model = 'exmr'; a = s.add('a', 10.0); b = s.add('b', 5.0)
             review = {'start': 1.0, 'end': 4.0, 'result': None}; s.set_review(b.id, review)
             s.link((a.id, 1), (b.id, 7)); self.assertEqual(b.review, review)
             s.unlink((b.id, 7)); self.assertEqual(b.review, review)

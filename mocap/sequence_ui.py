@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
 from . import paths, people_store, sequence_links, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
-from .sequence import METHODS, Sequence
+from .sequence import DEFAULT_METHOD, METHODS, Sequence
 from .sequence_view import METHOD_LABELS, SequenceView
 from .take_import_check import gap_frames
 from .theme import ui_px
@@ -115,6 +115,7 @@ class Controller(QObject):
         self._settle.stop()
         self.sequence, self.current, self._pending, self._yielded = sequence, None, None, False
         self._advance_to = None
+        sequence.model = self.w.model_choice.currentData()
 
     def _guarded(self, change, *args):
         """Run a change the window itself calls for; an error in it never decides the window's job or load."""
@@ -705,6 +706,7 @@ class Controller(QObject):
             self.w.status.setText(BUSY);return False
         if not self.supported():
             self.w.status.setText(OTHER_MODEL);return False
+        self.sequence.model = self.w.model_choice.currentData()
         return True
 
     @staticmethod
@@ -719,7 +721,8 @@ class Controller(QObject):
 
     def link(self, source, target):
         """`target` (later block id, person id) continues `source` (a person of the block before), replacing their other
-        links; False with the reason in the status bar."""
+        links of the selected model and keeping the method of the link `target` had; False with the reason in the status
+        bar."""
         if not self._may_link():return False
         sequence, source, target = self.sequence, tuple(source), tuple(target)
         if not {source[0], target[0]} <= self._ids():return False
@@ -730,7 +733,7 @@ class Controller(QObject):
         if reason:
             self.w.status.setText(reason);return False
         before = list(sequence.links)
-        try:sequence.link(source, target, prints=self._prints(states, source, target))
+        try:sequence.link(source, target, old.method if old else DEFAULT_METHOD, self._prints(states, source, target))
         except ValueError as error:
             self.w.status.setText(str(error));return False
         sequence.dropped.extend(link for link in before if not any(link is kept for kept in sequence.links))
@@ -831,8 +834,9 @@ class Controller(QObject):
 
     def _keep_links(self, states, model):
         """Drop the links a changed people list made stale (their later block may be linked by itself again), then make the
-        automatic links; never while a job runs. Saves and says so when anything changed."""
-        if self.busy():return
+        automatic links; never while a job runs or the window shows a project of its own. Saves and says so when anything
+        changed."""
+        if self.busy() or self._yielded:return
         sequence, texts = self.sequence, []
         gone = sequence_links.stale(sequence, states)
         for link in gone:
@@ -861,12 +865,12 @@ class Controller(QObject):
     def refresh(self):
         """Re-read every block's state; keep the links (for the selected model, when the sequence supports it); update the
         view, the buttons and the playhead."""
-        model, states = self.w.model_choice.currentData(), self._states()
-        rows = row_states = None
+        model = self.sequence.model = self.w.model_choice.currentData()   # the document's link queries see this model's links
+        states, rows, row_states = self._states(), None, None
         if self.supported():
             self._keep_links(states, model)
             rows = sequence_links.rows(self.sequence, states)
-            row_states = {link.target:sequence_links.status(self.sequence, states, link.target, model) for link in self.sequence.links}
+            row_states = {link.target:sequence_links.status(self.sequence, states, link.target, model) for link in self.sequence.model_links()}
         self.view.show_sequence(self.sequence, states, rows, row_states)
         self.view.set_current(self.current if self.current in self._ids() else None)
         count = len(self.sequence.blocks)

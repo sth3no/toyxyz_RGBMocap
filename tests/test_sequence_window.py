@@ -620,16 +620,16 @@ class SequenceWindowTest(unittest.TestCase):
 
     # Stage 2: people who continue across neighbouring blocks
 
-    def clip(self, block, people, takes, mark):
-        """A finished ExMR scene of the block's 3 s video after Find person (tests/test_parts_window.py scene) with its takes
-        (ident, first, end) as the batch leaves them (tests/test_sequence_state.py StateTest.take) and the people list's
+    def clip(self, block, people, takes, mark, model='exmr'):
+        """A finished scene of `model` of the block's 3 s video after Find person (tests/test_parts_window.py scene) with its
+        takes (ident, first, end) as the batch leaves them (tests/test_sequence_state.py StateTest.take) and the people list's
         fingerprint `mark`, remembered for the block."""
-        video = Path(block.video);manifest = self.manifest(0., 3., 'exmr', exmr_options=dict(static_camera=True, smoothing='none'))
+        video = Path(block.video);manifest = self.manifest(0., 3., model, exmr_options=dict(static_camera=True, smoothing='none'))
         manifest['source'] = dict(path=str(video), fps=30.)
-        root = self.base/'projects'/f'{video.stem}_{block.id}'/'exmr';root.parent.mkdir(parents=True)
+        root = self.base/'projects'/f'{video.stem}_{block.id}'/model;root.parent.mkdir(parents=True, exist_ok=True)
         scene.video = video;scene(root, manifest, people)
         for take in takes:test_sequence_state.StateTest.take(SimpleNamespace(root=root, manifest=manifest), *take)
-        self.mark(root, mark);block.folders['exmr'] = str(root)
+        self.mark(root, mark);block.folders[model] = str(root)
         return root
 
     def mark(self, root, mark, people=None):
@@ -667,7 +667,7 @@ class SequenceWindowTest(unittest.TestCase):
     def test_link_and_unlink_from_the_view(self):         # view.linked.emit(...) -> link saved in the sequence file; view.unlinked.emit(...) -> gone
         first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c = self.c
         c.view.linked.emit((first.id, 1), (second.id, 2))
-        self.assertEqual(self.saved()['links'], [dict(source=[first.id, 1], target=[second.id, 2], method='smooth', prints=['first', 'second'])])
+        self.assertEqual(self.saved()['links'], [dict(source=[first.id, 1], target=[second.id, 2], method='smooth', prints=['first', 'second'], model='exmr')])
         self.assertEqual(self.saved()['gaps'], {second.id:1.});self.assertEqual(c.view.rows[(second.id, 2)], 0);self.assertEqual(c.sequence.dropped, [])
         c.view.linked.emit((first.id, 1), (second.id, 1))   # Ben's bar dragged onto Anna's row: he continues her instead of Cleo
         self.assertEqual([l.target for l in c.sequence.links], [(second.id, 1)]);self.assertEqual(self.saved()['links'][0]['target'], [second.id, 1])
@@ -747,7 +747,40 @@ class SequenceWindowTest(unittest.TestCase):
         self.pick('flowhmr');self.assertEqual(c.sequence.to_dict(), before)
         self.pick('exmr');self.assertEqual(c.sequence.to_dict(), before);self.assertEqual(c.view.row_states, {(second.id, 1):'linked'})
 
-    def test_cut_drops_links(self):                       # cut of a linked block -> no links, sequence saved
+    def test_a_link_belongs_to_its_model(self):           # ExMR link kept in the file and not shown under GVHMR (which links by itself), exactly as it was back on ExMR, never a 'people changed' status
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c, w = self.c, self.w;target = (second.id, 2)
+        self.clip(first, ANNA, ((1, 0, 90),), 'g1', 'gvhmr');self.clip(second, BEN, ((1, 0, 90),), 'g2', 'gvhmr')   # other lists, no person 2
+        self.assertTrue(c.link((first.id, 1), target));self.assertTrue(c.set_transition(target, 'auto', 2.))
+        exmr = [dict(source=[first.id, 1], target=[second.id, 2], method='auto', prints=['first', 'second'], model='exmr')]
+        said = mock.patch.object(w.status, 'setText', wraps=w.status.setText);shown = said.start();self.addCleanup(said.stop)
+        opens = mock.patch.object(w, 'load_project', return_value=True);opens.start();self.addCleanup(opens.stop)   # the synthetic GVHMR scene has no motion preview to open
+        self.pick('gvhmr');self.assertEqual(w.model_choice.currentData(), 'gvhmr')
+        self.assertEqual([(l.source, l.target, l.model) for l in c.sequence.model_links()], [((first.id, 1), (second.id, 1), 'gvhmr')])
+        self.assertEqual(c.view.row_states, {(second.id, 1):'linked'});self.assertEqual(c.sequence.gap(second.id), 2.)   # one length per pair
+        self.assertEqual([l for l in self.saved()['links'] if l['model'] == 'exmr'], exmr)
+        self.pick('exmr')
+        self.assertEqual([(l.source, l.target, l.method, l.prints) for l in c.sequence.model_links()], [((first.id, 1), target, 'auto', ('first', 'second'))])
+        self.assertEqual([l for l in self.saved()['links'] if l['model'] == 'exmr'], exmr);self.assertEqual(c.view.row_states, {target:'linked'})
+        statuses = [str(call.args[0]) for call in shown.call_args_list]
+        self.assertFalse([text for text in statuses if 'changed' in text], statuses)
+        self.assertIn('Ben now continues Anna. Drag the bar to change it.', statuses)   # GVHMR's own link
+        self.pick('gvhmr');self.assertEqual(len(c.sequence.model_links()), 1);self.assertEqual(len(c.sequence.links), 2)   # not made again
+
+    def test_relink_by_drag_keeps_the_method(self):
+        self.pick('exmr');first, second = self.two();c = self.c
+        for block, mark in ((first, 'first'), (second, 'second')):self.clip(block, TWO, ((1, 0, 90), (2, 0, 90)), mark)
+        c.refresh();self.assertTrue(c.link((first.id, 1), (second.id, 2)));self.assertTrue(c.set_transition((second.id, 2), 'auto', 2.))
+        c.view.linked.emit((first.id, 2), (second.id, 2))   # Cleo's bar dragged onto the earlier block's other row
+        self.assertEqual([(l.source, l.target, l.method) for l in c.sequence.links], [((first.id, 2), (second.id, 2), 'auto')])
+        self.assertTrue(c.link((first.id, 1), (second.id, 1)));self.assertEqual(c.sequence.link_into(second.id, 1).method, 'smooth')   # a bar without a link
+
+    def test_a_yielded_window_links_nothing(self):        # while the window shows a project of its own, nothing is linked, dropped or announced
+        self.pick('exmr');first, second = self.two();c, w = self.c, self.w;c._yielded = True
+        self.clip(first, ANNA, ((1, 0, 90),), 'first');self.clip(second, BEN, ((1, 0, 90),), 'second');w.status.setText('');c.refresh()
+        self.assertEqual((c.sequence.links, w.status.text()), ([], ''))
+        c._yielded = False;c.refresh();self.assertEqual(len(c.sequence.links), 1)
+
+    def test_cut_drops_links(self):                      # cut of a linked block -> no links, sequence saved
         first, second = self.linkable();c, w = self.c, self.w;self.assertEqual(len(c.sequence.links), 1)
         w.slider.setValue(30)
         with mock.patch.object(c, 'ask', return_value=True):c.cut()

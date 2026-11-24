@@ -1,6 +1,7 @@
 """People who continue across neighbouring blocks of a sequence: who can continue whom and why not, the row of each bar,
 the automatic link, stale links, and a linked row's state on disk. Pure; the states are `sequence_state.read(block,
-model)` for the selected `model`, keyed by block id."""
+model)` for the selected `model`, keyed by block id, and the sequence's `model` is that model, so its link queries see
+that model's links only."""
 from __future__ import annotations
 
 from itertools import count
@@ -83,7 +84,7 @@ def stale(sequence, states) -> list:
         if person[0] not in ids:return True
         if state is None or state.kind not in ('found', 'partly', 'tracked') or state.fingerprint is None:return False
         return all(p.id != person[1] for p in state.people) or (mark is not None and mark != state.fingerprint)
-    return [link for link in sequence.links if gone(link.source, link.prints[0]) or gone(link.target, link.prints[1])]
+    return [link for link in sequence.model_links() if gone(link.source, link.prints[0]) or gone(link.target, link.prints[1])]
 
 
 def gap_frames(sequence, later_block_id) -> int:

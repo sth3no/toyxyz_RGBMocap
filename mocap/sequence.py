@@ -40,6 +40,7 @@ class Link:
     method: str = DEFAULT_METHOD
     prints: tuple = (None, None)   # people-list fingerprints of the earlier and the later block
     built: dict | None = None      # set by Join: copy, take, stamp, gap, method
+    model: str | None = None       # the model whose results it links; a sequence shows the selected model's links only
 
 
 def _method(method) -> str:
@@ -61,7 +62,7 @@ def _link(item) -> Link:
     prints, built = item.get('prints', [None, None]), item.get('built')
     if not isinstance(prints, list) or len(prints) != 2 or not (built is None or isinstance(built, dict)):
         raise ValueError(_BAD)
-    return Link(_person(item.get('source')), _person(item.get('target')), item.get('method'), tuple(prints), built)
+    return Link(_person(item.get('source')), _person(item.get('target')), item.get('method'), tuple(prints), built, item.get('model'))
 
 
 def _number(value) -> float:
@@ -107,10 +108,19 @@ class Sequence:
     def __init__(self, blocks: list[Block] | None = None, path: Path | None = None):
         self.blocks: list[Block] = blocks if blocks is not None else []
         self.path = path
-        self.links: list[Link] = []
+        self.links: list[Link] = []        # of every model
         self.gaps: dict[str, float] = {}   # later block id -> transition seconds, used while a link crosses into it
-        self.decided: set[str] = set()     # later block ids whose automatic link was already decided
-        self.dropped: list[Link] = []      # links the edits dropped; the controller reads and clears it
+        self.dropped: list[Link] = []      # links the edits dropped (of every model); the controller reads and clears it
+        self.model: str | None = None      # the selected model, set by the controller (not saved): link queries see its links
+        self._decided: dict = {}           # model -> later block ids whose automatic link was already decided
+
+    @property
+    def decided(self) -> set[str]:
+        """The later block ids whose automatic link was already decided for the selected model."""
+        return self._decided.setdefault(self.model, set())
+
+    def model_links(self) -> list[Link]:
+        return [link for link in self.links if link.model == self.model]
 
     def add(self, video, length, start=0.0, end=None, folders=None) -> Block:
         block = Block(uuid.uuid4().hex[:12], str(video), float(start), float(length if end is None else end),
@@ -139,7 +149,9 @@ class Sequence:
 
     def delete(self, id) -> None:
         del self.blocks[self.index(id)]
-        self.gaps.pop(id, None); self.decided.discard(id)
+        self.gaps.pop(id, None)
+        for ids in self._decided.values():
+            ids.discard(id)
         self._drop(self.links_touching(id))
 
     def move(self, id, index) -> None:
@@ -180,13 +192,14 @@ class Sequence:
         source, target = tuple(source), tuple(target)
         if self.index(target[0]) != self.index(source[0]) + 1:
             raise ValueError(_NEIGHBOUR)
-        link = Link(source, target, _method(method), tuple(prints))
+        link = Link(source, target, _method(method), tuple(prints), model=self.model)
         self._add(link)
         self.gaps.setdefault(target[0], DEFAULT_GAP); self.decided.add(target[0])
         return link
 
     def _add(self, link) -> None:
-        self.links = [old for old in self.links if old.target != link.target and old.source != link.source] + [link]
+        self.links = [old for old in self.links
+                      if old.model != link.model or old.target != link.target and old.source != link.source] + [link]
 
     def unlink(self, target) -> Link | None:
         link = self.link_into(*target)
@@ -195,10 +208,10 @@ class Sequence:
         return link
 
     def link_into(self, block_id, person) -> Link | None:
-        return next((link for link in self.links if link.target == (block_id, person)), None)
+        return next((link for link in self.model_links() if link.target == (block_id, person)), None)
 
     def link_out(self, block_id, person) -> Link | None:
-        return next((link for link in self.links if link.source == (block_id, person)), None)
+        return next((link for link in self.model_links() if link.source == (block_id, person)), None)
 
     def chain(self, block_id, person) -> list[tuple]:
         """The whole linked row of this person, from its first block to its last."""
@@ -211,11 +224,12 @@ class Sequence:
         return row
 
     def links_touching(self, block_id) -> list[Link]:
+        """Every model's links that touch the block (an edit drops them all)."""
         return [link for link in self.links if block_id in (link.source[0], link.target[0])]
 
     def gap(self, later_block_id) -> float:
         """The transition before this block: its length while a link crosses into it, else none."""
-        if not any(link.target[0] == later_block_id for link in self.links):
+        if not any(link.target[0] == later_block_id for link in self.model_links()):
             return 0.0
         return self.gaps.get(later_block_id, DEFAULT_GAP)
 
@@ -273,13 +287,14 @@ class Sequence:
 
     def to_dict(self) -> dict:
         links = [{'source': list(l.source), 'target': list(l.target), 'method': l.method, 'prints': list(l.prints),
-                  **({'built': dict(l.built)} if l.built is not None else {})} for l in self.links]
+                  **({'built': dict(l.built)} if l.built is not None else {}), 'model': l.model} for l in self.links]
+        decided = {model: sorted(ids) for model, ids in self._decided.items() if isinstance(model, str) and ids}
         return {'version': VERSION, 'blocks': [{'id': b.id, 'video': b.video, 'start': b.start, 'end': b.end,
                                                 'length': b.length, 'folders': dict(b.folders),
                                                 **({'review': dict(b.review)} if b.review is not None else {})}
                                                for b in self.blocks],
                 **({'links': links} if links else {}), **({'gaps': dict(self.gaps)} if self.gaps else {}),
-                **({'decided': sorted(self.decided)} if self.decided else {})}
+                **({'decided': decided} if decided else {})}
 
     @classmethod
     def from_dict(cls, data) -> Sequence:
@@ -287,17 +302,20 @@ class Sequence:
             raise ValueError(_BAD)
         if data['version'] > VERSION:
             raise ValueError(_NEWER)
-        links, gaps, decided = data.get('links', []), data.get('gaps', {}), data.get('decided', [])
+        links, gaps, decided = data.get('links', []), data.get('gaps', {}), data.get('decided', {})
+        if isinstance(decided, list) and all(isinstance(k, str) for k in decided):
+            decided = {}   # a file from before links had a model: decided for no model
         if not isinstance(data.get('blocks'), list) or not isinstance(links, list) or not isinstance(gaps, dict) \
-                or not isinstance(decided, list) or not all(isinstance(k, str) for k in [*gaps, *decided]):
+                or not isinstance(decided, dict) or not all(isinstance(k, str) for k in [*gaps, *decided]) \
+                or not all(isinstance(v, list) and all(isinstance(k, str) for k in v) for v in decided.values()):
             raise ValueError(_BAD)
         sequence = cls([_block(item) for item in data['blocks']])
         ids = {block.id for block in sequence.blocks}
         gaps = {k: _number(v) for k, v in gaps.items()}
         sequence.gaps = {k: v for k, v in gaps.items() if k in ids and math.isfinite(v) and v >= _FRAME - _SAME}
-        sequence.decided = {k for k in decided if k in ids}
-        for link in map(_link, links):   # a link to a missing block, between non-neighbours or by an unknown method is dropped
-            if link.method in METHODS and sequence._neighbours(link):
+        sequence._decided = {model: {k for k in v if k in ids} for model, v in decided.items()}
+        for link in map(_link, links):   # to a missing block, between non-neighbours, by an unknown method or of no model: dropped
+            if link.method in METHODS and isinstance(link.model, str) and sequence._neighbours(link):
                 sequence._add(link)
         return sequence
 
