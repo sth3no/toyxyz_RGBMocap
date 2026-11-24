@@ -40,17 +40,22 @@ class State:
     label: str
 
 
-def kind_for(model) -> str:
-    """The base result a take of `model` needs to count as finished, with the window's default options (HTD Refine, FootMR
-    and HandFlow on for GVHMR); Reconstruct in parts decides on the same base of `selected_result`."""
-    from .motion_tools import base_result, result_kind
-    gvhmr = model == 'gvhmr'
-    return base_result(result_kind(gvhmr, gvhmr, False, handflow=gvhmr))
+def selected_kind(folder) -> str:
+    """The base result a clip or take folder shows: the one its own project.json selects, else the refined result when its
+    files exist and the initial one otherwise, as MainWindow.load_project decides."""
+    from .motion_tools import base_result
+    folder = Path(folder)
+    try:result = json.loads((folder/'project.json').read_text(encoding='utf-8')).get('pipeline', {}).get('result')
+    except Exception:result = None
+    if not isinstance(result, str) or not result:
+        result = 'refined' if any((folder/name).exists() for name in ('opt_results.pt', 'refined_joints.npz', 'refined_mesh.json')) else 'initial'
+    return base_result(result)
 
 
 def _state(kind, reason='', people=(), frames=0, fps=FPS) -> State:
     people = list(people)
-    label = LABELS.get(kind) or ('1 person' if len(people) == 1 else f'{len(people)} people')
+    if kind == 'found' and reason and not people:label = 'people list out of date'
+    else:label = LABELS.get(kind) or ('1 person' if len(people) == 1 else f'{len(people)} people')
     return State(kind, reason, people, frames, fps, label)
 
 
@@ -61,9 +66,10 @@ def _ready(check, project) -> bool:
 
 def _people(root, state, kind) -> list[Person]:
     from .parts_runner import ready_result
-    check = ready_result(root, kind)
+    def ready(project):   # each take by the result its own project.json selects
+        return ready_result(root, selected_kind(people_store.safe_child(root, project)))(project)
     return [Person(p['id'], str(p.get('name') or f"Person {p['id']}"), p['color'], bool(p.get('checked')),
-                   [Take(t['first'], t['end'], _ready(check, t['project']), bool(t.get('join'))) for t in people_store.active_takes(root, p, kind)])
+                   [Take(t['first'], t['end'], _ready(ready, t['project']), bool(t.get('join'))) for t in people_store.active_takes(root, p, kind)])
             for p in state['people']]
 
 
@@ -82,11 +88,17 @@ def _manifest(block, model):
     return None, '', manifest
 
 
+def matches(block, model) -> bool:
+    """The block's remembered folder for `model` is readable and holds the block's range (its people list may be out of
+    date)."""
+    return _manifest(block, model)[2] is not None
+
+
 def read(block, model) -> State:
     """The state of `block` for `model`: missing, untracked, found (people, none finished), partly or tracked."""
     kind, reason, manifest = _manifest(block, model)
     if manifest is None:return _state(kind, reason, frames=round((block.end-block.start)*FPS))
-    root, frames, fps, base = Path(block.folders[model]), manifest['frames'], float(manifest['fps']), kind_for(model)
+    root, frames, fps = Path(block.folders[model]), manifest['frames'], float(manifest['fps']);base = selected_kind(root)
     try:
         state = people_store.load_people(root)
         people = None if state is None else _people(root, state, base)
@@ -95,7 +107,7 @@ def read(block, model) -> State:
     if people is None:
         from .motion_tools import selected_export
         if not _ready(lambda folder: selected_export(folder, base) is not None, root):return _state('untracked', frames=frames, fps=fps)
-        return _state('tracked', people=[Person(1, 'Person', people_store.DEFAULT_COLOR, True, [Take(0, frames, True, False)])], frames=frames, fps=fps)
+        return _state('tracked', people=[Person(1, 'Person 1', people_store.DEFAULT_COLOR, True, [Take(0, frames, True, False)])], frames=frames, fps=fps)
     checked = [p for p in people if p.checked]
     if checked and all(p.takes and all(t.ready for t in p.takes) for p in checked):kind = 'tracked'
     elif any(t.ready for p in checked for t in p.takes):kind = 'partly'

@@ -152,6 +152,58 @@ were outside this integration check.
   without warnings. Both modules loaded in an existing project's editor and
   Tools > RGB MoCap Connect opened. End-to-end streaming into that UE 5.8
   editor was not part of this check.
+## Sequence: several videos on one timeline, stage 1 (2026-11-24)
+
+Videos as blocks on one timeline, their people when zoomed in, and the timeline
+of one block at the third level; Cut, Delete, edge and reorder drags, results
+remembered from a prepared clip, refusal while a job runs, saved sequence
+files. GVHMR, ExMR and FlowHMR only. Everything below ran offscreen on one PC
+(Windows 11) with small videos made by the bundled ffmpeg and synthetic clip
+folders; no model, job or GPU work ran.
+
+- **Tests** (unittest, Qt offscreen, `paths.HOME` in a temporary folder):
+  `test_sequence` 9 (the document: cut, delete, move, resize, remembered
+  folders, save and load), `test_sequence_state` 9 (states and people rows from
+  synthetic clip folders), `test_sequence_view` 15 (levels, zoom, click,
+  double-click, edge and body drags, the Delete key), `test_sequence_window` 39
+  (the real `MainWindow`: two 3-second 64×48 videos, the stacked timeline,
+  loading a block, the levels, cut, resize, the trim, `prepared` events played
+  into the window's real handler, refusal while busy and during Reconstruct in
+  parts, model switch, projects as blocks, sequence files, a changed Timeline
+  panel refused). Whole `tests` folder: 1075 run, 1054 passed, 17 skipped, 4 failed: `test_setup_kimodo.RunTest` (2), `test_take_import.CommandTest` and `test_take_join.CommandTest`, each because the child `python.exe` they start died at start with exit status 0xC0000142 (the PC was short of resources; other sessions were running). Those three classes re-run alone right after: 6 passed.
+- **Final fix wave** (same conditions): `test_sequence_window` 50, now also on
+  named projects built as `video.prepare` leaves them (a project.json with
+  `workspace_version`, one clip per model carrying `workspace_root`): a model
+  switch in an opened project keeps the window's own model folder and the
+  block remembers it; Open Video, a `prepared` ExMR clip, then GVHMR stays in
+  the project with its title; a project the window loads by itself is adopted
+  when it is the block's video and range and is left alone by later edits
+  otherwise; a video loaded another way is added to a sequence of two or more
+  blocks or with a file; the last block cannot be deleted; New Sequence keeps
+  the loaded video as its block; New and Open refused while busy; a block with
+  an out-of-date people list opens its clip; reopening the video as leaving
+  PEAR or MAMMA does (simulated by the window's own restore flags, PEAR and
+  MAMMA were not started) changes nothing; a changed Timeline panel leaves the
+  window without the sequence. `test_sequence_state` 13 (GVHMR clips and takes
+  judged by the result their own project.json selects, else by the files),
+  `test_sequence_view` 16 (insets at UI scale 200 %). Run together with
+  `test_sequence`, `test_tutorial_window` and `test_parts_window`: 176 passed.
+  The whole folder was not run in this wave.
+- **Pictures looked at** (records, not in the package): the real window
+  rendered offscreen at 1440×880 with two blocks, a 10-second clip of a test
+  video with synthetic results (Anna with two finished takes and a gap, Ben
+  with one finished and one unfinished take: `partly tracked`) and a whole
+  4-second test video without results: `dark_seq_level1.png`,
+  `dark_seq_level2.png`, `dark_seq_level3.png`, `light_seq_level1.png`,
+  `light_seq_level2.png`, `light_seq_level3.png` (the Timeline panel) and the
+  same six as `*_window.png` (the whole window). The synthetic results are not
+  real motion files, so the 3D view and the status bar of the window pictures
+  say `Shared scene unavailable`; the timeline is what they show.
+- **Not run:** a real screen, real videos, any model or job (no Find person,
+  Reconstruct 3D or Reconstruct in parts started from a block), real projects
+  of the owner, playback at levels 1 and 2, export of a block, a sequence with
+  many blocks or long videos, UI scales other than 100 %.
+
 ## Memory fit: low RAM keeps running (2026-11-24)
 
 With Resource Safety on, an offline job is no longer stopped for low available

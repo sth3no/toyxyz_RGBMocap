@@ -147,6 +147,18 @@ class SequenceViewTest(ViewCase):
         self.assertGreaterEqual(end - first, MIN_SECONDS)
         self.assertEqual(self.signals['selected'], [])
 
+    def test_a_small_move_at_an_edge_is_a_click(self):
+        from mocap.theme import ui_px
+        self.view.frame_all()
+        rect = self.view.block_rect(self.b1.id)
+        start = QPoint(rect.right() - 2, rect.center().y())
+        drag(self.view, start, start + QPoint(-(ui_px(3) - 1), 0), steps=2)
+        self.assertEqual(self.signals['resized'], [])
+        self.assertEqual(self.signals['selected'], [(self.b1.id,)])
+        self.assertTrue(self.signals['scrubbed'][-1][1])
+        drag(self.view, start, start + QPoint(-ui_px(3), 0), steps=2)
+        self.assertEqual(len(self.signals['resized']), 1)
+
     def test_edge_drag_stays_inside_the_source(self):
         self.view.frame_all()
         rect = self.view.block_rect(self.b2.id)
@@ -195,6 +207,16 @@ class SequenceViewTest(ViewCase):
         self.assertEqual((self.signals['resized'], self.signals['moved']), ([], []))
         QTest.mouseClick(self.view, Qt.LeftButton, Qt.NoModifier, two.center())
         self.assertEqual(self.signals['selected'], [(self.b2.id,)])
+
+    def test_insets_follow_the_ui_scale(self):
+        from mocap.theme import apply_appearance, current_appearance, ui_px
+        old = current_appearance();self.addCleanup(lambda:apply_appearance(APP, *old))
+        apply_appearance(APP, old[0], 200);self.view.refresh_appearance();self.view.show_block(self.b2.id)
+        self.assertNotEqual(ui_px(2), 2)
+        rect = self.view._layout()[1][2]
+        self.assertEqual((rect.top(), rect.height()), (self.view.TRACK_TOP + ui_px(2), self.view.TRACK_HEIGHT - ui_px(5)))
+        cell = self.view._cell(rect, 0)
+        self.assertEqual((cell.top(), cell.height()), (self.view.TRACK_TOP + self.view.TRACK_HEIGHT + ui_px(2), self.view.TRACK_HEIGHT - ui_px(5)))
 
     def test_paints_every_state(self):
         from mocap.theme import apply_appearance

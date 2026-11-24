@@ -21,13 +21,15 @@ from .tooltips import tooltip_text
 
 OTHER_MODEL = 'The sequence works with GVHMR, ExMR and FlowHMR.'
 PROJECT_MODEL = 'Only GVHMR, ExMR and FlowHMR projects can be added to a sequence.'
-BUSY = 'A job is running. The block opens when it is done.'
+BUSY = 'A job is running. This block can be opened when it is done.'
+LAST = 'A sequence needs at least one block.'
+PANEL = 'The Timeline panel changed; the sequence is not available.'
 CHANGE = 'This block has results. They belong to the old range and stay on disk; the changed block will show as not tracked. Change it?'
 MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results.',
-        'open': 'Open a saved sequence. A sequence saves itself on every change under projects/sequences.',
-        'new': 'Start an empty sequence. The loaded video or project stays open.'}
-TIPS = {'back': 'Show the sequence: all blocks on one timeline.', 'add': 'Add a video at the end of the sequence.',
-        'cut': 'Split the selected block at the playhead.', 'delete': 'Remove the selected block from the sequence.',
+        'open': 'Open a saved sequence. A sequence of two or more blocks saves itself under projects/sequences on every change.',
+        'new': 'Start a new sequence. The loaded video or project stays open, as its one block when a video is loaded.'}
+TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a video at the end of the sequence.',
+        'cut': 'Split the block under the playhead at the playhead.', 'delete': 'Remove the selected block from the sequence. Its files stay on disk.',
         'frame': 'Fit the whole sequence in the timeline.'}
 
 
@@ -73,6 +75,7 @@ class Controller(QObject):
         self._clicked = None     # a click's block, so its following scrub does not try the load again
         self._opening = None     # the video File > Open Video is opening, so its metadata does not start a sequence again
         self._advance_to = None
+        self._yielded = False    # the window shows a project or workspace of its own that is not the loaded block
         self._settle = QTimer(self);self._settle.setSingleShot(True);self._settle.setInterval(250)
         self._settle.timeout.connect(self._changed)   # a dragged trim is shown and saved once it rests
         self._build()
@@ -100,7 +103,7 @@ class Controller(QObject):
 
     def _reset(self, sequence):
         self._settle.stop()
-        self.sequence, self.current, self._pending = sequence, None, None
+        self.sequence, self.current, self._pending, self._yielded = sequence, None, None, False
         self._advance_to = None
 
     def _guarded(self, change, *args):
@@ -112,8 +115,7 @@ class Controller(QObject):
             self.w.status.setText(f'The sequence could not be updated: {error}. See the Console.')
 
     def _build(self):
-        w = self.w;layout = w.timeline_panel.layout()
-        actions = layout.itemAt(1).widget()   # the action bar, then the slider, under the shared header
+        w = self.w;layout = w.timeline_panel.layout();actions = action_bar(w)
         self.clip_page, self.sequence_page = QWidget(), QWidget()
         clip = QVBoxLayout(self.clip_page);clip.setContentsMargins(0, 0, 0, 0);clip.setSpacing(0)
         for widget in (actions, w.slider):layout.removeWidget(widget)
@@ -189,9 +191,19 @@ class Controller(QObject):
         return {block.id for block in self.sequence.blocks}
 
     def new(self):
-        """File > New Sequence: an empty sequence; the window keeps what it shows."""
+        """File > New Sequence: the loaded video (whole) as its one block at level 3, else an empty sequence; the window keeps
+        what it shows."""
+        w = self.w
+        if self.busy():
+            w.status.setText(BUSY);return
         self._reset(Sequence())
-        if self.supported():self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
+        if w.video_path is not None and w.info:
+            try:self.current = self.sequence.add(w.video_path, video_length(w.video_path)).id
+            except ValueError:pass
+        if self.current is not None:
+            self._show_clip()
+            if w.project is not None or w.workspace_root is not None:self._window_loaded()
+        elif self.supported():self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
         self.refresh()
 
     def choose_sequence(self):
@@ -201,6 +213,8 @@ class Controller(QObject):
 
     def open(self, path):
         """A saved sequence, shown whole, with its first block loaded; a bad file keeps the current sequence."""
+        if self.busy():
+            self.w.status.setText(BUSY);return False
         try:sequence = Sequence.load(path)
         except (OSError, ValueError) as error:
             self.w.status.setText(f'Cannot open the sequence: {error}');return False
@@ -309,20 +323,40 @@ class Controller(QObject):
         self._guarded(self._prepared, project, manifest)
 
     def _prepared(self, project, manifest):
-        if self.current not in self._ids():return
+        found = self._clip(project, manifest)
+        if found is None:return
+        self.sequence.remember(self.current, *found);self._yielded = False
+        self._changed()
+
+    def _clip(self, project, manifest=None):
+        """(model, clip folder, start, end) of the clip holding `project` when it was made from the loaded block's video,
+        else None."""
+        if self.current not in self._ids():return None
         block = self.sequence.block(self.current)
         try:
             root = people_store.root_for(project)
-            if not same_file(root, project):manifest = json.loads((root/'project.json').read_text(encoding='utf-8'))
+            if manifest is None or not same_file(root, project):manifest = json.loads((root/'project.json').read_text(encoding='utf-8'))
             start, end = float(manifest['start']), float(manifest['end'])
             model, source = manifest.get('pipeline', {}).get('model', 'gvhmr'), manifest['source']['path']
-        except (OSError, ValueError, KeyError, TypeError):return
-        if model not in MODELS:return
+        except (OSError, ValueError, KeyError, TypeError):return None
+        if model not in MODELS:return None
         from .project_storage import source_video
         try:video = source_video(root, manifest)
         except (OSError, ValueError, KeyError):video = source
-        if not same_file(source, block.video) and not same_file(video, block.video):return   # made from another video than the block's
-        self.sequence.remember(block.id, model, root, start, end)
+        if not same_file(source, block.video) and not same_file(video, block.video):return None   # made from another video
+        return model, root, start, end
+
+    def _window_loaded(self):
+        """The window switched model or loaded a project by itself, and it wins: the loaded block adopts the window's clip
+        when it is the block's video and range; otherwise the window keeps what it shows until a block is loaded."""
+        if not self.supported() or self.current not in self._ids():return
+        w, block = self.w, self.sequence.block(self.current)
+        found = self._clip(w.project) if w.project is not None else None
+        same = found is not None and abs(found[2] - block.start) <= 1e-6 and abs(found[3] - block.end) <= 1e-6
+        self._yielded = not same
+        if not same or block.folders.get(found[0]) == str(found[1]):
+            self.refresh();return
+        self.sequence.remember(block.id, *found)
         self._changed()
 
     # Editing
@@ -333,7 +367,7 @@ class Controller(QObject):
     def _source_time(self):
         """(block, source seconds) under the playhead: the window's frame in the loaded block, else the drawn playhead."""
         w = self.w
-        if self.current in self._ids() and w.info and self._pending is None and (w.project is not None or w.info is self._video_info):
+        if self.current in self._ids() and w.info and self._pending is None and not self._yielded and (w.project is not None or w.info is self._video_info):
             return self.sequence.block(self.current), w.source_offset + w.slider.value() / w.info['fps']
         return self.sequence.locate(self.view.playhead)
 
@@ -354,6 +388,8 @@ class Controller(QObject):
         """Remove a block from the sequence; its files stay on disk. The neighbour of a deleted loaded block is loaded."""
         block_id = block_id or self.current
         if self.busy() or block_id not in self._ids():return
+        if len(self.sequence.blocks) == 1:
+            self.w.status.setText(LAST);return
         i = self.sequence.index(block_id);self.sequence.delete(block_id)
         if block_id == self.current:
             blocks = self.sequence.blocks
@@ -378,26 +414,30 @@ class Controller(QObject):
         if found:self._follow(max(block.start, min(block.end, found[1])))
 
     def _follow(self, seconds=None):
-        """Load the loaded block again when what the window shows no longer is that block."""
-        if self.current in self._ids() and not self._shows(self.sequence.block(self.current)):self.load(self.current, seconds)
+        """Load the loaded block again when what the window shows no longer is that block; never over a project or workspace
+        the window opened by itself."""
+        if not self._yielded and self.current in self._ids() and not self._shows(self.sequence.block(self.current)):self.load(self.current, seconds)
 
     def _shows(self, block):
         """The window shows `block` for the selected model: its remembered folder, else its video trimmed to its range."""
         w, model = self.w, self.w.model_choice.currentData()
         if self._pending is not None and self._pending[0] == block.id:return True
         folder = block.folders.get(model)
-        if folder and not sequence_state.read(block, model).reason:
-            try:return w.project is not None and same_file(people_store.root_for(w.project), folder)
-            except (OSError, ValueError, KeyError):return False
+        if folder and sequence_state.matches(block, model):return self._shows_folder(folder)
         if w.project is not None or not w.info or w.info is not self._video_info or not same_file(w.video_path, block.video):return False
         start, end = w.processing_range();near = .5 / w.info['fps'] + 1e-6
         return abs(start - block.start) <= near and abs(end - block.end) <= near
+
+    def _shows_folder(self, folder):
+        w = self.w
+        try:return w.project is not None and same_file(people_store.root_for(w.project), folder)
+        except (OSError, ValueError, KeyError):return False
 
     def _trim_changed(self, *_):
         """The trim of a block without results (for any model), on its video, is the block's range; while a handle is
         dragged the block is shown and saved once the trim rests."""
         w = self.w
-        if self._trimming or self.busy() or not self.supported() or self.current not in self._ids():return
+        if self._trimming or self._yielded or self.busy() or not self.supported() or self.current not in self._ids():return
         block = self.sequence.block(self.current)
         if block.folders or w.project is not None or self._pending is not None:return
         if not w.info or w.info is not self._video_info or not same_file(w.video_path, block.video):return
@@ -408,11 +448,15 @@ class Controller(QObject):
         self._settle.start()
 
     def _model_changed(self, _):
-        """After a model switch the loaded block is opened again for that model."""
+        """After a model switch in a project or workspace the window's own switch stands (the block adopts its clip when it
+        fits); with neither, the loaded block is opened again for that model."""
         self.refresh()
-        if self.supported() and not self.busy() and self.current in self._ids():
-            found = self._source_time()
-            self._follow(found[1] if found and found[0].id == self.current else None)
+        if not self.supported() or self.busy() or self.current not in self._ids():return
+        if self.w.project is not None or self.w.workspace_root is not None:
+            self._window_loaded();return
+        self._yielded = False
+        found = self._source_time()
+        self._follow(found[1] if found and found[0].id == self.current else None)
 
     # Loading a block
 
@@ -426,8 +470,11 @@ class Controller(QObject):
         block = self.sequence.block(block_id);model = w.model_choice.currentData()
         state = sequence_state.read(block, model)
         folder = block.folders.get(model)
-        if folder and not state.reason:
-            if not w.load_project(Path(folder)):return False
+        if folder and sequence_state.matches(block, model):   # also with an out-of-date people list
+            try:opened = w.load_project(Path(folder))
+            except (OSError, ValueError, KeyError) as error:   # as File > Open Project reports it; the folder stays open
+                w.status.setText('Cannot open project: '+str(error));opened = self._shows_folder(folder)
+            if not opened:return False
             self._pending = None;self._loaded(block_id);self._seek(seconds)
             if not Path(block.video).is_file():w.status.setText(f'The video file is missing: {block.video}')
             return True
@@ -442,19 +489,23 @@ class Controller(QObject):
         return True
 
     def _loaded(self, block_id):
-        self.current = block_id;self.refresh()
+        self.current, self._yielded = block_id, False;self.refresh()
 
-    def _video_ready(self, _info):
+    def _video_ready(self, info):
         w = self.w
         pending, self._pending = self._pending, None
         whole = w.project is None and not w._workspace_video_reference   # not a project's clip
         self._video_info = w.info if whole else None
-        if not whole or not w.info:
+        if pending is None and (not whole or w.workspace_root is not None and self.current in self._ids()):
+            self._guarded(self._window_loaded)
             self.resume_review()
             return
+        if not whole or not w.info:return
         if pending is None:
             opening, self._opening = self._opening, None
-            if self._foreign(opening):self._guarded(self._one_video, Path(w.video_path))
+            # The window opened its video again and kept its media info (leaving PEAR or MAMMA): nothing new to add.
+            if w.info is not info:return
+            if self._foreign(opening):self._guarded(self._foreign_video, Path(w.video_path))
             return
         block_id, seconds = pending
         if block_id in self._ids() and same_file(w.video_path, self.sequence.block(block_id).video):
@@ -468,6 +519,15 @@ class Controller(QObject):
         w = self.w
         if w.video_path is None or getattr(w, '_pear_active', False) or w.model_choice.currentData() == 'mamma':return False
         return opening is None or not same_file(opening, w.video_path)
+
+    def _foreign_video(self, path):
+        """A video the window opened by itself: a new last block, loaded, of a sequence of two or more blocks or with a file
+        (the timeline stays where it is); else a new one-block sequence."""
+        sequence = self.sequence
+        if len(sequence.blocks) < 2 and sequence.path is None:return self._one_video(path)
+        try:block = sequence.add(path, video_length(path))
+        except ValueError:return
+        self._loaded(block.id);self._save()
 
     def _video_failed(self, _message):
         self._pending = self._opening = None   # the window reported it; the next load opens the video again
@@ -533,7 +593,7 @@ class Controller(QObject):
     def review_bounds(self):
         w = self.w
         left, right = w.slider.clip_in, w.slider.clip_out
-        if self.at_clip_level() or not self.supported() or self.current not in self._ids() or not w.info:
+        if self.at_clip_level() or self._yielded or not self.supported() or self.current not in self._ids() or not w.info:
             return left, right
         review = self.sequence.block(self.current).review
         if review is not None:
@@ -548,7 +608,7 @@ class Controller(QObject):
         from .motion_tools import result_is_current
 
         w = self.w
-        if self.at_clip_level() or not self.supported() or self.current not in self._ids():
+        if self.at_clip_level() or self._yielded or not self.supported() or self.current not in self._ids():
             return True
         review = self.sequence.block(self.current).review
         requested = review['result'] if review else None
@@ -562,7 +622,8 @@ class Controller(QObject):
         return True
 
     def advance_review(self):
-        if self.at_clip_level() or not self.auto_advance.isChecked() or self.busy() or self.current not in self._ids():
+        if (self.at_clip_level() or self._yielded or not self.auto_advance.isChecked()
+                or self.busy() or self.current not in self._ids()):
             return False
         index = self.sequence.index(self.current) + 1
         if index >= len(self.sequence.blocks):
@@ -580,7 +641,7 @@ class Controller(QObject):
 
     def resume_review(self):
         if (self._advance_to is not None and self.current == self._advance_to and self._pending is None
-                and self.w.video_readable):
+                and not self._yielded and self.w.video_readable):
             self._advance_to = None
             if not self.at_clip_level():
                 self.w.toggle_play()
@@ -589,7 +650,7 @@ class Controller(QObject):
 
     def _playhead(self, *_):
         w = self.w
-        if self.current in self._ids() and w.info and self._pending is None:
+        if self.current in self._ids() and w.info and self._pending is None and not self._yielded:
             self.view.set_playhead(self.sequence.position(self.current, w.source_offset + w.slider.value() / w.info['fps']))
 
     def _scrubbed(self, seconds, final):
@@ -652,5 +713,35 @@ class Controller(QObject):
         return False
 
 
+def action_bar(w):
+    """The Timeline panel's action bar: under the shared header, above the slider; None when the panel has changed."""
+    layout = w.timeline_panel.layout()
+    actions = layout.itemAt(1).widget() if layout.count() > 2 else None
+    if actions is None or actions is w.slider or layout.itemAt(2).widget() is not w.slider or actions.layout() is None:return None
+    return actions
+
+
+class Absent:
+    """The window without the sequence: its hooks do nothing."""
+    def __init__(self, window):
+        self.window = window
+
+    def review_bounds(self):
+        return self.window.slider.clip_in, self.window.slider.clip_out
+
+    def review_result(self):
+        return True
+
+    def advance_review(self):
+        return False
+
+    def opened_video(self, path):pass
+    def opened_project(self, project):pass
+    def prepared(self, project, manifest):pass
+
+
 def build(w, file_menu):
+    if action_bar(w) is None:   # the app starts without the sequence
+        w.log.append(PANEL);w.status.setText(PANEL)
+        w.sequence_ui = Absent(w);return
     w.sequence_ui = Controller(w, file_menu)

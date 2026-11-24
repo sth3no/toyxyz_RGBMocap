@@ -181,8 +181,8 @@
     },
     {
       "path": "docs/AGENT_GUIDE.md",
-      "bytes": 136739,
-      "sha256": "f85c3bc8be8dc6451dd6829ef8905575433cca1756933727cad710dfaf718434"
+      "bytes": 138728,
+      "sha256": "39b0ae9a146bcd5dfd9b1b34e353e605bb5187c3ce8abaff0c301ca69423c580"
     },
     {
       "path": "docs/BUILD.md",
@@ -236,13 +236,13 @@
     },
     {
       "path": "docs/USER_GUIDE.md",
-      "bytes": 134280,
-      "sha256": "918e8c302c003d7955435b503fdce8c6576232cff283a333ca654d76823d24c4"
+      "bytes": 144445,
+      "sha256": "a41445aa34bf7d26177b7d1f9166b849e747cab8d2f786ed428b2ebdd788db07"
     },
     {
       "path": "docs/VALIDATION.md",
-      "bytes": 252320,
-      "sha256": "59458f448c5360e5a07cbbd5b145fc1c8679e5e1b81c346d6c48e64392e9dd10"
+      "bytes": 256278,
+      "sha256": "15779696729dad62fa76128d5ff10adb4906903b33aba65eb51139ce771db99a"
     },
     {
       "path": "docs/images/exmr-interaction-contact.png",
@@ -2541,18 +2541,18 @@
     },
     {
       "path": "mocap/sequence_state.py",
-      "bytes": 4517,
-      "sha256": "c0f732950433e686bcfe1576b328a638090870604ca7a9cc3535157495816437"
+      "bytes": 5252,
+      "sha256": "a989faaa52187f945a3f555af1040ea282d019493ebaacec2a1a4d72e3b33431"
     },
     {
       "path": "mocap/sequence_ui.py",
-      "bytes": 33795,
-      "sha256": "867f61c128e49415f213469b59e234e848877640d80a3ca946cbe4fd7ac5e90a"
+      "bytes": 38649,
+      "sha256": "5cd8cafc4d2ac861f8439a8da0439c373ea1367579e4d193a4926ae1032ae025"
     },
     {
       "path": "mocap/sequence_view.py",
-      "bytes": 22833,
-      "sha256": "d4e3f367fd8d6503a4f17d9510cd10455463b2cac455c25c8f940af5e895b53e"
+      "bytes": 22986,
+      "sha256": "317ac13392b50aa42a13d10bfe97e60bbca9e9c49a5401ad420735ac97267ed5"
     },
     {
       "path": "mocap/sidebar_scroll.py",
@@ -3151,18 +3151,18 @@
     },
     {
       "path": "tests/test_sequence_state.py",
-      "bytes": 8791,
-      "sha256": "96da15d8d8e6975444a2f68fd680bdec23224ad847ad165a807676c96c6b8762"
+      "bytes": 10875,
+      "sha256": "a59a27798cfc9072ec96f187d08b06c0c10cb2f5f0982d89382425c1acf07178"
     },
     {
       "path": "tests/test_sequence_view.py",
-      "bytes": 10864,
-      "sha256": "c22476098c4ab87bd995e26ad27da43e93a95eecc7d6779ab5b4d7f4064f1444"
+      "bytes": 12190,
+      "sha256": "725a2c01ab6efe68fc9446eb870eed74ce012b96685562ca869c2f929591a367"
     },
     {
       "path": "tests/test_sequence_window.py",
-      "bytes": 33844,
-      "sha256": "536722d8cbb7c25c73907dc2d3afb71fadefbc20d689e38617be4146a795977e"
+      "bytes": 44806,
+      "sha256": "36f087abec77a4bf12a4d3fe73153b1304dd66795a6b5f923b7e1e3bd39126c2"
     },
     {
       "path": "tests/test_setup_kimodo.py",

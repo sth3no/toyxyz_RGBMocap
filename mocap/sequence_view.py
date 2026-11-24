@@ -144,11 +144,11 @@ class SequenceView(QWidget):
             left, right = self.x_of(at), self.x_of(at + block.end - block.start)
             if right - left < least:
                 left = max(first, min(last - least, (left + right - least) / 2));right = left + least
-            out.append((block, at, QRectF(left, self.TRACK_TOP + 2, right - left, self.TRACK_HEIGHT - 5)))
+            out.append((block, at, QRectF(left, self.TRACK_TOP + ui_px(2), right - left, self.TRACK_HEIGHT - ui_px(5))))
         return out
 
     def _cell(self, rect, index):
-        return QRectF(rect.left(), self.TRACK_TOP + (index + 1) * self.TRACK_HEIGHT + 2, rect.width(), self.TRACK_HEIGHT - 5)
+        return QRectF(rect.left(), self.TRACK_TOP + (index + 1) * self.TRACK_HEIGHT + ui_px(2), rect.width(), self.TRACK_HEIGHT - ui_px(5))
 
     def _people(self, block):
         state = self.states.get(block.id)
@@ -243,7 +243,8 @@ class SequenceView(QWidget):
             dx = point.x() - press['x'];press['far'] = max(press['far'], abs(dx))
             if press['mode'] in ('start', 'end'):
                 press['range'] = self._edge_range(press, dx)
-                press['dragged'] |= press['range'] != (press['block'].start, press['block'].end)
+                # A press at an edge that moves less than ui_px(3) stays a click.
+                press['dragged'] |= press['far'] >= ui_px(3) and press['range'] != (press['block'].start, press['block'].end)
             elif press['mode'] == 'body' and press['far'] > ui_px(8):
                 press.update(dragged=True, dx=dx, to=self._drop_index(press['block'].id, point.x()))
                 self.setCursor(Qt.ClosedHandCursor)
@@ -465,7 +466,7 @@ class SequenceView(QWidget):
         head = QRectF(x - width / 2, ui_px(1), width, ui_px(21))
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(theme_color('#477bb7')))
-        p.drawRoundedRect(head, 3, 3)
+        p.drawRoundedRect(head, ui_px(3), ui_px(3))
         p.drawPolygon(QPolygonF([QPointF(x - ui_px(4), ui_px(21)), QPointF(x + ui_px(4), ui_px(21)), QPointF(x, ui_px(26))]))
         p.setPen(QColor('#ffffff'))
         p.drawText(head, Qt.AlignCenter, text)
