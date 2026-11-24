@@ -1591,6 +1591,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         from .resource_safety import message
         self._job_resource_safety=self.resource_safety.isChecked()
         self.log.append(message(self._job_resource_safety))
+        from . import memory_fit;memory_fit.begin(self,jobs)  # says when memory is short for this job; it still starts
         self.character_refresh_queue=[]
         if refresh_characters:
             try:
@@ -1685,6 +1686,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self._batch_started_at = None
             # How the batch ended, kept while a following job (a bone preview) sets failed, cancelled and the status again.
             self.last_batch = (getattr(self, 'batch_serial', 0), self.failed, self.cancelled, self.status.text())
+            from . import memory_fit;memory_fit.end(self)
             self.busy = False
             self.finish_single_tracking()
             self.task_state.active=False
@@ -1817,7 +1819,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
     def start_processing_guard(self):
         from .processing_guard import ProcessingGuard
         try:
-            self.processing_guard = ProcessingGuard(self.process.processId(),resource_safety=self._job_resource_safety)
+            self.processing_guard = ProcessingGuard(self.process.processId(),resource_safety=self._job_resource_safety,paging=True)
             self.guard_timer.start()
         except Exception as error:
             self.log.append('Resource monitor unavailable: ' + str(error))
@@ -1825,6 +1827,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
     def check_processing_resources(self):
         if not self.processing_guard or not self.process:return
         message = self.processing_guard.check()
+        from . import memory_fit;memory_fit.tick(self)
         if message:
             memory_stop = getattr(self.processing_guard,'reason',None)=='memory'
             if memory_stop:
