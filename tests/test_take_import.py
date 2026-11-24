@@ -192,6 +192,13 @@ class ImportWriteTest(Scene,unittest.TestCase):
         self.assertEqual(self.bring()[0],0);video=self.root/IMPORTED/'input.mp4'
         self.assertEqual(count(video),90);last=frame(self.root/'input.mp4',119)
         for i in(0,45,89):self.assertLess(np.abs(frame(video,i)-last).mean(),3.,i)
+    def test_reused_padded_media_get_their_preview_again(self):
+        # A build that stopped after its receipt but before the preview: the reused media are checked for it again.
+        from mocap import video
+        first=take_join.people_clip(self.root,130,220);stamp_of=(first/'input.mp4').stat().st_mtime_ns
+        with mock.patch.object(video,'ensure_preview') as preview:again=take_join.people_clip(self.root,130,220)
+        self.assertEqual(again,first);self.assertEqual((again/'input.mp4').stat().st_mtime_ns,stamp_of)
+        preview.assert_called_once_with(first)
     def test_smooth_join_writes_one_take_across_the_import(self):
         from mocap.motion_tools import result_is_current
         self.assertEqual(self.bring()[0],0);code,events=self.join(dict(method='smooth'))

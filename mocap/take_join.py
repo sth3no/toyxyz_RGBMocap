@@ -467,7 +467,7 @@ def people_clip(root, first, end):
     try:
         record, output = json.loads(receipt.read_text(encoding='utf-8')), video.stat()
         if record['identity'] == identity and record['output'] == [output.st_size, output.st_mtime_ns] and json.loads(manifest.read_text(encoding='utf-8'))['frames'] == end-first:
-            return target
+            ensure_preview(target);return target  # an earlier build may have stopped before its preview
     except (OSError, ValueError, KeyError):pass
     target.mkdir(parents=True, exist_ok=True);temporary = target/'input.partial.mp4'
     # The video's last frame repeated up to the end of the range, then the range; padding after a trim keeps too few frames.
