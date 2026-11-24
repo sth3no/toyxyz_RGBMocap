@@ -68,6 +68,7 @@ class EstimateTest(unittest.TestCase):
         self.assertEqual(parts.summary(plan,1920,1080,1,False),'31 parts, about 10.5 GB of temporary frames in total.')
         self.assertEqual(parts.summary(plan,1920,1080,2,False),'31 parts, about 21.0 GB of temporary frames in total.')
         self.assertEqual(parts.summary([(0,300)],1920,1080,1,True),'1 part, about 0.06 GB of temporary frames at a time.')
+        self.assertEqual(parts.summary([(0,120)],464,832,1,True),'1 part, less than 0.01 GB of temporary frames at a time.')
         self.assertEqual(parts.summary(plan,1920,1080,1,True,frames=False),'31 parts.')
 
 

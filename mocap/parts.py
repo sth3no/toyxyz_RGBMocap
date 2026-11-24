@@ -76,5 +76,5 @@ def summary(parts, width, height, people, delete, frames=True):
     if not frames:return count+'.'
     lengths = [b-a for a, b in parts]
     size = frame_bytes(width, height)*people*(max(lengths) if delete else sum(lengths))/1e9
-    return f"{count}, about {size:.2f} GB of temporary frames {'at a time' if delete else 'in total'}." if size < 1 else \
-        f"{count}, about {size:.1f} GB of temporary frames {'at a time' if delete else 'in total'}."
+    amount = 'less than 0.01' if size < .005 else f'about {size:.2f}' if size < 1 else f'about {size:.1f}'
+    return f"{count}, {amount} GB of temporary frames {'at a time' if delete else 'in total'}."
