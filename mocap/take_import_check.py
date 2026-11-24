@@ -12,6 +12,7 @@ LABELS = {'gvhmr': 'GVHMR', 'exmr': 'ExMR'}
 MODEL = 'Only {0} takes can be imported into this {0} scene, because other models put the floor at another height.'
 RATE = 'Only 30 fps takes can be imported; the chosen take has {} fps.'
 NOT_FINISHED = 'The chosen take has no finished result; reconstruct it in its own project first.'
+FILLED = 'The chosen take contains filled frames, which this scene would show as captured; choose a take whose hidden ranges are not filled.'
 SAME = 'The chosen take is already in this scene; choose a take from another project.'
 RECEIVER = '{} has no finished take to continue; reconstruct one first.'
 LAST = "{}'s last take is not finished; reconstruct it first, because the imported take continues from it."
@@ -53,6 +54,14 @@ def finished(folder, needed=('initial',)):
     return all((folder/RESULTS[k][0]).is_file() and result_is_current(folder, k) for k in needed)
 
 
+def filled(folder):
+    """Whether a take holds frames a join filled (its fill.json lists hidden ranges); parts joined over shared frames hold none."""
+    path = Path(folder)/'fill.json'
+    if not path.is_file():return False
+    try:return bool(json.loads(path.read_text(encoding='utf-8'))['gaps'])
+    except (OSError, ValueError, KeyError, TypeError):return True
+
+
 def last_take(person):
     takes = [t for t in person.get('takes') or [] if isinstance(t, dict)]
     return max(takes, key=lambda t: (t['end'], t['first'])) if takes else None
@@ -79,6 +88,7 @@ def refusal(root, person, source, frames, result):
     # ExMR stands its world on the floor; GVHMR starts the pelvis at height 0: a take keeps its own height, so only one model fits.
     if _model(state) != model:return MODEL.format(LABELS[model])
     if not finished(source):return NOT_FINISHED
+    if filled(source):return FILLED
     if state.get('fps') != FPS or scene.get('fps', FPS) != FPS:return RATE.format(_rate(state.get('fps')))
     for kind in needed:
         if not finished(source, [kind]):return FINGERS if kind.startswith('handflow_') else FOOTMR
@@ -102,7 +112,7 @@ def scene_roots(folder):
 
 
 def sources(folder):
-    """Finished takes and current joined takes of every person of the scenes in `folder`, as dicts for the import dialog."""
+    """Finished takes and current joined takes without filled frames of every person of the scenes in `folder`, as dicts for the import dialog."""
     from .motion_tools import MOTION_TOOLS
     from .people_store import active_takes, load_people, safe_child
     out = []
@@ -117,11 +127,11 @@ def sources(folder):
             for take in takes:
                 try:
                     project = safe_child(root, take['project']);manifest = _manifest(project)
-                    if manifest is None or not finished(project):continue
+                    if manifest is None or not finished(project) or filled(project):continue
                 except (OSError, ValueError, KeyError, TypeError):continue
                 model = _model(manifest);fps = manifest.get('fps') or FPS;frames = manifest.get('frames', take['end']-take['first'])
                 label = MOTION_TOOLS[model].label if model in MOTION_TOOLS else model
                 seconds = frames/fps
                 out.append(dict(root=root, person=name, project=project, model=model, frames=frames, fps=fps, seconds=seconds,
-                                label=f"{name} · frames {take['first']+1}–{take['end']}{' · filled' if take.get('join') else ''} · {label} · {seconds:.1f} s"))
+                                label=f"{name} · frames {take['first']+1}–{take['end']}{' · joined' if take.get('join') else ''} · {label} · {seconds:.1f} s"))
     return out

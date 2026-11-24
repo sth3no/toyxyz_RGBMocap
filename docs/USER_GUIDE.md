@@ -1293,7 +1293,9 @@ another. Right-click the person in **People** and choose **Import take from
 another project...** (it is disabled while a job runs). In the dialog click
 **Choose Project...** and choose the other project's folder (it starts in the
 projects folder); **Take** then lists that project's finished takes with the
-person, the frames, the model and the length in seconds. **Gap** is the time
+person, the frames, the model and the length in seconds. A take whose hidden
+ranges were filled in its own project is not listed; a take joined from parts
+that share frames is marked `joined`. **Gap** is the time
 between the person's last take and the imported take, 1.0 s by default:
 **Smooth join** fills up to 1.0 s and **Automatic (Experimental)** up to 9.6 s.
 Click **Import**. The take becomes the person's newest take, starting that many
@@ -1318,7 +1320,10 @@ person has no finished last take; when the result in use needs **FootMR** or
 **HandFlow** and the take lacks it; and when the gap is outside 1 to 290 frames.
 A GVHMR scene takes only GVHMR takes and an ExMR scene only ExMR takes, because
 the two models put the floor at different heights and an imported take keeps
-its own height.
+its own height. A take with filled frames is refused (`The chosen take
+contains filled frames, which this scene would show as captured; choose a take
+whose hidden ranges are not filled.`): the open scene would not know which of
+its frames were filled.
 
 Running **Find person** again makes a new person list, so the imported take is
 no longer listed; its files stay on disk in the person's `takes` folder (a

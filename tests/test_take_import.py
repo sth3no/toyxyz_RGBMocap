@@ -232,7 +232,7 @@ class ImportWriteTest(Scene,unittest.TestCase):
         (self.root/TAKE/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8');before=self.snapshot()
         self.assertEqual(self.bring(),(1,[dict(type='failed',stage='take_import',message=check.RECEIVER.format('Anna'))]));self.assertEqual(self.snapshot(),before)
     def test_refusals_are_one_sentence(self):
-        for name in('UNSUPPORTED','SCENE_MODEL','STATIC','MODEL','RATE','NOT_FINISHED','SAME','RECEIVER','LAST','FOOTMR','FINGERS','GAP'):
+        for name in('UNSUPPORTED','SCENE_MODEL','STATIC','MODEL','RATE','NOT_FINISHED','FILLED','SAME','RECEIVER','LAST','FOOTMR','FINGERS','GAP'):
             text=getattr(check,name);self.assertTrue(text.endswith('.'),name);self.assertNotIn('. ',text,name)
     def test_a_second_import_continues_after_the_first(self):
         self.assertEqual(self.bring()[0],0);self.assertEqual(self.bring(gap=10)[0],0)
@@ -244,6 +244,24 @@ class ImportWriteTest(Scene,unittest.TestCase):
         self.assertIn('Dancer · frames 1–90 · ',listed[0]['label']);self.assertTrue(listed[0]['label'].endswith(' · 3.0 s'))
         (self.other/SOURCE/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')
         self.assertEqual(check.sources(self.other.parent),[]);self.assertEqual(check.sources(self.root/'p1'),[])
+    def fill(self,gaps,**extra):
+        """A joined take of the other project, as take_join records it: its fill.json lists the filled hidden ranges."""
+        import shutil
+        joined=self.other/'q1/takes/000000000_000000090_fill_v1';shutil.copytree(self.other/SOURCE,joined,dirs_exist_ok=True)
+        (joined/'fill.json').write_text(json.dumps(dict(version=1,first=0,end=90,gaps=gaps,**extra)),encoding='utf-8');return joined
+    def test_a_take_with_filled_frames_is_refused(self):
+        joined=self.fill([dict(first=40,end=50,method='auto',params={})]);before=self.snapshot()
+        self.assertEqual(self.bring(source=joined),(1,[dict(type='failed',stage='take_import',message=check.FILLED)]));self.assertEqual(self.snapshot(),before)
+        (joined/'fill.json').write_text('{',encoding='utf-8')   # unreadable: it cannot say that no frame was filled
+        self.assertEqual(check.refusal(self.root,self.person,joined,30,'initial'),check.FILLED)
+    def test_the_dialog_lists_no_joined_take_with_filled_frames(self):
+        joined=self.fill([dict(first=40,end=50,method='smooth',params={})]);entry=dict(project='q1/takes/000000000_000000090_fill_v1',first=0,end=90,join=True)
+        with mock.patch.object(ps,'active_takes',lambda root,person:[entry]):
+            self.assertEqual([x['project'] for x in check.sources(self.other.parent)],[self.other/SOURCE])
+            self.fill([],overlaps=[dict(first=40,end=50)])   # parts joined over shared frames: every frame was captured
+            listed=check.sources(self.other.parent)
+        self.assertEqual([x['project'] for x in listed],[self.other/SOURCE,joined]);self.assertIn(' · joined · ',listed[1]['label'])
+        self.assertIsNone(check.refusal(self.root,self.person,joined,30,'initial'))
 
 
 class ExmrImportWriteTest(ImportWriteTest):MODEL='exmr'
