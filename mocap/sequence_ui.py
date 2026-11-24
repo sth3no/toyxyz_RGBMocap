@@ -19,13 +19,13 @@ from .tooltips import tooltip_text
 
 OTHER_MODEL = 'The sequence works with GVHMR, ExMR and FlowHMR.'
 PROJECT_MODEL = 'Only GVHMR, ExMR and FlowHMR projects can be added to a sequence.'
-BUSY = 'A job is running. The block opens when it is done.'
+BUSY = 'A job is running. This block can be opened when it is done.'
 CHANGE = 'This block has results. They belong to the old range and stay on disk; the changed block will show as not tracked. Change it?'
 MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results.',
-        'open': 'Open a saved sequence. A sequence saves itself on every change under projects/sequences.',
+        'open': 'Open a saved sequence. A sequence of two or more blocks saves itself under projects/sequences on every change.',
         'new': 'Start an empty sequence. The loaded video or project stays open.'}
-TIPS = {'back': 'Show the sequence: all blocks on one timeline.', 'add': 'Add a video at the end of the sequence.',
-        'cut': 'Split the selected block at the playhead.', 'delete': 'Remove the selected block from the sequence.',
+TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a video at the end of the sequence.',
+        'cut': 'Split the block under the playhead at the playhead.', 'delete': 'Remove the selected block from the sequence. Its files stay on disk.',
         'frame': 'Fit the whole sequence in the timeline.'}
 
 
@@ -109,7 +109,9 @@ class Controller(QObject):
 
     def _build(self):
         w = self.w;layout = w.timeline_panel.layout()
-        actions = layout.itemAt(1).widget()   # the action bar, then the slider, under the shared header
+        actions = layout.itemAt(1).widget() if layout.count() > 2 else None   # the action bar, then the slider, under the shared header
+        if actions is None or actions is w.slider or layout.itemAt(2).widget() is not w.slider or actions.layout() is None:
+            raise RuntimeError('The Timeline panel changed; the sequence cannot be added.')
         self.clip_page, self.sequence_page = QWidget(), QWidget()
         clip = QVBoxLayout(self.clip_page);clip.setContentsMargins(0, 0, 0, 0);clip.setSpacing(0)
         for widget in (actions, w.slider):layout.removeWidget(widget)

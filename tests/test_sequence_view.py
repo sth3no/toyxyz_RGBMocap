@@ -147,6 +147,18 @@ class SequenceViewTest(ViewCase):
         self.assertGreaterEqual(end - first, MIN_SECONDS)
         self.assertEqual(self.signals['selected'], [])
 
+    def test_a_small_move_at_an_edge_is_a_click(self):
+        from mocap.theme import ui_px
+        self.view.frame_all()
+        rect = self.view.block_rect(self.b1.id)
+        start = QPoint(rect.right() - 2, rect.center().y())
+        drag(self.view, start, start + QPoint(-(ui_px(3) - 1), 0), steps=2)
+        self.assertEqual(self.signals['resized'], [])
+        self.assertEqual(self.signals['selected'], [(self.b1.id,)])
+        self.assertTrue(self.signals['scrubbed'][-1][1])
+        drag(self.view, start, start + QPoint(-ui_px(3), 0), steps=2)
+        self.assertEqual(len(self.signals['resized']), 1)
+
     def test_edge_drag_stays_inside_the_source(self):
         self.view.frame_all()
         rect = self.view.block_rect(self.b2.id)

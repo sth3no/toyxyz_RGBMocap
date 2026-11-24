@@ -243,7 +243,8 @@ class SequenceView(QWidget):
             dx = point.x() - press['x'];press['far'] = max(press['far'], abs(dx))
             if press['mode'] in ('start', 'end'):
                 press['range'] = self._edge_range(press, dx)
-                press['dragged'] |= press['range'] != (press['block'].start, press['block'].end)
+                # A press at an edge that moves less than ui_px(3) stays a click.
+                press['dragged'] |= press['far'] >= ui_px(3) and press['range'] != (press['block'].start, press['block'].end)
             elif press['mode'] == 'body' and press['far'] > ui_px(8):
                 press.update(dragged=True, dx=dx, to=self._drop_index(press['block'].id, point.x()))
                 self.setCursor(Qt.ClosedHandCursor)

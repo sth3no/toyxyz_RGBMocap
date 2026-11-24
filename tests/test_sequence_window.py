@@ -369,7 +369,7 @@ class SequenceWindowTest(unittest.TestCase):
         done = self.busy()
         self.assertFalse(c.view.editable);self.assertEqual(c.view.busy, first.id)
         for button in (c.add_button, c.cut_button, c.delete_button):self.assertFalse(button.isEnabled(), button.text())
-        self.assertFalse(c.load(second.id));self.assertEqual(w.status.text(), 'A job is running. The block opens when it is done.')
+        self.assertFalse(c.load(second.id));self.assertEqual(w.status.text(), 'A job is running. This block can be opened when it is done.')
         c.view.scrubbed.emit(4.5, True);self.assertAlmostEqual(c.view.playhead, 0.)   # the playhead stays in the busy block
         with mock.patch.object(c, 'ask', return_value=True):
             c.cut();c.delete();c.delete(second.id);c.move(first.id, 1);c.resize(first.id, .5, 2.)
@@ -384,7 +384,7 @@ class SequenceWindowTest(unittest.TestCase):
         w.parts_runner = object();self.addCleanup(lambda:(setattr(w, 'parts_runner', None), w.update_readiness()))
         w.update_readiness()   # as parts_runner.start does, also between its parts when w.busy is False
         self.assertFalse(w.busy);self.assertFalse(c.view.editable);self.assertEqual(c.view.busy, first.id);self.assertFalse(c.cut_button.isEnabled())
-        self.assertFalse(c.load(second.id));self.assertEqual(w.status.text(), 'A job is running. The block opens when it is done.')
+        self.assertFalse(c.load(second.id));self.assertEqual(w.status.text(), 'A job is running. This block can be opened when it is done.')
         w.parts_runner = None;w.update_readiness()   # as its stop does
         self.assertTrue(c.view.editable);self.assertIsNone(c.view.busy);self.assertTrue(c.cut_button.isEnabled())
 
@@ -473,6 +473,21 @@ class SequenceWindowTest(unittest.TestCase):
         with mock.patch.object(c, 'load', wraps=c.load) as load:
             QTest.mouseClick(c.view, Qt.LeftButton, Qt.NoModifier, c.view.block_rect(second.id).center())
         self.assertEqual([call.args[0] for call in load.call_args_list], [second.id]);self.assertEqual(c.current, first.id)
+
+
+class BuildTest(unittest.TestCase):
+    def test_a_changed_timeline_panel_is_refused(self):
+        """build takes the action bar by its place above the slider; another layout is a clear error, not a wrong widget."""
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+        from mocap import sequence_ui
+        for order in (('header', 'slider'), ('header', 'actions', 'other', 'slider'), ('header', 'actions')):
+            w = QWidget();self.addCleanup(w.deleteLater)
+            w.timeline_panel, w.slider = QWidget(w), QWidget()
+            layout = QVBoxLayout(w.timeline_panel)
+            for name in order:layout.addWidget(w.slider if name == 'slider' else QWidget())
+            with self.assertRaises(RuntimeError) as raised:sequence_ui.build(w, QMenu())
+            self.assertEqual(str(raised.exception), 'The Timeline panel changed; the sequence cannot be added.')
+            self.assertEqual(layout.count(), len(order))   # nothing was taken out of the panel
 
 
 if __name__ == '__main__':unittest.main()

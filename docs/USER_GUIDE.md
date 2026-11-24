@@ -1009,6 +1009,11 @@ an estimate and can leave residual sliding or penetration.
 | **Playback / frame number / speed** | Space plays/pauses; arrows step one frame, Shift+arrows one second. Enter a frame number to jump. Playback plays the video's audio when available. MAMMA uses the selected camera's audio. Playback speed affects preview only. |
 | **Timeline Frame All / Reset Trim** | Fit the full timeline / restore the full clip range. |
 | **Timeline From / To / Set** | Type the trimmed range in minutes and seconds of the loaded clip (12:34.5, 1:02:03 or 754.5). Enter or **Set** trims to it, moves the playhead to its start and fits the timeline to it. An invalid time is explained in the status bar and changes nothing. Unavailable while a job runs, like trimming. |
+| **← Sequence** | First button of the timeline's action bar. Shows the [sequence](#sequence-several-videos-on-one-timeline) timeline around the loaded block. Turning the wheel out while the whole clip is shown does the same, also for a single video. GVHMR, ExMR and FlowHMR only. |
+| **Add Video... / File > Add Video to Sequence...** | Add a video at the end of the sequence, as a new block covering the whole video. The button is in the bar above the sequence timeline. |
+| **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. Both are unavailable while a job runs. |
+| **File > Add Project to Sequence...** | Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results. |
+| **File > Open Sequence... / New Sequence** | Open a saved sequence: it is shown whole and its first block is loaded / start an empty sequence; the loaded video or project stays open. A sequence of two or more blocks saves itself under `projects/sequences`. |
 
 ExMR/FlowHMR/GVHMR process checked people independently; MAMMA and PromptHMR
 reconstruct people together from their respective inputs. Results are shown in a shared scene.
@@ -1016,6 +1021,133 @@ People share correction mode/floor; timings and pelvis offsets remain per person
 Apply Correction updates all available takes, including hidden ones. Checked
 takes with missing base motion are listed in Console and can be reconstructed separately.
 Relative depth and contacts between people are estimates; collision avoidance is not provided.
+
+### Sequence: several videos on one timeline
+
+A sequence puts several videos on one timeline, one after another. Each piece
+is a **block**: one range of one video, for example 0:10 to 0:40 of a
+30-minute video. Cut a video into blocks and delete what you do not want, so
+only the ranges you want are tracked. The sequence works with GVHMR, ExMR and
+FlowHMR. With another model selected its buttons are unavailable, their
+tooltip says `The sequence works with GVHMR, ExMR and FlowHMR.`, and the
+timeline works as before.
+
+**Starting a sequence.** **File > Open Video...** starts a new sequence with
+that video as its one block and shows the timeline of that video. A video
+opened any other way (dropped on the window, the guide's sample video, the
+command line) also starts a new one-block sequence. **File > Open Project...**
+starts a sequence with the project's clip as its one block, with its results.
+**Add Video...** above the sequence timeline, or **File > Add Video to
+Sequence...**, adds a video at the end as a block that covers the whole video.
+**File > Add Project to Sequence...** adds a saved GVHMR, ExMR or FlowHMR
+project at the end as a block with its results; its video and range come from
+the project. If the project's video file is gone, the block still opens as a
+project and the status bar says that the video file is missing.
+
+**Three levels.**
+
+1. **Videos.** Zoomed all the way out (**Frame All** above the sequence
+   timeline) the timeline shows only the **Video** row. Each block shows its
+   file name, its range as times of its video, and its state. The bar's right
+   end says how many blocks there are and how long the sequence is, for
+   example `2 blocks | 0:06.0`.
+2. **People.** Turn the wheel in anywhere and the **People** rows appear under
+   the blocks that have people. Row 1 holds the first person of each block,
+   row 2 the second, and so on. The people of two blocks are not linked:
+   Person 1 of one video and Person 1 of the next are separate people. A
+   person's bars show where their takes are; a dashed bar is a take whose
+   motion is not finished.
+3. **Tracking.** Double-click a block, or keep turning the wheel in over one
+   block: once it fills the view, the next turn opens it. The timeline is then
+   the one of that block, as for a single video: Video, Motion, L/R foot, L/R
+   hand, the trim and **From** / **To**. Double-clicking a person's bar also
+   selects that person in the People list. Track the block here with the usual
+   buttons (**Find person**, **Reconstruct 3D**, **Reconstruct in parts...**);
+   nothing is tracked from levels 1 and 2.
+
+To go back from level 3, click **← Sequence**, or turn the wheel out while the
+whole clip is shown. This wheel-out is new for single-video work too: zooming
+out past the whole clip of a single video shows it as a one-block sequence.
+Shift+wheel and middle drag pan at every level.
+
+**The selected block is the loaded block.** The window holds one video or
+project at a time, so a click on a block loads it. A block with results for
+the selected model opens its saved clip as a project; a block without results
+opens its video with the trim set to the block's range. Two blocks of the same
+video without results do not open the video again; only the trim moves. The
+video panel and the 3D view show the loaded block at every level. At levels 1
+and 2 one playhead runs over the whole sequence: click or drag the ruler to move
+it, and release it in another block to load that block; a click on a block puts
+the playhead there too. Play and the frame buttons act on the loaded block only.
+
+**Editing.**
+
+- **Cut** splits the block under the playhead at the playhead. The second
+  piece becomes the loaded block. Each piece must be at least 4 frames long.
+- **Delete**, or the Delete key while the sequence timeline has focus, removes
+  the selected block from the sequence. The next block (or the previous one)
+  is loaded. The video and the results stay on disk.
+- Drag the edge of a block to change its range within its video. Drag the
+  middle of a block to move it to another place. A press that hardly moves is
+  a click. Blocks have an order only; there are no gaps between them.
+- At level 3 the trim is the block's range: dragging the trim or typing
+  **From** / **To** resizes the block, but only while the block has no results
+  for any model. With results the trim works as for a single video and the
+  block keeps its range.
+- These changes have no undo.
+
+Cutting or resizing a block that has results asks first: `This block has
+results. They belong to the old range and stay on disk; the changed block will
+show as not tracked. Change it?` After **Yes** the changed blocks show as not
+tracked. The old results are neither deleted nor used for the new range.
+Deleting a block does not ask; its files stay on disk.
+
+**Results of a block.** When **Find person** or **Reconstruct 3D** prepares a
+clip from the loaded block, the block takes that clip's range and remembers its
+folder for that model. A block remembers one folder per model. Its state and
+its people rows are those of the selected model. After a model switch the
+loaded block opens again for the new model: its saved clip of that model, or
+its video with the block's range.
+
+| Block reads | Meaning |
+| --- | --- |
+| `not tracked` (dashed outline) | No results for the selected model, or its saved results are gone or belong to another range; the tooltip says which. |
+| `1 person`, `3 people` | **Find person** ran, but no checked person has a finished take yet, or nobody is checked. |
+| `partly tracked` | Some takes of checked people are finished, but not every checked person is tracked. |
+| `tracked` | Every checked person has at least one take, and all their takes are finished. A clip reconstructed without **Find person** counts as one person, tracked once its motion is finished. |
+| `video missing` (orange dashed outline) | The video file is gone and the block has no results to open. |
+| `working` (with a stripe) | A job runs on this block. |
+
+Hover over a block to see its video's path and, when there is one, the reason
+for its state. Nothing is repaired automatically.
+
+**While a job runs** (also while **Reconstruct in parts...** runs, between its
+parts too) the level can change, but no other block can be loaded and blocks
+cannot be added, cut, deleted, moved or resized. A click on another block says
+`A job is running. This block can be opened when it is done.` The File menu's
+sequence entries are unavailable too.
+
+**Saving.** A sequence of one block is not saved; it is the same as working on
+one video. A sequence of two or more blocks saves itself on every change, as
+`projects/sequences/Sequence <date> <time>.json`. A sequence opened from a file
+keeps saving to that file, also when only one block is left. **File > Open
+Sequence...** opens a saved sequence, shows it whole and loads its first block.
+A file that is not a sequence, or one saved by a newer version, is refused with
+the reason, and the current sequence stays. **File > New Sequence** starts an
+empty sequence; the loaded video or project stays open. A sequence file only
+lists the blocks; saving it changes no project.
+
+When a chapter of the in-window guide starts, the timeline goes to level 3.
+
+Limits of this version:
+
+- GVHMR, ExMR and FlowHMR only.
+- People rows that do not fit the height of the Timeline panel are cut off;
+  there is no vertical scrolling yet.
+- No joining of a person across videos, no transitions, no playback across
+  blocks and no export of the whole sequence. Export works for the loaded
+  block as for a single video.
+- One video row, no thumbnails, no free position of blocks.
 
 ### Reconstruct a long range in parts
 

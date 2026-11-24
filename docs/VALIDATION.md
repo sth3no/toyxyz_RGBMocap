@@ -1,5 +1,39 @@
 # Source package validation
 
+## Sequence: several videos on one timeline, stage 1 (2026-11-24)
+
+Videos as blocks on one timeline, their people when zoomed in, and the timeline
+of one block at the third level; Cut, Delete, edge and reorder drags, results
+remembered from a prepared clip, refusal while a job runs, saved sequence
+files. GVHMR, ExMR and FlowHMR only. Everything below ran offscreen on one PC
+(Windows 11) with small videos made by the bundled ffmpeg and synthetic clip
+folders; no model, job or GPU work ran.
+
+- **Tests** (unittest, Qt offscreen, `paths.HOME` in a temporary folder):
+  `test_sequence` 9 (the document: cut, delete, move, resize, remembered
+  folders, save and load), `test_sequence_state` 9 (states and people rows from
+  synthetic clip folders), `test_sequence_view` 15 (levels, zoom, click,
+  double-click, edge and body drags, the Delete key), `test_sequence_window` 39
+  (the real `MainWindow`: two 3-second 64×48 videos, the stacked timeline,
+  loading a block, the levels, cut, resize, the trim, `prepared` events played
+  into the window's real handler, refusal while busy and during Reconstruct in
+  parts, model switch, projects as blocks, sequence files, a changed Timeline
+  panel refused). Whole `tests` folder: 1075 run, 1054 passed, 17 skipped, 4 failed: `test_setup_kimodo.RunTest` (2), `test_take_import.CommandTest` and `test_take_join.CommandTest`, each because the child `python.exe` they start died at start with exit status 0xC0000142 (the PC was short of resources; other sessions were running). Those three classes re-run alone right after: 6 passed.
+- **Pictures looked at** (records, not in the package): the real window
+  rendered offscreen at 1440×880 with two blocks, a 10-second clip of a test
+  video with synthetic results (Anna with two finished takes and a gap, Ben
+  with one finished and one unfinished take: `partly tracked`) and a whole
+  4-second test video without results: `dark_seq_level1.png`,
+  `dark_seq_level2.png`, `dark_seq_level3.png`, `light_seq_level1.png`,
+  `light_seq_level2.png`, `light_seq_level3.png` (the Timeline panel) and the
+  same six as `*_window.png` (the whole window). The synthetic results are not
+  real motion files, so the 3D view and the status bar of the window pictures
+  say `Shared scene unavailable`; the timeline is what they show.
+- **Not run:** a real screen, real videos, any model or job (no Find person,
+  Reconstruct 3D or Reconstruct in parts started from a block), real projects
+  of the owner, playback at levels 1 and 2, export of a block, a sequence with
+  many blocks or long videos, UI scales other than 100 %.
+
 ## Memory fit: low RAM keeps running (2026-11-24)
 
 With Resource Safety on, an offline job is no longer stopped for low available
