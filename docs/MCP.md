@@ -27,6 +27,11 @@ Examples include `models_list`, `project_inspect`, `reconstruct`, `correct`,
 For a generic native FBX, pass `format: "fbx"` and `fbx_profile: "generic"` to `export`.
 Use an explicit project directory and a new destination file.
 
+Use `unreal_profile` to save a local target profile, and `unreal_import` to
+check or import a list of animation FBX files for that profile. The `export`
+tool also accepts `unreal_profile` as a path to import the outputs. See
+[Unreal animation import](CLI.md#import-animations-into-unreal).
+
 ## Operate the desktop
 
 Save and close any existing RGB MoCap window before `desktop_start`. The

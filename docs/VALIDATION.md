@@ -279,6 +279,20 @@ entry point completed the read-only ExMR check through `job_status`, reporting a
 verified runtime and no missing models. The clients closed both processes by
 closing stdin. This integration check did not start a desktop or run GPU inference.
 
+## Targeted animation import in Unreal 5.8.4 (2026-11-24)
+
+A scratch Unreal project held a saved synthetic skeletal mesh and its skeleton.
+The import profile selected that mesh and a new destination folder. The dry run
+reported two matching binary FBX files and a root mismatch without creating
+assets. The import saved two AnimSequence assets, both 0.9667 s, and reported
+which FBX failed the root check. A repeat import refused the existing asset.
+The round trip used the null renderer and existing synthetic motion files.
+The final subprocess launcher also completed a CLI dry run against a new
+destination with installation verification and runtime activation stubbed in
+the source worktree. The MCP schema exposed both Unreal tools and the export
+profile option. The import was checked with Generic FBX files. Manny/Quinn
+assets and the chained export-to-import CLI path were not exercised.
+
 ## Native FBX import in Unreal 5.8.4 (2026-11-24)
 
 Unreal accepted 30-frame synthetic skeleton animations with two and 52 bones

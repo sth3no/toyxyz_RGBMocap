@@ -666,6 +666,13 @@ both enabled and disabled. See the
 [bind pose and foot spacing checks](VALIDATION.md#ue5-mannequin-bind-pose-and-foot-spacing-2026-11-20)
 and [original mesh export checks](VALIDATION.md#ue5-mannequin-fbx-with-optional-mesh-2026-11-20).
 
+`mocap/unreal_animation.py` validates local import profiles and reads the binary
+FBX model graph by skipping animation and geometry payloads. The Unreal
+commandlet obtains the target skeleton through the saved Skeletal Mesh, checks
+names and parents, and saves each validated animation through the Legacy FBX
+importer. Use a scratch Unreal project for round-trip checks and inspect the
+per-file report, especially when a batch only partly succeeds.
+
 ### Portable Blender export implementation
 
 Source FBX/BVH requests accept default-off `place_at_origin` and `symmetric_rest`.

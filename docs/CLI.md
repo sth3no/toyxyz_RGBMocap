@@ -139,6 +139,30 @@ Camera centers, body motion, and the source camera files stay unchanged.
   with its original videos. The command reports a bounded set of fixed-bone
   samples. The desktop provides interactive alignment and live preview.
 
+## Import animations into Unreal
+
+Enable **Python Editor Script Plugin** in the Unreal project and save the target
+Skeletal Mesh and its Skeleton. Close that project in Unreal before importing.
+Save one profile per target character. Use the mesh's asset path from the
+Content Browser. The profile stores the export preset and the destination.
+
+```powershell
+.\RGBMoCapCLI.cmd unreal profile --editor "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" --project "D:\Game\Game.uproject" --mesh /Game/Characters/SK_Manny.SK_Manny --destination /Game/Animations/Mocap --fbx-profile ue5_mannequin --ue5-target manny --output "D:\out\manny.json"
+.\RGBMoCapCLI.cmd export "D:\projects\walk" --all-takes --output-dir "D:\out\walk" --unreal-profile "D:\out\manny.json" --json
+.\RGBMoCapCLI.cmd unreal import --profile "D:\out\manny.json" "D:\out\walk\Walk_1.fbx" "D:\out\walk\Walk_2.fbx" --dry-run --json
+```
+
+`export --unreal-profile` uses the profile's animation-only FBX preset and
+imports the exported files in one Unreal process. The exported files remain
+available if the import fails. For existing binary FBX files, `unreal import`
+accepts several paths. Use letters, digits and underscores in filenames. Unreal
+checks the root, the exported bone names, and their parent relationships against
+the saved target. Native `_end` markers may be absent from the target. Assets
+that already exist at the destination keep their files. The JSON result includes
+a state per FBX and the path and duration of each saved AnimSequence. Omit
+`--dry-run` to import. `export --dry-run` shows the export plan and Unreal
+destination. The hierarchy check does not evaluate rest-pose alignment.
+
 ## Model files and batch jobs
 
 Use `models list` to find model keys and shared workflows.

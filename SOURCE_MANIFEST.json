@@ -181,8 +181,8 @@
     },
     {
       "path": "docs/AGENT_GUIDE.md",
-      "bytes": 144167,
-      "sha256": "02d6061e7ee983f621d1a30b33ceb3c825f7e71e10826a228550a99b5b98a9a9"
+      "bytes": 144617,
+      "sha256": "bcc857801510840d7dd18ec8e3b729f78b813a63a86dda693f9531c4f7981eb9"
     },
     {
       "path": "docs/BUILD.md",
@@ -196,8 +196,8 @@
     },
     {
       "path": "docs/CLI.md",
-      "bytes": 9648,
-      "sha256": "e8a6f969e9e9270e0b3c985fac4329fd46d254cb2b88f5a126a61f4f49f63bd7"
+      "bytes": 11350,
+      "sha256": "4f3a960ca9c978b7d8f180de8f340115e87ea5fc4a60fe597055a1a2fb738f47"
     },
     {
       "path": "docs/MAMMA.md",
@@ -211,8 +211,8 @@
     },
     {
       "path": "docs/MCP.md",
-      "bytes": 2534,
-      "sha256": "8f422eeb2c458979932481018f85e6b590a32704a45d3b41a7391e126ca77708"
+      "bytes": 2825,
+      "sha256": "5c69bdefec1f79216e3e579b35a19c3c9ba21ca94955a2edcbd5d9131250455a"
     },
     {
       "path": "docs/MEMORY_OPTIMIZATION.md",
@@ -241,8 +241,8 @@
     },
     {
       "path": "docs/VALIDATION.md",
-      "bytes": 278589,
-      "sha256": "257ddad09594e208e2b0b5ad0d74e1ac8fd471d07ba8e3c78f0feeba85e12a8f"
+      "bytes": 279486,
+      "sha256": "607100cfb06472a4446605d7f22188cfda7f691cf85737d16a8d8deb8d712717"
     },
     {
       "path": "docs/images/exmr-interaction-contact.png",
@@ -1391,8 +1391,8 @@
     },
     {
       "path": "mocap/cli.py",
-      "bytes": 10096,
-      "sha256": "79c612e92ef85561e97e0c24a26cf21a741a549bb387b91398cdfec859c89c79"
+      "bytes": 11345,
+      "sha256": "21b274784eeec95ec523c7ad9a523160b8a77ae2561377475c594217948e7b7d"
     },
     {
       "path": "mocap/cli_arguments.py",
@@ -1416,8 +1416,8 @@
     },
     {
       "path": "mocap/cli_workflows.py",
-      "bytes": 35071,
-      "sha256": "cf82ab9d5a04cbd1d4e5fa530558d2e596f44098a9cee4a048fe5109a01cd085"
+      "bytes": 36541,
+      "sha256": "095106795c5d0c4b01929c5701af1dab895fd79f0cfe4d5d463ef19d9a79e812"
     },
     {
       "path": "mocap/clip_range.py",
@@ -2745,6 +2745,11 @@
       "sha256": "31264b89c10f76cc409d6d6e4fe1abe91c8a47bfa62dc9b42ea997c985282752"
     },
     {
+      "path": "mocap/unreal_animation.py",
+      "bytes": 11857,
+      "sha256": "0be557d35bd8bd42f73fa8046077956c19e579b2436e549d86a4fb4380cd52ff"
+    },
+    {
       "path": "mocap/unreal_stream.py",
       "bytes": 14208,
       "sha256": "c5ac8ca8c382b4d5644f941e6e56aa02f4f7d527f29fc8185647658c3fcaf98c"
@@ -3258,6 +3263,11 @@
       "path": "tests/test_ue5_arm_retarget.py",
       "bytes": 7142,
       "sha256": "f79bb2240d3a6bf88d8ff7bd29f34e06b3a5615237be516d8e0fadf966be6486"
+    },
+    {
+      "path": "tests/test_unreal_animation.py",
+      "bytes": 3082,
+      "sha256": "c13a06a9d1772b9b48ec4ac9123bd8090b5858bc7b82c627fc1ec75fda34250e"
     },
     {
       "path": "tests/test_unreal_stream.py",
@@ -14013,6 +14023,11 @@
       "path": "tools/support_components.py",
       "bytes": 3388,
       "sha256": "bb454f0c6171e2357f5e550a5f88f8f37ce7654842e252b2d1afb6d53e39c903"
+    },
+    {
+      "path": "tools/unreal_animation_commandlet.py",
+      "bytes": 4230,
+      "sha256": "33b11ce63c6fb73d0ecfb89e1a37e6fab4b0553dc2f7a949f0232a2f2a49abc5"
     },
     {
       "path": "unreal_plugin/README.md",
