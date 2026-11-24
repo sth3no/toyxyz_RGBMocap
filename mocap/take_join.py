@@ -9,7 +9,8 @@ import sys
 import numpy as np
 from scipy.spatial.transform import Rotation, Slerp
 from . import auto_fill
-from .gap_fill import COPIED, GENERATED, HANDS, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fade_rows, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
+from . import overlap_join
+from .gap_fill import CAPTURED, COPIED, GENERATED, HANDS, INTERPOLATED, POSE_KEYS, contact_logits, copy_fill, fade_rows, fill_logits, generated_fill, mirror_logits, mirror_params, rigid_params, smooth_fill
 from .hidden_ranges import typed as _typed
 
 STAGE = 'take_join'
@@ -132,13 +133,36 @@ def _auto(a, b, g, pelvis):
                 mask=GENERATED, report=dict(end_pose_cm=end_pose, seam_cm=[float(x) for x in seam]))
 
 
-FILLS = {'smooth': _smooth, 'copy': _copy, 'auto': _auto}
+def _overlap(a, b, g, pelvis):
+    # Parts of one range share frames [first, end): a's last and b's first rows, both already in the joined world.
+    n = g['end']-g['first'];w = overlap_join.weights(n)
+    fade = lambda x, y: overlap_join.blend({k: v[-n:] for k, v in x.items()}, {k: v[:n] for k, v in y.items()}, w)
+    return dict(params={kind: fade(p, b['params'][kind]) for kind, p in a['params'].items()}, incam=fade(a['incam'], b['incam']),
+                logits=a['logits'][-n:]+(b['logits'][:n]-a['logits'][-n:])*w[:, None], mask=CAPTURED)
+
+
+FILLS = {'smooth': _smooth, 'copy': _copy, 'auto': _auto, 'overlap': _overlap}
+
+
+def _overlap_seam(joined, s, g, pelvis):
+    """The heading and floor transform of part s from the camera pairings of every shared frame (one frame: the seam's)."""
+    n = g['end']-g['first'];A, C = joined[0]['initial'], joined[1];B, D = s['params']['initial'], s['incam']
+    rows = lambda v, cut: np.asarray(v, np.float64).reshape(len(v), -1)[cut]
+    a, c, b, d = ({k: rows(p[k], cut) for k in ('global_orient', 'transl')} for p, cut in ((A, slice(-n, None)), (C, slice(-n, None)), (B, slice(0, n)), (D, slice(0, n))))
+    fulls = [np.linalg.inv(pair(a['global_orient'][i], c['global_orient'][i], a['transl'][i], c['transl'][i], pelvis))@
+             pair(b['global_orient'][i], d['global_orient'][i], b['transl'][i], d['transl'][i], s['pelvis']) for i in range(n)]
+    return overlap_join.align(fulls, b['transl']+s['pelvis'])
 
 
 def assemble(sources, gaps):
     first, base = sources[0], sources[0]['first']; total = sources[-1]['end']-base
     if len(gaps) != len(sources)-1:raise ValueError('Each pair of joined takes needs one hidden range')
+    own = first['first']  # the first frame of the earlier take that no overlap blends
     for a, g, b in zip(sources, gaps, sources[1:]):
+        if g['method'] == 'overlap':
+            if (g['first'], g['end']) != (b['first'], a['end']) or not own < g['first'] < g['end'] < b['end']:raise ValueError('Overlap does not lie between its takes')
+            own = g['end'];continue
+        own = b['first']
         if (g['first'], g['end']) != (a['end'], b['first']) or g['end'] <= g['first']:raise ValueError('Hidden range does not lie between its takes')
         if g['method'] not in FILLS:raise ValueError(f"Unsupported fill method: {g['method']}")
         if g['method'] == 'copy':
@@ -155,14 +179,16 @@ def assemble(sources, gaps):
     # Each take's world drifts against the fixed camera, so a take is anchored at its seam: its first frame
     # takes the heading and floor position of the previous take's last camera pairing. The tilt of one frame
     # pair is gravity noise, so it is dropped and every take keeps its own up axis and height.
+    # Parts that share frames are aligned over all of them instead (_overlap_seam).
     pelvis, joined = first['pelvis'], [(first['params'], first['incam'])]
-    for s in sources[1:]:
+    for s, seam in zip(sources[1:], gaps):
         g, c = joined[-1][0]['initial'], joined[-1][1]
         last = lambda v: np.asarray(v, np.float64).reshape(len(v), -1)[-1]
         end = pair(last(g['global_orient']), last(c['global_orient']), last(g['transl']), last(c['transl']), pelvis)
         a, b = s['params']['initial'], s['incam']
         start = pair(np.asarray(a['global_orient'])[0], np.asarray(b['global_orient'])[0], np.asarray(a['transl'])[0], np.asarray(b['transl'])[0], s['pelvis'])
-        T = upright(np.linalg.inv(end)@start, np.asarray(a['transl'], np.float64).reshape(-1, 3)[0]+s['pelvis'])
+        T = _overlap_seam(joined[-1], s, seam, pelvis) if seam['method'] == 'overlap' else \
+            upright(np.linalg.inv(end)@start, np.asarray(a['transl'], np.float64).reshape(-1, 3)[0]+s['pelvis'])
         # Camera space is shared by every take; only the replaced shape moves the pelvis.
         joined.append(({k: rigid_params(p, T, s['pelvis'], pelvis) for k, p in s['params'].items()},
                        rigid_params(s['incam'], np.eye(4), s['pelvis'], pelvis)))
@@ -176,10 +202,13 @@ def assemble(sources, gaps):
     incam = {k: put(lambda x: x['incam'][k]) for k in ikeys}
     incam['betas'] = np.repeat(np.asarray(first['incam']['betas'], np.float64)[:1], total, 0)
     logits = put(lambda x: x['logits'])
-    boxes = _stitch([np.asarray(s['boxes'], np.float64) for s in sources], [_linear(np.asarray(a['boxes'], np.float64)[-1], np.asarray(b['boxes'], np.float64)[0],
-                    g['end']-g['first']) for a, g, b in zip(sources, gaps, sources[1:])], sources, gaps, base, total)
+    def box_rows(a, g, b):
+        a, b, n = np.asarray(a['boxes'], np.float64), np.asarray(b['boxes'], np.float64), g['end']-g['first']
+        if g['method'] == 'overlap':w = overlap_join.weights(n)[:, None];return a[-n:]+(b[:n]-a[-n:])*w
+        return _linear(a[-1], b[0], n)
+    boxes = _stitch([np.asarray(s['boxes'], np.float64) for s in sources], [box_rows(a, g, b) for a, g, b in zip(sources, gaps, sources[1:])], sources, gaps, base, total)
     mask = np.zeros(total, np.uint8); observed = np.zeros(total, bool)
-    for s in sources:observed[s['first']-base:s['end']-base] = np.asarray(s['observed'], bool)
+    for s in sources:observed[s['first']-base:s['end']-base] |= np.asarray(s['observed'], bool)  # a shared frame was seen when either part saw it
     for g, f in zip(gaps, fills):mask[g['first']-base:g['end']-base] = f['mask']
     # The horizontal path residual in metres per result kind of each copied gap and the report of each generated gap; None for other methods.
     return dict(params=params, incam=incam, logits=logits, mask=mask, boxes=boxes, observed=observed, residuals=[f.get('residual') for f in fills],
@@ -264,6 +293,8 @@ def _check(root, ident, result):
     for chain in chains:
         gaps.append([])
         for a, b in zip(chain, chain[1:]):
+            if b['first'] < a['end']:  # parts that share frames: blended, no choice
+                gaps[-1].append(dict(first=b['first'], end=a['end'], method='overlap', params={}));continue
             g = dict(first=a['end'], end=b['first']);method, params = hidden_ranges.choice_params(choices[hidden_ranges.gap_key(g)])
             gaps[-1].append(dict(g, method=method, params=params))
             if method == 'auto':
@@ -294,6 +325,13 @@ def _pipeline(model, result):
 
 
 def _record(g):return dict(first=g['first'], end=g['end'], method=g['method'], params=g['params'])
+
+
+# fill.json keeps hidden ranges in `gaps` as before and the frames shared by two parts in `overlaps`, only when there are any.
+def _filled(gaps):return [g for g in gaps if g['method'] != 'overlap']
+
+
+def _overlaps(gaps):return [dict(first=g['first'], end=g['end']) for g in gaps if g['method'] == 'overlap']
 
 
 def _cm(metres):return round(float(metres)*100, 1)
@@ -345,7 +383,8 @@ def _unchanged(root, person, chain, gaps, donors, kinds, pipeline):
         fill = join_fill(root, person, join)
         if fill is None:return None
         recorded = [{k: v for k, v in x.items() if k not in ('residual_cm', 'generator')} for x in fill['gaps']]  # Reports, not inputs.
-        if fill.get('kinds') != kinds or recorded != [_record(g) for g in gaps] or (fill.get('donors') or []) != donors:return None
+        if fill.get('kinds') != kinds or recorded != [_record(g) for g in _filled(gaps)] or (fill.get('donors') or []) != donors \
+                or (fill.get('overlaps') or []) != _overlaps(gaps):return None
         try:written = json.loads((folder/'project.json').read_text(encoding='utf-8'))
         except (OSError, ValueError):return None
         written = written.get('pipeline') if isinstance(written, dict) else None
@@ -499,10 +538,11 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     inherit_storage(lead['folder'], target, state)
     atomic_json(target/'project.json', state)
     for kind in lead['hand']:_hand_receipt(target, kind, sources, end-first, state.get('fps', 30))  # needs the final result and project.json
+    filled = [(g, r, e) for g, r, e in zip(gaps, joined['residuals'], joined['reports']) if g['method'] != 'overlap']
     atomic_json(target/'fill.json', dict(version=1, person=ident, kind=base, kinds=list(kinds), first=first, end=end,
         sources=[dict(project=s['project'], first=s['first'], end=s['end'], files=s['files']) for s in sources],
         gaps=[dict(_record(g), **({} if r is None else dict(residual_cm=_cm(r[base]))), **({} if e is None else dict(generator=_generator(e, g))))
-              for g, r, e in zip(gaps, joined['residuals'], joined['reports'])], donors=donors))
+              for g, r, e in filled], donors=donors, **({'overlaps': _overlaps(gaps)} if _overlaps(gaps) else {})))
     pending.unlink()
     join = dict(project=target.relative_to(root).as_posix(), first=first, end=end, sources=[s['project'] for s in sources])
     state = load_people(root)  # The editor may have saved other fields meanwhile.
@@ -574,9 +614,9 @@ def run(root, ident, result, projects):
             except (OSError, ValueError, KeyError, TypeError, AttributeError):residuals = seams = []
         else:
             projects.append(str(_write(root, ident, sources, chain_gaps, donors, joined, kinds, base, pipeline)))
-            residuals = [None if r is None else _cm(r[base]) for r in joined['residuals']]
-            seams = [None if e is None else _generator(e, g)['seam_cm'] for g, e in zip(chain_gaps, joined['reports'])]
-        _report(chain_gaps, residuals, seams)
+            residuals = [None if r is None else _cm(r[base]) for g, r in zip(chain_gaps, joined['residuals']) if g['method'] != 'overlap']
+            seams = [None if e is None else _generator(e, g)['seam_cm'] for g, e in zip(chain_gaps, joined['reports']) if g['method'] != 'overlap']
+        _report(_filled(chain_gaps), residuals, seams)  # like fill.json: hidden ranges only
     return all(joined is None for *_, joined in plans)
 
 

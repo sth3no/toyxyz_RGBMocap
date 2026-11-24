@@ -2,7 +2,8 @@
 from pathlib import Path
 import json
 import numpy as np
-from .hidden_ranges import METHODS, OFFSET_LIMIT, SEED_LIMIT, TEXT_LIMIT, chains, choice_params, donor_take, gap_key, gap_label, method_issue, printable
+from .hidden_ranges import (METHODS, OFFSET_LIMIT, OVERLAP_NOTE, SEED_LIMIT, SHARED_NOTE, TEXT_LIMIT, TOUCH_NOTE, chains, choice_params, donor_take,
+                            gap_key, gap_label, method_issue, printable)
 
 SUPPORTED = ('initial', 'footmr_initial', 'handflow_initial', 'handflow_footmr_initial')
 UNSUPPORTED = 'Hidden ranges do not support HTD Refine results in this version.'
@@ -40,6 +41,8 @@ def _shown(choice, gap, people, ident, auto_issue=None, text_issue=None):
     """(method, person, mirror, offset, seed, text, issue) as the row shows it; a malformed record shows as Do not fill.
     `text_issue` stops only an Automatic row that has a description."""
     none = ('none', None, False, 0, 0, '', None)
+    # Frames two parts share are blended without a choice; touching takes are never joined.
+    if gap.get('kind'):return ('overlap', None, False, 0, 0, '', None) if gap['kind'] == 'overlap' and gap['joinable'] else none
     if not isinstance(choice, dict) or choice.get('method', 'none') not in METHODS:return none
     method = choice.get('method', 'none')
     if method == 'none':return none
@@ -65,6 +68,12 @@ def gap_rows(gaps, choices, fps, people=None, ident=None, auto_issue=None, text_
     rows = []
     for g in gaps:
         method, person, mirror, offset, seed, text, issue = _shown(choices.get(gap_key(g)), g, people, ident, auto_issue, text_issue)
+        if g.get('kind'):  # a row of its own kind, with a note instead of the methods
+            note = OVERLAP_NOTE if method == 'overlap' else SHARED_NOTE if g['kind'] == 'overlap' else TOUCH_NOTE
+            label = gap_label(g, fps) if g['kind'] == 'overlap' else f"Frame {g['first']+1}"
+            rows.append(dict(key=g['kind']+'_'+gap_key(g), label=label, kind=g['kind'], note=note, method=method, person=None, mirror=False, offset=0, seed=0,
+                             text='', issue=None, smooth_issue=None, auto_issue=None, donors=donors, setup=False))
+            continue
         rows.append(dict(key=gap_key(g), label=gap_label(g, fps), method=method, person=person, mirror=mirror, offset=offset, seed=seed, text=text,
                          issue=issue, smooth_issue=method_issue('smooth', g), auto_issue=_auto_issue(g, auto_issue), donors=donors,
                          setup=method == 'auto' and bool(issue) and method_issue('auto', g) is None))

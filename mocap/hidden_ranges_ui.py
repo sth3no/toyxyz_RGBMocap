@@ -89,6 +89,10 @@ class HiddenRangesPanel(QWidget):
         self._widgets, self._autos, self._issues = [], {}, {}
         gaps, rows, enabled = self._rows
         for gap, row in zip(gaps, rows):
+            if row.get('kind'):  # parts that share frames, or touching takes: a note, no methods
+                note = QLabel(row['note']);note.setObjectName('muted');note.setWordWrap(True)
+                for widget in (QLabel(row['label']), note):self.rows.addWidget(widget);self._widgets.append(widget)
+                continue
             label, combo = QLabel(row['label']), QComboBox()
             combo.setAccessibleName('Hidden range '+row['label'])
             combo.addItem('Do not fill', 'none');combo.addItem('Smooth join', 'smooth');combo.addItem('Copy from person', 'copy')

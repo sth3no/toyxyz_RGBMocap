@@ -583,8 +583,9 @@ class PeopleWorkspace:
         self.refresh_hidden_ranges(person)
 
     def refresh_hidden_ranges(self,person):
-        from .hidden_ranges import gaps
-        found=gaps(person.get('takes',[])) if person else []
+        from .hidden_ranges import listed
+        # Hidden ranges, and where parts of Reconstruct in parts meet; their shared frames are blended without a method.
+        found=listed(person.get('takes',[]),person.get('gap_fill')) if person else []
         if not found:self.hidden_ranges.hide();return
         from .hidden_ranges_state import panel_state
         choices=person.get('gap_fill') or {}

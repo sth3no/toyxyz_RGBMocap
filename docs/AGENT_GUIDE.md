@@ -776,6 +776,29 @@ Reconstruct that person with HandFlow.`).
 
 `take_join.assemble` dispatches per gap through `FILLS`: `smooth`, `copy` and
 `auto`; a later method plugs in there with its own fill function and `params`.
+
+Takes that share frames (parts of one range): `hidden_ranges.seams(takes)` returns the
+records of `gaps()` unchanged plus `kind: 'overlap'` records (frames `[after.first,
+before.end)`, `joinable` when the earlier take keeps a frame no other overlap blends)
+and `kind: 'touch'` records (`after.first == before.end`, never joined: there is no
+frame to align on, and cutting frames to make a gap would invent motion). `gaps()` is
+unchanged. Only seams marked in `gap_fill` under `hidden_ranges.seam_key` (`parts_<first>_<end>`)
+with `PARTS_SEAM` (`{'method': 'parts'}`) are listed (`hidden_ranges.listed`) and joined; the
+marks are written by Reconstruct in parts for the seams between its own parts, so takes of
+other trims that share frames stay apart as before. `chains()` walks `seams`: a marked,
+joinable overlap joins without a method. In
+`assemble` an overlap seam has `method: 'overlap'`; `_overlap_seam` aligns the later
+part with `overlap_join.align` (circular mean of the +Y twist of every shared frame's
+`inv(E_earlier) @ E_later`, least-squares horizontal offset of the later pelvis, no
+height change; for one frame it equals `upright`), then `_overlap` cross-fades the
+shared rows with `overlap_join.weights` (smoothstep) and `overlap_join.blend` (per-joint
+slerp for pose keys, linear for `transl`, camera-space rows, logits and boxes). Rows
+outside the overlap are the parts' own rows after the rigid move. Blended frames keep
+mask 0 (captured: two captures, nothing invented) and `observed` is either part's.
+`fill.json` keeps hidden ranges in `gaps` and writes `overlaps: [{first, end}]` only
+when there are any, so plain-gap joins are byte-for-byte what they were;
+`people_store.join_fill` requires each recorded overlap to be a joinable, marked overlap
+of the current takes. `active_takes` needed no change (it works on join sources).
 The Automatic files below are new too and are hashed into no cache identity. Automatic fill is **Experimental**: keep the note `Experimental support. Generated motion is plausible, not what the person did.` wherever it is introduced.
 
 Copy from person (`gap_fill.copy_fill`, `take_join._copy`): the donor is read
@@ -1196,6 +1219,7 @@ The app uses separate runtime profiles to maintain compatibility, with bounded b
 - Low-memory stop note: `mocap/memory_note.py` (total and free RAM and the largest programs, read once with psutil when `ProcessingGuard.reason` is `'memory'`; `MainWindow.check_processing_resources` appends it and opens the Console; an empty string when psutil fails). The status label (`StatusLabel` in `workspace_ui.py`) keeps its whole text as its tooltip.
 - Typed trim range: `mocap/clip_range.py` (parse/format m:ss.s and h:mm:ss.s, seconds to frames with plain reasons) and `mocap/clip_range_ui.py` (From / To / Set beside the timeline's Clip label; applies through `slider.set_clip`, then `slider.show_frames`; enabled through `TimelineSlider.trim_enabled_changed`; refreshed from `MainWindow.clip_changed`). Times are seconds of the loaded clip, not of the source.
 - Take from another video: `mocap/take_import.py` (job `take_import` through `take_import_boot.py` and `take_join_runtime.import_command`, outside `worker.py`: `place` turns the take about +Y to the receiver's last heading, moves it horizontally to the receiver's last pelvis, keeps its own height plus the rest-leg difference of the receiver's betas, and rewrites `smpl_params_incam` through the receiver's last-frame pairing so `take_join.assemble` anchors it with the identity; writes `<preview>/takes/<a>_<b>_import_v1` and appends it to `takes`), `mocap/take_import_check.py` (stdlib-only refusals and the list of finished takes) and `mocap/take_import_ui.py` (dialog). `take_join.people_clip` pads media beyond the video with its last frame.
+- Takes that share frames: `mocap/overlap_join.py` (numpy only: `weights`, `align`, `blend`; used by `take_join.assemble` for `method: 'overlap'` seams from `hidden_ranges.seams`).
 - Model selection and loading: `mocap/motion_tools.py`, `models.py`, `model_guide.py`; worker routing and runtimes: `worker.py`, `worker_progress.py`, `runtime_registry.py`, `compute_policy.py`.
 - MAMMA inputs/UI: `mocap/mamma_inputs.py`, `mamma_ui.py`; processing: `mamma_pipeline.py`, `mamma_camera.py`, `mamma_publish.py`, `mamma_body.py`; runtime/assets: `mamma_runtime.py`, `mamma_manager.py`, `mamma_models.py`, `installer/mamma-runtime-lock.json`, `tools/setup_mamma.py`. Follow [the native-build runbook](MAMMA_AGENT_SETUP.md) instead of guessing module build commands.
 - PromptHMR UI/pipeline: `mocap/prompthmr_ui.py`, `prompthmr_pipeline.py`, `prompthmr_cache.py`, `prompthmr_publish.py`, `prompthmr_scene.py`; runtime/assets: `prompthmr_runtime.py`, `prompthmr_manager.py`, `prompthmr_models.py`, `prompthmr_worker_boot.py`, `installer/prompthmr-runtime-lock.json`, `installer/prompthmr_adapters.py`, `installer/verify_prompthmr.py`, `tools/setup_prompthmr.py`. Follow the separate setup/verification steps above.

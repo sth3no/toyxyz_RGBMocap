@@ -5,6 +5,11 @@ METHODS=('none','smooth','copy','auto')
 SEED_LIMIT=999
 OFFSET_LIMIT=600
 TEXT_LIMIT=200  # characters of an automatic fill's description
+OVERLAP_NOTE='Parts overlap: blended'
+TOUCH_NOTE='These takes meet without a shared frame, so they cannot be joined. Reconstruct one of them with an overlap.'
+SHARED_NOTE='This overlap would blend every frame of a take, so it is not joined.'
+# Reconstruct in parts marks the seams between its own parts with this choice; other takes that share frames are not joined.
+PARTS_SEAM={'method':'parts'}
 
 def printable(text):
     """The text without control and other unprintable characters; whitespace is kept for the caller to collapse."""
@@ -29,7 +34,29 @@ def gaps(takes):
         if prev is None or t['end']>prev['end']:prev=t
     return out
 
+def seams(takes):
+    """The records of gaps() unchanged, and beside them each place where the next take starts before the earlier one
+    ends (kind 'overlap', frames [after.first, before.end)) or exactly where it ends (kind 'touch'). An overlap is
+    joinable when the earlier take keeps at least one frame that no other overlap blends."""
+    out=[];prev=None;own=None
+    for t in sorted(takes,key=lambda t:(t['first'],t['end'])):
+        if prev is not None and t['first']>prev['end']:out.append(dict(before=prev,after=t,first=prev['end'],end=t['first']))
+        elif prev is not None and t['end']>prev['end'] and t['first']==prev['end']:out.append(dict(before=prev,after=t,first=t['first'],end=t['first'],kind='touch'))
+        elif prev is not None and t['end']>prev['end'] and t['first']>prev['first']:
+            out.append(dict(before=prev,after=t,first=t['first'],end=prev['end'],kind='overlap',joinable=t['first']>own))
+        if prev is None or t['end']>prev['end']:
+            own=prev['end'] if out and out[-1]['after'] is t and out[-1].get('kind')=='overlap' else t['first'];prev=t
+    return out
+
 def gap_key(gap):return f"{gap['first']}_{gap['end']}"
+
+def seam_key(seam):return f"parts_{seam['first']}_{seam['end']}"
+
+def marked(seam,choices):return isinstance(choices,dict) and choices.get(seam_key(seam))==PARTS_SEAM
+
+def listed(takes,choices):
+    """The Hidden ranges rows: every gap, and each overlap or meeting point between two parts that Reconstruct in parts marked."""
+    return [s for s in seams(takes) if not s.get('kind') or marked(s,choices)]
 
 def choice_params(choice):
     """(method, params) of a gap choice record, normalised; ValueError for a malformed one."""
@@ -94,11 +121,14 @@ def method_issue(method,gap,choice=None,people=None,ident=None):
 
 def chains(takes,choices,people=None,ident=None):
     out=[];cur=[]
-    for g in gaps(takes):
-        try:
-            c=choices.get(gap_key(g));m=choice_params(c)[0]
-            ok=m!='none' and method_issue(m,g,c,people,ident) is None
-        except Exception:ok=False
+    for g in seams(takes):
+        kind=g.get('kind')
+        if kind:ok=kind=='overlap' and g['joinable'] and marked(g,choices)  # parts are blended without a method; touching takes never
+        else:
+            try:
+                c=choices.get(gap_key(g));m=choice_params(c)[0]
+                ok=m!='none' and method_issue(m,g,c,people,ident) is None
+            except Exception:ok=False
         if ok:
             if not cur or cur[-1] is not g['before']:
                 if cur:out.append(cur)

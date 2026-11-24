@@ -153,6 +153,12 @@ def join_fill(root, person, join):
             key = hidden_ranges.gap_key(gap)
             if key not in found or hidden_ranges.choice_params(choices.get(key)) != (gap['method'], gap.get('params') or {}):
                 return None
+        # Frames two parts share are blended without a method; they must still be shared, joinable and marked as parts.
+        shared = {(s['first'], s['end']) for s in hidden_ranges.seams(person.get('takes', []))
+                  if s.get('kind') == 'overlap' and s['joinable'] and hidden_ranges.marked(s, choices)}
+        for overlap in fill.get('overlaps') or []:
+            if (overlap['first'], overlap['end']) not in shared:
+                return None
         for donor in fill.get('donors') or []:
             if not donor['files']:
                 return None
