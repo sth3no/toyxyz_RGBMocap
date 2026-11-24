@@ -1209,9 +1209,9 @@ people found by **Find person**.
    part also takes a remainder shorter than a third of a part. With ExMR,
    **Delete temporary frames after each part** (on by default) deletes the
    pictures that ExMR writes of every frame (the `exmr_frames` folder of each
-   take of the part) once the part is done; they are written again if that part
-   is reconstructed again. Nothing else is deleted. The line below the fields
-   says how many parts there will be and about how much disk space those
+   take of the part) once the part is done. ExMR writes them again when it
+   needs them. Unfinished parts can still have temporary frames. The line below
+   the fields says how many parts there will be and about how much disk space those
    pictures take at a time (deleted) or in total (kept). It is an estimate: about
    188 KB per 1920×1080 frame, measured in one project, scaled by the picture
    size; real pictures can be larger or smaller.
@@ -1230,19 +1230,24 @@ people found by **Find person**.
    frames](#takes-that-share-frames)). Click **Fill hidden ranges** to write one
    joined take, then export it as usual.
 
-In each part only the checked people who are visible in it are reconstructed;
-the check boxes change while the run goes on and are put back at the end. A
-person who leaves the picture during a part has no take there, which leaves an
-ordinary hidden range that you can fill or leave empty. A part in which no
-checked person is visible is skipped; the Console names who was not visible.
+Each part reconstructs the people who were checked at the start and are
+visible in it. If someone leaves the picture, the gap in their takes is an
+ordinary hidden range you can fill or leave empty. If nobody in the run is
+visible, the part is skipped. The Console names who was out of view.
 
-If a part fails or is cancelled, the run stops and the finished parts are kept:
-`Part 2 of 31 stopped: <the reason> Finished parts are kept; Reconstruct in
-parts skips them next time.` Run **Reconstruct in parts...** again with the
-same part length and overlap: a part whose takes all have their motion ready is
-skipped, and the run goes on with the next one. However the run ends, the window
-shows again what it showed when you started, with your trim, and your check
-boxes are back; the dialog then offers the same range, part length and overlap.
+If a worker reports an allocation error or Resource Safety stops the part at the
+Windows allocation limit, the app tries smaller overlapping parts for unfinished
+ranges and keeps the ready takes. Each range can be split up to two levels. If
+the app cannot make smaller overlapping parts, it stops and keeps its progress.
+The Console shows the reason for the stop.
+
+After a stop, **Cancel Job**, or reopening the application, open the same scene
+and model, choose **Reconstruct in parts...**, then click **Resume**. This picks
+up the saved ranges, people and reconstruction settings and skips ready takes.
+The app uses the current local **Resource Safety** and **Resource Mode** settings.
+**Reconstruct** starts a new plan with the current dialog fields and people
+selection. A new **Find person** result invalidates the saved plan. When the run
+ends in the same scene, the window restores the starting view and trim.
 
 Between two parts the run waits while another job runs, for example a bone
 preview that the window prepares by itself. If the window shows another scene
@@ -1265,8 +1270,8 @@ floor.
 
 It is refused, with the reason in the status bar, while a job runs (`Wait for
 the current job to finish.`), before **Find person** (`Run Find person on the
-whole range first. All parts must share one scene and its people.`) and when
-nobody is checked. MAMMA, PromptHMR and GEM-X reconstruct their people
+whole range first. All parts must share one scene and its people.`). A new run
+requires at least one checked person. MAMMA, PromptHMR and GEM-X reconstruct their people
 together and do not show the button.
 
 Limits of this version:

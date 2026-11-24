@@ -146,10 +146,10 @@ def take_to_show(root, person, kind, project, frame=None):
 
 def unlisted_joins(root, person, kind, people=None):
     """Joined takes the take selector leaves out: not in use, and not what Fill hidden ranges would write again."""
-    from .people_store import active_takes
+    from .people_store import active_takes, seam_takes
     try:
         used = {t['project'] for t in active_takes(root, person, kind) if t.get('join')}
-        wanted = [[t['project'] for t in chain] for chain in chains(person['takes'], person.get('gap_fill') or {}, people or [], person.get('id'))]
+        wanted = [[t['project'] for t in chain] for chain in chains(seam_takes(person), person.get('gap_fill') or {}, people or [], person.get('id'))]
         return {j['project'] for j in person.get('joins') or [] if j['project'] not in used and j.get('sources') not in wanted}
     except (ValueError, KeyError, TypeError, AttributeError, OSError):return set()
 

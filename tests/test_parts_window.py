@@ -93,13 +93,18 @@ class RunnerTest(unittest.TestCase):
                            pipeline=dict(model=self.MODEL),exmr_options=dict(static_camera=True,smoothing='none'),stages={})
         root=self.root=base/'scene';scene(root,self.manifest,((1,'Anna',SEEN[1]),(2,'Ben',SEEN[2])))
         missing=mock.patch('mocap.models.missing',lambda *a,**k:[]);missing.start();self.addCleanup(missing.stop)   # no model files in tests
+        patch=mock.patch('mocap.gui.missing',lambda *a,**k:[]);patch.start();self.addCleanup(patch.stop)
+        self.dialogs=[]
+        self.open_window()
+
+    def open_window(self):
         from mocap.gui import MainWindow
+        root = self.root
         w=self.w=MainWindow()
         def close():
             w.close();w.deleteLater();APP.processEvents()
         self.addCleanup(close);w.show();APP.processEvents()
-        patch=mock.patch('mocap.gui.missing',lambda *a,**k:[]);patch.start();self.addCleanup(patch.stop)   # gui imported it by name
-        self.dialogs=[];patch=mock.patch.object(w,'open_model_manager',lambda:self.dialogs.append('Model Manager'));patch.start();self.addCleanup(patch.stop)   # never a modal dialog
+        patch=mock.patch.object(w,'open_model_manager',lambda:self.dialogs.append('Model Manager'));patch.start();self.addCleanup(patch.stop)   # never a model dialog
         w.people_tracker.setCurrentIndex(w.people_tracker.findData('default'))
         w.load_project(root/'p1');self.assertTrue(pump(lambda:w.video_readable),w.status.text())
         self.assertEqual((w.people_root,w.info['frames']),(root.resolve(),300))
@@ -178,7 +183,9 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(w.status.text(),'All 4 parts are reconstructed. Choose Fill hidden ranges in the People panel to join them.')
         self.assertIn('Part 3 of 4: Ben is not visible, so this part has no take of them.',w.log.toPlainText())
         self.assertEqual(self.checks(),[True,True])   # the user's checks are back
-        self.assertEqual(json.loads((self.root/'parts_run.json').read_text(encoding='utf-8')),dict(version=1,first=0,end=300,part=90,overlap=15))
+        saved = parts_runner.saved(self.root)
+        self.assertEqual({key: saved[key] for key in ('version', 'first', 'end', 'part', 'overlap', 'complete')},
+                         dict(version=2, first=0, end=300, part=90, overlap=15, complete=True))
         anna,ben=ps.load_people(self.root)['people']
         self.assertEqual(sorted(k for k in anna['gap_fill']),['parts_150_165','parts_225_240','parts_75_90'])
         self.assertEqual(anna['gap_fill']['parts_75_90'],dict(method='parts',takes=['p1/takes/000000000_000000090_scene_v1','p1/takes/000000075_000000165_scene_v1']))
@@ -229,16 +236,138 @@ class RunnerTest(unittest.TestCase):
         self.end(failed=True,status='ExMR stopped: the GPU ran out of memory.')
         self.assertTrue(pump(lambda:self.w.parts_runner is None))
         self.assertEqual(len(self.calls),2)
-        self.assertEqual(self.w.status.text(),'Part 2 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(self.w.status.text(),'Part 2 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
         self.assertTrue((self.root/'p1/takes/000000000_000000090_scene_v1/hmr4d_results.pt').is_file())
         self.assertEqual(self.checks(),[True,True])
         self.calls.clear();self.start();self.wait_calls(1);self.assertEqual(self.calls[0]['trim'],(75,165))   # a later run goes on there
+    def test_resume_after_allocation_failure_keeps_completed_people_and_parts(self):
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QDialogButtonBox
+        from mocap.hidden_ranges import chains
+        from mocap.parts_ui import PartsDialog, ask
+        w = self.w
+        self.start(); self.wait_calls(1); self.end(); self.wait_calls(2)
+        first = self.root/'p1/takes/000000000_000000090_scene_v1/hmr4d_results.pt'
+        ben = self.take(2, 75, 100)/'hmr4d_results.pt'
+        failed = self.take(1, 75, 165, ready=False)
+        before = (stamp(first), stamp(ben), (failed/'project.json').read_bytes())
+        w.handle_event({'type': 'failed', 'message': 'CUDA out of memory. Tried to allocate 1 GiB.'})
+        self.end(failed=True); self.wait_calls(3)
+        self.assertEqual(self.calls[-1]['people'], [1])
+        self.assertLess(self.calls[-1]['frames'][1]-self.calls[-1]['frames'][0], 90)
+        self.end(); self.wait_calls(4)
+        w.close()
+        self.assertIsNone(w.parts_runner)
+        self.open_window()
+        fresh = self.w
+        self.assertIsNot(fresh, w)
+        fresh.exmr_camera.setCurrentIndex(fresh.exmr_camera.findData(False))
+        with mock.patch.object(fresh, 'checked_people', return_value=[]), mock.patch.object(parts_runner, 'fitted', return_value=(4., 'video memory')):
+            # Exercise the actual dialog button without leaving a modal loop running on failure.
+            execute = PartsDialog.exec
+            def click_resume(dialog):
+                resume, = [button for button in dialog.buttons.buttons() if button.text() == 'Resume']
+                dialog.part.setValue(6.)
+                self.assertFalse(dialog.buttons.button(QDialogButtonBox.Ok).isEnabled())
+                QTimer.singleShot(0, resume.click)
+                return execute(dialog)
+            with mock.patch.object(PartsDialog, 'exec', click_resume):
+                self.assertIsNotNone(ask(fresh), fresh.status.text())
+        self.wait_calls(1)
+        self.assertTrue(fresh.exmr_camera.currentData())
+        self.finish_all()
+        self.assertEqual(len(self.calls), 3)
+        self.assertEqual([c['people'] for c in self.calls], [[1], [1], [1]])
+        self.assertEqual((stamp(first), stamp(ben), (failed/'project.json').read_bytes()), before)
+        self.assertEqual(self.checks(), [True, True])
+        anna = ps.load_people(self.root)['people'][0]
+        takes = ps.seam_takes(anna)
+        self.assertNotIn(failed.relative_to(self.root).as_posix(), [t['project'] for t in takes])
+        chain, = chains(takes, anna['gap_fill'])
+        self.assertEqual((chain[0]['first'], chain[-1]['end']), (0, round(self.END * 30)))
+        self.assertTrue(parts_runner.saved(self.root)['complete'])
+
+    def test_guard_stop_and_split_limit_survive_reopen(self):
+        w = self.w
+        self.start(); self.wait_calls(1)
+        w.processing_guard = types.SimpleNamespace(reason='memory', check=lambda: 'Windows allocation limit reached.')
+        with mock.patch.object(w, 'process', mock.Mock(processId=lambda: 0)), mock.patch('mocap.memory_note.collect', return_value=''):
+            w.check_processing_resources()
+        self.assertTrue(w.failed)
+        self.assertTrue(w.cancelled)
+        self.end(failed=True, cancelled=True); self.wait_calls(2)
+        w.handle_event({'type': 'failed', 'message': 'Cannot allocate memory'})
+        self.end(failed=True); self.wait_calls(3)
+        limited = parts_runner.saved(self.root)
+        self.assertEqual(limited['parts'][0][-1], 2)
+        w.cancel_job(); self.end(cancelled=True)
+        self.assertTrue(pump(lambda: w.parts_runner is None))
+        w.close(); self.open_window(); w = self.w
+        self.assertIsNotNone(parts_runner.resume(w), w.status.text())
+        self.wait_calls(1)
+        self.assertEqual(self.calls[0]['trim'], tuple(limited['parts'][0][:2]))
+        w.handle_event({'type': 'failed', 'message': 'Cannot allocate memory'})
+        self.end(failed=True)
+        self.assertTrue(pump(lambda: w.parts_runner is None))
+        self.assertIn('No smaller retry is available.', w.status.text())
+        self.assertEqual(parts_runner.saved(self.root), limited)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_oom_keeps_a_short_interval_and_splits_a_long_one(self):
+        tracking = self.root/'p2'/'tracking.npz'
+        with np.load(tracking) as source:
+            data = dict(source)
+        data['observed'][4:] = False
+        np.savez_compressed(tracking, **data)
+        self.start(); self.wait_calls(1)
+        self.w.handle_event({'type': 'failed', 'message': 'Cannot allocate memory'})
+        self.end(failed=True); self.wait_calls(2)
+        checkpoint = parts_runner.saved(self.root)
+        self.assertEqual(checkpoint['parts'][0], [0, 4, [2], 0])
+        self.assertEqual(checkpoint['parts'][1][2:], [[1], 1])
+        self.assertEqual(checkpoint['superseded'], [[1, 0, 90]])
+
+    def test_new_person_detection_invalidates_checkpoint(self):
+        w = self.w
+        self.start(); self.wait_calls(1)
+        w.cancel_job(); self.end(cancelled=True)
+        self.assertTrue(pump(lambda: w.parts_runner is None))
+        saved = (self.root/parts_runner.RECORD).read_bytes()
+        state = ps.load_people(self.root)
+        state['fingerprint'] = 'new detection'
+        ps.save_people(self.root, state)
+        w.close(); self.open_window()
+        self.assertIsNone(parts_runner.resume(self.w))
+        self.assertEqual(self.calls, [])
+        self.assertEqual((self.root/parts_runner.RECORD).read_bytes(), saved)
+
+    def test_resume_skips_a_ready_interval_of_the_same_person(self):
+        w = self.w
+        observed = np.zeros(self.manifest['frames'], dtype=bool)
+        observed[:20] = observed[40:] = True
+        tracking = self.root/'p1'/'tracking.npz'
+        with np.load(tracking) as source:
+            data = dict(source)
+        np.savez_compressed(tracking, **{**data, 'observed': observed})
+        self.start(); self.wait_calls(1)
+        first = self.take(1, 0, 20)/'project.json'
+        ben = self.take(2, 0, 90)/'project.json'
+        before = (first.read_bytes(), ben.read_bytes())
+        w.cancel_job(); self.end(cancelled=True)
+        self.assertTrue(pump(lambda: w.parts_runner is None))
+        self.calls.clear()
+        self.assertIsNotNone(parts_runner.resume(w), w.status.text())
+        self.wait_calls(1)
+        self.assertEqual(self.calls[0]['frames'], (40, 90))
+        self.assertEqual(self.calls[0]['people'], [1])
+        self.assertEqual((first.read_bytes(), ben.read_bytes()), before)
+
     def test_cancel_job_stops_the_run(self):
         self.start();self.wait_calls(1);self.assertTrue(self.w.cancel_button.isEnabled())
         self.w.cancel_button.click();self.end(cancelled=True)
         self.assertTrue(pump(lambda:self.w.parts_runner is None))
         self.assertEqual(len(self.calls),1)
-        self.assertEqual(self.w.status.text(),'Reconstruct in parts was cancelled at part 1 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(self.w.status.text(),'Reconstruct in parts was cancelled at part 1 of 4. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
     def test_cancel_job_between_parts_stops_the_run(self):
         w=self.w;runner=self.start();self.wait_calls(1)
         def click():
@@ -246,7 +375,7 @@ class RunnerTest(unittest.TestCase):
         self.gap(runner,1,click);self.end()
         self.assertTrue(pump(lambda:w.parts_runner is None))
         self.assertEqual(len(self.calls),1);self.assertFalse(w.cancel_button.isEnabled())
-        self.assertEqual(w.status.text(),'Reconstruct in parts was cancelled before part 2 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(w.status.text(),'Reconstruct in parts was cancelled before part 2 of 4. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
         self.assertIn('Part 1 of 4: deleted 182 temporary frame files.',w.log.toPlainText())   # part 1 was finished before the run stopped
     def test_find_person_between_parts_stops_the_run_and_leaves_both_scenes_alone(self):
         """The user clicks Find person while the next part's clip opens: the trim is a part's, so Find person prepares a new
@@ -269,7 +398,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual([t['project'] for t in anna['takes']],['p1/takes/000000000_000000090_scene_v1'])
         self.assertEqual([t['project'] for t in ben['takes']],['p2/takes/000000000_000000090_scene_v1'])
         self.assertTrue(pump(lambda:w.parts_runner is None));self.assertEqual(len(self.calls),1)
-        self.assertEqual(w.status.text(),'The scene changed, so Reconstruct in parts stopped before part 2 of 4. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(w.status.text(),'The scene changed, so Reconstruct in parts stopped before part 2 of 4. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
     def test_a_bone_preview_job_between_parts_is_waited_for_and_not_taken_for_a_part(self):
         """The window prepares a bone preview by itself when a loaded take's preview is out of date (prepare_target_preview,
         scheduled by preview_loaded on a real screen): a 'rig' job that the run must wait for."""
@@ -288,7 +417,7 @@ class RunnerTest(unittest.TestCase):
         self.end(failed=True,status='ExMR stopped: the GPU ran out of memory.',then=rig)
         self.assertTrue(w.busy)
         self.assertTrue(pump(lambda:w.parts_runner is None))
-        self.assertEqual(w.status.text(),'Part 1 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(w.status.text(),'Part 1 of 4 stopped: ExMR stopped: the GPU ran out of memory. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
         self.finish(stage='rig');self.assertEqual(len(self.calls),1)
     def test_a_job_that_starts_right_after_a_part_is_waited_for(self):
         w=self.w;self.start();self.wait_calls(1)
@@ -310,7 +439,7 @@ class RunnerTest(unittest.TestCase):
         self.end(then=lambda:setattr(w,'activate_person',fail))
         self.assertTrue(pump(lambda:w.parts_runner is None))
         del w.activate_person
-        self.assertEqual(w.status.text(),'Part 2 of 4 stopped: The disk is not ready. Finished parts are kept; Reconstruct in parts skips them next time.')
+        self.assertEqual(w.status.text(),'Part 2 of 4 stopped: The disk is not ready. Finished parts are kept. Use Resume in Reconstruct in parts to continue.')
         self.assertFalse(runner.timer.isActive());self.assertTrue(w.parts_button.isEnabled());self.assertFalse(w.cancel_button.isEnabled())
         self.assertEqual(self.checks(),[True,True])
         for _ in range(20):APP.processEvents();time.sleep(.02)

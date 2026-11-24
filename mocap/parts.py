@@ -6,6 +6,34 @@ import numpy as np
 from .people_store import visible_runs
 
 MIN_FRAMES = 4  # the shortest take a person job makes
+MAX_SPLITS = 2  # per original range, preserved when a run is resumed
+
+
+def allocation_failure(message):
+    """Match allocation failures reported by the existing worker events."""
+    if not isinstance(message, str):
+        return False
+    text = message.casefold()
+    return any(marker in text for marker in (
+        'out of memory', 'not enough memory', 'cannot allocate memory',
+        'cublas_status_alloc_failed', 'cudnn_status_alloc_failed', 'std::bad_alloc',
+        "defaultcpuallocator: can't allocate memory", '[winerror 1455]',
+    ))
+
+
+def split(first, end, overlap, *, before, after):
+    """Split a trim with overlap in the space between its neighbours' overlaps."""
+    # Leave the new overlap away from the neighbours and keep each child shorter.
+    lo, hi = before + 1, after - 1
+    shared = min(overlap, (end - first - 2) // 3, hi - lo)
+    lo = max(lo, first + MIN_FRAMES - shared)
+    hi = min(hi - shared, end - MIN_FRAMES)
+    if shared < 1 or hi < lo:
+        return None
+    right_start = max(lo, min(hi, (first + end - shared) // 2))
+    return (first, right_start + shared), (right_start, end)
+
+
 # Temporary ExMR frame JPGs (exmr_frames): about 188 KB per 1920x1080 frame, measured in one local project
 # (65 MB for 353 frames). Other sizes are scaled by their pixel count; the real size depends on the picture.
 FRAME_BYTES = 188_000

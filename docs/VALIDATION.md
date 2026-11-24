@@ -7,6 +7,21 @@ multi-person preview. Sequence tests passed after resolving the playback and
 workspace switching hooks. The combined source ran 1,216 tests in four
 isolated groups, with 1,198 passing and 18 skipped.
 
+## Resume reconstruction in parts (2026-11-24)
+
+Offscreen MainWindow tests used an FFmpeg test clip and simulated worker
+completion and memory failures. They reopened the scene in a new window and
+clicked Resume, verified the original reconstruction options and planned ranges,
+and compared the completed motion files before and after recovery. Tests
+covered a Windows allocation stop, the two-level split limit after reopening,
+an out-of-date detection, two separate visible intervals of one person, and
+keeping a short interval while rebuilding a longer one. The resulting ExMR
+part ranges formed one continuous overlap chain in the synthetic scene.
+
+The full Windows regression run completed 1,224 tests with 1,206 passing and
+18 skipped. The targeted follow-up passed 13 tests, including the mixed-length
+retry case on both scene frame grids. These checks did not run AI inference on the GPU.
+
 ## Native FBX import in Unreal 5.8.4 (2026-11-24)
 
 Unreal accepted 30-frame synthetic skeleton animations with two and 52 bones

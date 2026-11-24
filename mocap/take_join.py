@@ -255,7 +255,7 @@ def _check(root, ident, result):
     from .exmr_options import saved
     from .motion_tools import RESULTS, base_result, has_handflow, require_supported_project, result_is_current, result_sources
     from .paths import MODELS
-    from .people_store import load_people, safe_child
+    from .people_store import load_people, safe_child, seam_takes
     if not (root/'project.json').is_file() or not (root/'people.json').is_file():raise Refused('Open a scene with people before filling hidden ranges.')
     try:
         model = require_supported_project(root).key
@@ -270,7 +270,7 @@ def _check(root, ident, result):
     people = state['people'];person = next((p for p in people if p['id'] == ident), None)
     if person is None:raise Refused('Person no longer exists. Run Find person again.')
     choices = person.get('gap_fill') or {}
-    chains = hidden_ranges.chains(person.get('takes', []), choices, people, ident)
+    chains = hidden_ranges.chains(seam_takes(person), choices, people, ident)
     if not chains:raise Refused('No hidden range is selected for filling.')
     body = MODELS/'body_models/smplx/SMPLX_NEUTRAL.npz'
     if not body.is_file():raise Refused('Import SMPLX_NEUTRAL.npz to join takes.')

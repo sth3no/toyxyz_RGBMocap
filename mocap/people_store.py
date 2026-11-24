@@ -136,7 +136,7 @@ def join_fill(root, person, join):
         fill = read_people_json(folder / 'fill.json')
         if fill.get('version') != 1 or not isinstance(fill.get('kind'), str) or [x['project'] for x in fill['sources']] != sources or (fill['first'], fill['end']) != (first, end):
             return None
-        takes = {t['project']: (t['first'], t['end']) for t in person.get('takes', [])}
+        takes = {t['project']: (t['first'], t['end']) for t in seam_takes(person)}
         for source in fill['sources']:
             if takes.get(source['project']) != (source['first'], source['end']):
                 return None
@@ -147,14 +147,15 @@ def join_fill(root, person, join):
                 stat = (base / name).stat()
                 if [stat.st_size, stat.st_mtime_ns] != list(stamp):
                     return None
-        found = {hidden_ranges.gap_key(g) for g in hidden_ranges.gaps(person.get('takes', []))}
+        current = seam_takes(person)
+        found = {hidden_ranges.gap_key(g) for g in hidden_ranges.gaps(current)}
         choices = person.get('gap_fill') or {}
         for gap in fill['gaps']:
             key = hidden_ranges.gap_key(gap)
             if key not in found or hidden_ranges.choice_params(choices.get(key)) != (gap['method'], gap.get('params') or {}):
                 return None
         # Frames two parts share are blended without a method; they must still be shared, joinable and marked as parts.
-        shared = {(s['first'], s['end']) for s in hidden_ranges.seams(person.get('takes', []))
+        shared = {(s['first'], s['end']) for s in hidden_ranges.seams(current)
                   if s.get('kind') == 'overlap' and s['joinable'] and hidden_ranges.marked(s, choices)}
         for overlap in fill.get('overlaps') or []:
             if (overlap['first'], overlap['end']) not in shared:
@@ -182,9 +183,14 @@ def join_kinds(fill):
     return kinds if isinstance(kinds, list) else [fill['kind']]
 
 
+def seam_takes(person):
+    """Exclude unfinished parents replaced by smaller reconstruction parts."""
+    return [take for take in person.get('takes', []) if not take.get('parts_superseded')]
+
+
 def active_takes(root, person, kind=None):
     """Takes in use; with `kind`, a current join replaces its sources only for a result it provides."""
-    takes = person.get('takes', [])
+    takes = seam_takes(person)
     joins = person.get('joins')
     base = None if kind is None else kind.removeprefix('corrected_')
     current, owned = [], set()

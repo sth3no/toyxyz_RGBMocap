@@ -1360,7 +1360,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.stop_playback()
         super().hideEvent(event)
 
-    def input_jobs(self, stages, result=None, *, people_options=None):
+    def input_jobs(self, stages, result=None, *, people_options=None, person_ids=None):
         if MOTION_TOOLS[self.model_choice.currentData()].input_setup_only:
             self.status.setText('MAMMA camera input setup is available; reconstruction is not integrated yet.')
             return
@@ -1380,7 +1380,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             if manifest.get('interpolation', '') != interpolation:
                 self.status.setText('Video interpolation changed. Run Find person again, then reconstruct the selected people.')
                 return
-            if self.input_person_jobs(stages, result):
+            if self.input_person_jobs(stages, result, person_ids=person_ids):
                 return
         if not self.ready_for_interpolation(interpolation):
             return
@@ -1409,7 +1409,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
     def run_analysis(self):
         self.input_jobs(["track", "pva"])
 
-    def run_full(self):
+    def run_full(self, *, person_ids=None):
         tool = MOTION_TOOLS[self.model_choice.currentData()]
         if tool.key=='mamma':return self.run_mamma()
         if tool.key=='prompthmr':return self.run_prompthmr()
@@ -1429,7 +1429,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         correction=self.motion_correction.isChecked()
         if correction:self.save_correction_options()
         hand=tool.key=='gvhmr' and self.handflow_refine.isChecked()
-        self.input_jobs(tool.stages(refine, foot,correction,handflow=hand), result=result_kind(refine, foot,correction,handflow=hand))
+        self.input_jobs(tool.stages(refine, foot,correction,handflow=hand),
+                        result=result_kind(refine, foot,correction,handflow=hand), person_ids=person_ids)
 
     def save_correction_options(self):
         if self.project is not None:
@@ -1826,7 +1827,11 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 if note:message += ' '+note
             shown = typed(message) if memory_stop else message
             self.failed = True
-            self.cancel_job()
+            runner = self.parts_runner
+            if memory_stop and runner is not None and runner.note_memory_failure():
+                self.cancel_job(stop_parts=False)
+            else:
+                self.cancel_job()
             self.status.setText(shown)
             self.log.append(shown)
             if memory_stop:self.log.setVisible(True)
@@ -1937,6 +1942,10 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.hardware_summary = f"{data.get('gpu', 'GPU unavailable')} · RAM {data.get('ram_gib', '?')}GB · CUDA check {'Passed' if data.get('cuda_matmul_verified') else 'Unavailable'}"
             self.status.setText(self.hardware_summary)
         elif kind in {"failed", "blocked"}:
+            if kind == 'failed' and self.parts_runner is not None:
+                from .parts import allocation_failure
+                if allocation_failure(event.get('message') or ''):
+                    self.parts_runner.note_memory_failure()
             self.failed = True
             self.task_timer.stop();self.task_info.setText('Failed')
             label = 'Face tracking failed. ' if self.current_stage == 'face_track' else 'Processing failed. '
@@ -1997,8 +2006,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.last_batch = (getattr(self, 'batch_serial', 0), True, self.cancelled, self.status.text())
             self.update_readiness()
 
-    def cancel_job(self):
-        if self.parts_runner is not None:
+    def cancel_job(self, *, stop_parts=True):
+        if stop_parts and self.parts_runner is not None:
             self.parts_runner.cancel()  # Cancel Job stops the whole run, also between its parts
             if not self.busy:return
         self.pear_leave()

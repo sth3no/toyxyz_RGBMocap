@@ -8,7 +8,7 @@ if __name__=='__main__':
     from .runtime_limits import configure_preview_cpu
     configure_preview_cpu()
 import numpy as np
-from .people_store import load_people,safe_child,media_receipt,active_takes
+from .people_store import load_people,safe_child,media_receipt,active_takes,seam_takes
 from .storage import atomic_json
 
 VERSION=2
@@ -74,7 +74,7 @@ def paired_camera(world_rotation,cam_rotation,world_translation,cam_translation,
 def take_projects(root,state,kind=None):
     rows=[]
     for person in state['people']:
-        takes=person.get('takes',[])
+        takes=seam_takes(person)
         # A current joined take follows its sources; the scene draws the later entry of an overlap.
         if person.get('joins'):takes=takes+[t for t in active_takes(root,person,kind) if t.get('join')]
         for take in takes:
