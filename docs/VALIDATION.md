@@ -1,5 +1,26 @@
 # Source package validation
 
+## Low-memory stop note (2026-11-24)
+
+When Resource Safety stops a job for low memory, the message adds the PC's
+total RAM, the free RAM and up to four of the largest programs; the Console
+opens; the status bar's tooltip holds its whole text.
+
+- Tests, offscreen with the GUI runtime (`tests/test_memory_note.py`, 14):
+  grouping by program name, the app's own processes as RGB MoCap, at most four
+  above 0.3 GiB, the sentence, `collect()` against a stand-in psutil and an
+  empty note when psutil fails; `ProcessingGuard.check` reports `memory` or
+  `stall` with psutil readings replaced; on the real `MainWindow` a stop whose
+  guard reports `memory` puts the note into the status text, its tooltip and
+  the Console and opens the Console, and a `stall` stop adds no note. The
+  whole `tests` folder in one process: 737 tests passed, 94 skipped, none
+  failed.
+- `collect()` once from a command line on this PC (31.1 GiB RAM) returned
+  "This PC has 31.1 GiB of RAM; 15.5 GiB is free now. Largest users: zen
+  2.0 GiB, svchost 1.6 GiB, T3 Code (Beta) 1.3 GiB, vmmemWSL 1.2 GiB." in
+  under 0.3 s for the whole Python start.
+- Not run: a real low-memory stop, the message on a real screen.
+
 ## Auto Setup (2026-11-23)
 
 **Auto Setup** in **AI Motion Model** offers **Fast**, **Detailed** and

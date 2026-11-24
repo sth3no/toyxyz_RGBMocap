@@ -36,6 +36,17 @@ class WrappedLabel(QLabel):
         if self.minimumHeight()!=height or self.maximumHeight()!=height:self.setFixedHeight(height)
 
 
+class StatusLabel(QLabel):
+    """The status line; its tooltip always holds the whole text, which a narrow window clips."""
+    def __init__(self, text=''):
+        super().__init__()
+        self.setText(text)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+
+
 class TooltipHelp(WrappedLabel):
     """Keep dynamic help on its controls without occupying sidebar space."""
     def __init__(self,text='',*controls):
@@ -672,7 +683,7 @@ def build_workspace(w):
     w.progress.setTextVisible(False)
     root.addWidget(w.progress)
     footer = QHBoxLayout()
-    w.status = QLabel("Ready. Open a video or a project.")
+    w.status = StatusLabel("Ready. Open a video or a project.")
     w.status.setObjectName("status")
     w.status.setMinimumWidth(0)
     w.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)

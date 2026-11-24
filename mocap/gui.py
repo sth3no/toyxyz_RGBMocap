@@ -1817,10 +1817,19 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         if not self.processing_guard or not self.process:return
         message = self.processing_guard.check()
         if message:
+            memory_stop = getattr(self.processing_guard,'reason',None)=='memory'
+            if memory_stop:
+                # Read before the worker is stopped, so the note shows what held the memory at the stop.
+                from . import memory_note
+                from .hidden_ranges import typed
+                note = memory_note.collect()
+                if note:message += ' '+note
+            shown = typed(message) if memory_stop else message
             self.failed = True
             self.cancel_job()
-            self.status.setText(message)
-            self.log.append(message)
+            self.status.setText(shown)
+            self.log.append(shown)
+            if memory_stop:self.log.setVisible(True)
             self.guard_timer.stop()
             if getattr(self,'job_project',None) is not None:
                 from .storage import atomic_json

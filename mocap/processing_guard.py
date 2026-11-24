@@ -28,6 +28,7 @@ class ProcessingGuard:
         self.created=self.process.create_time()
         self.last_output=self.last_cpu_change=time.monotonic() if now is None else now
         self.cpu=0.;self.activity_cpu=0.;self.cpu_samples={};self.low_samples=0
+        self.reason=None  # 'memory' or 'stall' once check() has returned a stop message
 
     def output(self):self.last_output=time.monotonic()
 
@@ -58,7 +59,10 @@ class ProcessingGuard:
             low=message is not None
             self.low_samples=self.low_samples+1 if low else 0
             critical=memory.available<256*1024**2 or (commit is not None and commit<256*1024**2)
-            if self.low_samples>=2 or critical:return message
+            if self.low_samples>=2 or critical:
+                self.reason='memory'
+                return message
         if idle_timeout(self.last_output,self.last_cpu_change,now):
+            self.reason='stall'
             return 'Processing stopped after 180 seconds without output or CPU activity. The app is still available; retry or use a shorter clip.'
         return None

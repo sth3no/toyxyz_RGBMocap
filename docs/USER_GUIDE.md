@@ -897,6 +897,15 @@ Windows allocation headroom. If either becomes low, it stops the processing job
 and shows the available memory in the error message. Disabling Resource Safety
 bypasses this stop and the PyTorch VRAM cap; it does not disable actual
 allocation-error reporting or the supported OOM retry paths. The app also reports actual CPU/GPU allocation failures.
+
+The low-memory message also says how much RAM the PC has, how much of it is
+free at the stop and which programs use the most, for example "This PC has
+31.1 GiB of RAM; 2.1 GiB is free now. Largest users: cl 4.5 GiB, dotnet
+3.9 GiB." It names at most four programs above about 0.3 GiB, adding up the
+processes of each program; the app's own processes appear as RGB MoCap. The
+check counts free RAM, not installed RAM, so closing the largest programs is
+the quickest way to continue. The Console opens with the whole message. The
+status bar shows its whole text when you hold the pointer over it.
 Completed stages are retained for retry. ExMR Low Memory prepares Sapiens' existing
 FP16 layers on CPU and loads body/hand weights on CPU before GPU transfer; its
 body/hand feature batches remain 8. FlowHMR Low Memory offloads SAM and VGGT

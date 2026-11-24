@@ -31,6 +31,8 @@ The **Resource Safety** checkbox sits below Resource Mode and defaults **on**.
   VRAM allocation budget. RAM reserve stays 1–4 GiB according to system size;
   Windows commit headroom below 1 GiB also triggers the monitor. Ordinary low
   samples must repeat; critical headroom below 256 MiB stops immediately.
+  The stop message adds the PC's total and free RAM and the largest programs by
+  resident memory, read once at the stop.
   The desktop checks every 0.5 seconds. The VRAM budget subtracts the existing
   600 MiB Windows external-use margin, or 700 MiB for GPUs over 15 GiB, from
   currently free VRAM. These thresholds have not been increased.
