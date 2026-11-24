@@ -25,6 +25,7 @@ class MotionView(ViewportBase):
     view_changed = Signal(str)
     GRID_HALF_EXTENT = 10.0
     GRID_SPACING = 0.25
+    GHOST_ALPHA = .35  # a checked person inside an unfilled hidden range
 
     def __init__(self):
         super().__init__()
@@ -99,6 +100,8 @@ class MotionView(ViewportBase):
         self.single_actor_visible=True
         self.scene_visible=set();self.scene_colors={};self.scene_selected=None
         self.scene_waiting=[]  # names of checked people that were never reconstructed
+        # Unfilled hidden ranges per person, whether the button that fills them can be clicked, and the ghosts last drawn.
+        self.scene_hidden={};self.scene_fill_offered=False;self.ghosts_presented={}
         self.scene_time=0.;self.scene_renderers={};self.scene_presented={}
         self.character_workspace=None;self.character_renderers={};self.character_error=None
         self.character_name_points=[]
@@ -265,6 +268,17 @@ class MotionView(ViewportBase):
     def scene_actors(self):
         return self.people_scene.actors_at(self.scene_time,self.scene_visible,self.path.parent if self.path else None) if self.people_scene else []
 
+    def scene_ghosts(self):
+        """(take, frame, (first, end)) of each checked person standing in an unfilled hidden range now."""
+        from .scene_ghosts import ghosts
+        return ghosts(self.people_scene,self.scene_time,self.scene_visible,self.scene_hidden) if self.people_scene else []
+
+    def scene_hud(self,actors,ghosts):
+        """The two texts of a people scene: who is visible, and the notes about who is not."""
+        from .scene_notes import text as scene_text,visible_line,hidden_line
+        hidden=hidden_line([(self.scene_names.get(take.ident,f'Person {take.ident}'),*span) for take,_,span in ghosts],self.scene_fill_offered)
+        return visible_line(len(actors),len(ghosts)),self.mesh_error or scene_text(self.people_scene.warnings,self.scene_waiting,hidden)
+
     def draw_names(self,painter,actors=None):
         from .name_overlay import body_points,label_rect,separate_labels
         self.name_labels_presented=[]
@@ -279,6 +293,10 @@ class MotionView(ViewportBase):
                 points=body_points(joints[frame],rig[frame] if rig is not None else None,
                                    take.target_asset,take.transform)
                 entries.append((self.scene_names.get(take.ident,f'Person {take.ident}'),points))
+            for take,frame,_ in self.scene_ghosts():
+                if self.ghosts_presented.get(take.ident)!=(str(take.project),frame):continue
+                entries.append((self.scene_names.get(take.ident,f'Person {take.ident}')+' (hidden)',
+                                body_points(take.arrays['joints'][frame],None,None,take.transform)))
         elif self.single_actor_visible and self.joints is not None and not self.mesh_error and self.mesh_presented_index==self.index:
             points=body_points(self.joints[self.index],
                               self.target_frames[self.index] if self.target_frames is not None else None,self.target_asset)
@@ -315,8 +333,9 @@ class MotionView(ViewportBase):
             return target+self.pan
         target = self.scene_center.copy()
         if self.follow and self.people_scene is not None:
-            actors=self.scene_actors()
-            roots=[self.scene_joint_points(take,frame)[0] for take,frame in actors]
+            # A ghost counts, so the view does not jump when a person enters a hidden range.
+            bodies=self.scene_actors()+[(take,frame) for take,frame,_ in self.scene_ghosts()]
+            roots=[self.scene_joint_points(take,frame)[0] for take,frame in bodies]
             if roots:target[[0,2]]=np.mean(roots,axis=0)[[0,2]]
         elif self.follow and self.joints is not None:
             target[[0, 2]] = self.joints[min(self.index, len(self.joints) - 1), 0, [0, 2]]
@@ -745,10 +764,13 @@ class MotionView(ViewportBase):
         # Both contact types use the same background pass; all actor meshes
         # and export bones subsequently occlude them.
         self.draw_people_hand_locks(painter,actors)
-        if OPENGL_VIEW and actors:
+        # Ghosts are drawn after the people, translucent, without locks, path or bones.
+        ghosts=self.scene_ghosts();self.ghosts_presented={}
+        bodies=[(take,frame,1.) for take,frame in actors]+[(take,frame,self.GHOST_ALPHA) for take,frame,_ in ghosts]
+        if OPENGL_VIEW and bodies:
             painter.beginNativePainting()
             try:
-                if any('native' in take.arrays or take.native_required for take,_ in actors):
+                if any('native' in take.arrays or take.native_required for take,*_ in bodies):  # this path draws no ghosts
                     used=set();drawn=0
                     for take,frame in actors:
                         if take.raw_asset is None or 'native' not in take.arrays:
@@ -770,12 +792,12 @@ class MotionView(ViewportBase):
                 from .mesh_gl import MeshRenderer
                 renderer_type=MeshRenderer
                 self.ensure_mesh_renderer(renderer_type)
-                if self.mesh_renderer.asset_key not in (None,actors[0][0].asset['key']):
+                if self.mesh_renderer.asset_key not in (None,bodies[0][0].asset['key']):
                     for renderer in self.scene_renderers.values():renderer.close()
                     self.scene_renderers={}
-                self.mesh_renderer.load(actors[0][0].asset)
+                self.mesh_renderer.load(bodies[0][0].asset)
                 used=set()
-                for slot,(take,frame) in enumerate(actors):
+                for slot,(take,frame,alpha) in enumerate(bodies):
                     if slot==0:renderer=self.mesh_renderer
                     else:
                         used.add(take.ident)
@@ -786,7 +808,9 @@ class MotionView(ViewportBase):
                     renderer.deform(mesh[frame],(str(take.project),id(mesh),frame))
                     color=QColor(self.scene_colors.get(take.ident,'#b5b5b5'))
                     renderer.draw(*self._paint_camera,self.width(),self.height(),
-                        (color.redF(),color.greenF(),color.blueF()),transform=take.transform,clear_depth=slot==0)
+                        (color.redF(),color.greenF(),color.blueF()),transform=take.transform,clear_depth=slot==0,alpha=alpha)
+                    if alpha<1:
+                        self.ghosts_presented[take.ident]=(str(take.project),frame);continue
                     self.scene_presented[take.ident]=(str(take.project),frame)
                     if take.ident==self.scene_selected:self.mesh_presented_index=frame
                 for ident in list(self.scene_renderers):
@@ -794,12 +818,11 @@ class MotionView(ViewportBase):
                 self.mesh_error=None
             except Exception as error:self.mesh_error='Cannot render people scene: '+str(error)
             finally:painter.endNativePainting()
-        elif not actors:
+        elif not bodies:
             self._empty_people_notice='No checked person has motion at this time.\nCheck a person or reconstruct the selected result.'
         painter.setPen(QColor(theme_color('#bebebe')))
-        from .scene_notes import text as scene_text,visible_line
-        painter.drawText(18, ui_px(53),visible_line(len(actors)))
-        text=self.mesh_error or scene_text(self.people_scene.warnings,self.scene_waiting)
+        line,text=self.scene_hud(actors,ghosts)
+        painter.drawText(18, ui_px(53),line)
         if text:
             painter.setPen(QColor(theme_color('#e0b06c')))
             painter.drawText(self.rect().adjusted(18,80,-95,-80),Qt.AlignTop|Qt.TextWordWrap,text)

@@ -44,6 +44,27 @@ class NotesTest(unittest.TestCase):
         self.assertEqual(notes.text(['a', 'a'], ['Person 3', 'Bo']), 'a\nPerson 3, Bo: not reconstructed yet. ' + BUTTON)
         self.assertEqual(notes.text([], ['Person 3']), 'Person 3: not reconstructed yet. ' + BUTTON)
 
+    def test_the_count_line_names_hidden_people_only_when_there_are_some(self):
+        self.assertEqual(notes.visible_line(3, 0), '3 people visible | Shared camera / world')
+        self.assertEqual(notes.visible_line(3, 1), '3 people visible, 1 hidden | Shared camera / world')
+        self.assertEqual(notes.visible_line(1, 2), '1 person visible, 2 hidden | Shared camera / world')
+
+    def test_one_hidden_person_is_named_with_the_frames_of_the_range(self):
+        self.assertEqual(notes.hidden_line([('Person 2', 100, 120)], False), 'Person 2: hidden in frames 101–120.')
+        self.assertEqual(notes.hidden_line([('Person 2', 100, 120)], True), 'Person 2: hidden in frames 101–120. Click Fill all hidden ranges.')
+
+    def test_several_hidden_people_share_one_line(self):
+        entries = [('Person 2', 100, 120), ('Ann', 90, 140)]
+        self.assertEqual(notes.hidden_line(entries, False), 'Person 2, Ann: hidden at this frame.')
+        self.assertEqual(notes.hidden_line(entries, True), 'Person 2, Ann: hidden at this frame. Click Fill all hidden ranges.')
+        self.assertEqual(notes.hidden_line([], True), '')
+
+    def test_the_hidden_line_comes_first_and_does_not_use_up_the_three_notes(self):
+        self.assertEqual(notes.text(['a', 'b', 'c', 'd'], ['Bo'], 'Ann: hidden in frames 1–2.'),
+                         'Ann: hidden in frames 1–2.\na\nb\nc\n… and 1 more.\nBo: not reconstructed yet. ' + BUTTON)
+        self.assertEqual(notes.text([], [], 'Ann: hidden in frames 1–2.'), 'Ann: hidden in frames 1–2.')
+        self.assertEqual(notes.text(['a'], [], ''), 'a')
+
     def test_text_keeps_to_three_notes_and_counts_the_rest(self):
         self.assertEqual(notes.text(['a', 'b', 'c'], []), 'a\nb\nc')
         self.assertEqual(notes.text(['a', 'b', 'c', 'd', 'e', 'a'], ['Bo']), 'a\nb\nc\n… and 2 more.\nBo: not reconstructed yet. ' + BUTTON)

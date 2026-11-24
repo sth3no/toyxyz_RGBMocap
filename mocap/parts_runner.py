@@ -328,16 +328,35 @@ def _restore(widget, value):
     finally:widget.blockSignals(blocked)
 
 
+def fitted(w):
+    """(seconds, limit) of the longest part that fits the GPU and the disk now for the window's scene, model and checked
+    people; limit is a key of memory_fit.LIMITS. An unreadable GPU or disk does not limit."""
+    import shutil
+    from . import memory_fit
+    scene = _scene(w.people_root)
+    free, total = memory_fit.free_vram()
+    try:disk = shutil.disk_usage(w.people_root).free
+    except OSError:disk = None
+    return memory_fit.part_seconds(w.model_choice.currentData(), scene['fps'], scene['width'], scene['height'], max(1, len(w.checked_people())),
+                                   free, total, disk)
+
+
 def start(w, part_seconds, overlap_seconds, delete, first=None, end=None, ready=None):
-    """Plans and starts a run; the refusal or the planning error in the status bar instead. The runner while it runs, or None."""
-    reason = refusal(w)
+    """Plans and starts a run; the refusal or the planning error in the status bar instead. The runner while it runs, or None.
+    `part_seconds` None plans parts of the fitted length (see fitted)."""
+    reason = refusal(w);note = None
     if reason is None:
         try:
             scene = _scene(w.people_root)
             lo, hi = default_range(w, scene) if first is None else (first, end)
+            if part_seconds is None:
+                from .clip_range import format_time
+                from .memory_fit import LIMITS
+                part_seconds, limit = fitted(w);note = f'Reconstruct in parts: parts of {format_time(part_seconds)}, {LIMITS[limit]}.'
             plan = planning.plan(lo, hi, planning.frames(part_seconds, scene['fps']), planning.frames(overlap_seconds, scene['fps']))
             runner = PartsRunner(w, plan, delete, ready)
         except (OSError, ValueError, KeyError, TypeError) as error:reason = f'Reconstruct in parts did not start: {error}' if not isinstance(error, ValueError) else str(error)
     if reason:
         w.status.setText(reason);return None
+    if note:w.log.append(note)
     w.parts_runner = runner;w.update_readiness();runner.start();return w.parts_runner

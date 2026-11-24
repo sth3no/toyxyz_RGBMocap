@@ -875,7 +875,7 @@ line and Console report the result.
 | **MAMMA → Reference Height (m)** | Numeric approximate standing height, default 1.70 m. Sets VGGT scene scale, not every actor's height; unused with metric manual calibration. |
 | **PromptHMR → Camera / People / Interaction Prompt** | People defaults to 2; 0 detects automatically up to eight. Interaction Prompt defaults on; off follows the official default video path. Fixed Camera is the default; optional Moving Camera uses DroidCalib + Metric3D after camera setup and two additional model downloads. No animated fingers. These settings apply on Reconstruct 3D. See the [PromptHMR guide](models/PROMPTHMR.md). |
 | **Resource Mode** | Automatic uses the fast path when GPU memory is sufficient and selects supported Low Memory paths when needed. Low Memory uses CPU loading/offloading and existing bounded image processing; it can be slower and use more RAM. The selection and reason appear in Console and the CMD window. |
-| **Resource Safety** | Default on, directly below Resource Mode. On retains low-RAM/Windows headroom stopping and the PyTorch VRAM allocation limit. Off bypasses those limits; Automatic batching, Low Memory selection and actual allocation-error recovery remain. Saved locally, independently of projects. See [details](PERFORMANCE.md#resource-safety). |
+| **Resource Safety** | Default on, directly below Resource Mode. On stops a job when Windows cannot allocate more memory, reports low RAM without stopping, and keeps the PyTorch VRAM allocation limit. Off bypasses those limits; Automatic batching, Low Memory selection and actual allocation-error recovery remain. Saved locally, independently of projects. See [details](PERFORMANCE.md#resource-safety). |
 | **Prepare Preview** | Rebuild mesh/skeleton previews from existing motion without running the AI model again. Useful for older projects. |
 | **Reconstruct in parts...** | Below **Reconstruct 3D**. Reconstruct a long trimmed range one part after another for the people found by **Find person**, with GVHMR, ExMR or FlowHMR; where **Fill hidden ranges** supports the model and settings, it joins the parts afterwards. See [Reconstruct a long range in parts](#reconstruct-a-long-range-in-parts). |
 | **Cancel Job** | Stop queued processing; completed results are kept. During **Reconstruct in parts...** it stops the whole run, also between two parts. |
@@ -898,8 +898,22 @@ guarantee that a workload fits RAM or VRAM.
 
 Processing is allowed to start without a predicted RAM/VRAM minimum. While it
 runs with Resource Safety enabled, the app monitors actual available RAM and
-Windows allocation headroom. If either becomes low, it stops the processing job
-and shows the available memory in the error message. Disabling Resource Safety
+Windows allocation headroom. If the headroom becomes low (Windows can allocate
+less than 1 GiB more), it stops the processing job and shows the available
+memory in the error message. Low RAM alone does not stop a job: Windows moves
+other programs' memory to the page file, the job keeps running and can be
+slower, and Console and the status bar say once per job `Memory is tight, so
+Windows is moving other programs' memory to disk. This job keeps running and
+can be slower.` Before a reconstruction starts, they also say when less RAM is
+free than the model needs (`ExMR needs up to about 12.0 GiB of RAM, more than is
+free, so Windows will move other programs' memory to disk and this job can run
+slower.`) or when Windows cannot allocate what it needs (`ExMR needs Windows to
+allocate about 14.7 GiB, and Windows can allocate only 9.0 GiB more, so this job
+can stop for memory. Close other programs or let Windows manage a larger page
+file.`); the job starts anyway. Each of these is followed by the sentence about
+the PC's RAM and largest programs described below. PEAR's live preview still
+stops when RAM is low. See [Resource Safety](PERFORMANCE.md#resource-safety)
+for the numbers. Disabling Resource Safety
 bypasses this stop and the PyTorch VRAM cap; it does not disable actual
 allocation-error reporting or the supported OOM retry paths. The app also reports actual CPU/GPU allocation failures.
 
@@ -908,8 +922,8 @@ free at the stop and which programs use the most, for example "This PC has
 31.1 GiB of RAM; 2.1 GiB is free now. Largest users: cl 4.5 GiB, dotnet
 3.9 GiB." It names at most four programs above about 0.3 GiB, adding up the
 processes of each program; the app's own processes appear as RGB MoCap. The
-check counts free RAM and Windows allocation headroom, not installed RAM, so
-closing the largest programs is the quickest way to continue. When Windows can
+check counts Windows allocation headroom (and, for PEAR, free RAM), not
+installed RAM, so closing the largest programs is the quickest way to continue. When Windows can
 allocate less than 1 GiB more, the message says so even if RAM is free, for
 example "This PC has 32.0 GiB of RAM; 12.0 GiB is free now, but Windows can
 allocate only 0.4 GiB more."; a larger page file also helps then. The Console opens with the whole message. The
@@ -990,7 +1004,7 @@ an estimate and can leave residual sliding or penetration.
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
 | **Motion Path / Follow Actor** | Show the person's path / move the viewing camera with the person. |
 | **Lock** | Show active hand/foot contacts as translucent horizontal discs in timeline colors. Hand discs are at palm height, including raised supports. Display only. |
-| **Name** | Show list names above visible people and imported characters. Text stays upright and the same screen size as you move the camera. Rename a person from the list's right-click menu. |
+| **Name** | Show list names above visible people and imported characters. A person shown as a ghost inside an unfilled [hidden range](#hidden-ranges) has `(hidden)` after the name. Text stays upright and the same screen size as you move the camera. Rename a person from the list's right-click menu. |
 | **Timeline ruler / blue frame box** | Click or drag to seek. Track editing does not seek. Wheel zooms; middle drag or Shift+wheel pans. |
 | **Playback / frame number / speed** | Space plays/pauses; arrows step one frame, Shift+arrows one second. Enter a frame number to jump. Playback plays the video's audio when available. MAMMA uses the selected camera's audio. Playback speed affects preview only. |
 | **Timeline Frame All / Reset Trim** | Fit the full timeline / restore the full clip range. |
@@ -1006,15 +1020,25 @@ Relative depth and contacts between people are estimates; collision avoidance is
 ### Reconstruct a long range in parts
 
 A long range can be reconstructed one part after another, so each job holds
-only one part. This works with GVHMR, ExMR and FlowHMR, which reconstruct the
+only one part. Parts do not lower the RAM a model needs, which is the same for
+any clip length; they keep the last ExMR step within the video memory, the
+temporary frames within the disk, and what a stop can cost to one part. This
+works with GVHMR, ExMR and FlowHMR, which reconstruct the
 people found by **Find person**.
 
 1. Run **Find person** on the whole range and check the people to
    reconstruct. All parts use this one scene and its people.
 2. Trim the range (drag the edges of the video track, or type **From** and
    **To**) and click **Reconstruct in parts...** below **Reconstruct 3D**.
-3. Choose **Part length** (60 s by default) and **Overlap** (2 s by default,
-   shorter than half a part). Neighbouring parts share the overlap; the last
+3. Choose **Part length** and **Overlap** (2 s by default, shorter than half a
+   part). The part length starts at the suggested one, and the line below it
+   says what limits it, for example `Suggested part length: 5:00.0, at most 5
+   minutes, so a stop costs one part at most.`, `... the longest that fits the
+   free video memory now.` or `... the longest whose temporary frames fit a
+   quarter of the free disk.` It is between 10 seconds and 5 minutes; for
+   FlowHMR it is 60 s (`the default for this model; no limit was measured for
+   it`). A run of the same range offers the sizes of its last run instead, so
+   finished parts are skipped. Neighbouring parts share the overlap; the last
    part also takes a remainder shorter than a third of a part. With ExMR,
    **Delete temporary frames after each part** (on by default) deletes the
    pictures that ExMR writes of every frame (the `exmr_frames` folder of each
@@ -1101,6 +1125,20 @@ the gap stays empty and each take is used as before.
 
 To fill a gap, choose a method for that range in **Hidden ranges**, then click
 **Fill hidden ranges**.
+
+**Hidden people in the 3D view.** While a hidden range is not filled, a checked
+person inside it is shown as a ghost: a see-through body in the person's
+colour, standing in the last captured pose before the range, with `(hidden)`
+after the name. A ghost has no bones, contact discs or motion path, and
+**Follow Actor** keeps it in view. The line at the top of the view counts it,
+for example `3 people visible, 1 hidden`, and a note names the person and the
+frames, for example `Person 2: hidden in frames 101–120.` (several people at
+once: `Person 2, Person 5: hidden at this frame.`). A ghost is only drawn:
+export, **Apply Correction** and the Blender stream use the takes as before.
+Once the range is filled, the motion of the joined take is shown instead.
+There is no ghost before a person's first take or after the last one, when
+the take before the range has no result for the selected options, and in
+scenes of models without Hidden ranges (FlowHMR, PromptHMR, MAMMA).
 
 **Smooth join** is plain interpolation between the last frame before the gap and
 the first frame after it, with no model. It is available only for gaps of up to

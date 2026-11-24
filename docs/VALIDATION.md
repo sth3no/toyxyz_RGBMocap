@@ -1,5 +1,64 @@
 # Source package validation
 
+## Memory fit: low RAM keeps running (2026-11-24)
+
+With Resource Safety on, an offline job is no longer stopped for low available
+RAM while Windows can still allocate memory; it is stopped for low Windows
+allocation headroom as before. Console and the status bar say when memory is
+short before a reconstruction and once when it becomes tight during one.
+**Reconstruct in parts...** suggests the longest part that fits the free video
+memory and the disk. PEAR's guard is unchanged.
+
+One PC (RTX 5060 Ti 16 GB, 31.1 GiB RAM, 52 GiB page file, Windows 11), ExMR,
+Static Camera, Automatic mode, result `initial`. The app's own worker commands
+(`prepare`, `people`, `person`, `exmr_batch`) were run headless into a scratch
+workspace, sampled four times a second (worker-tree working set and private
+allocation, available RAM, allocation headroom, pages read and written,
+whole-GPU memory). The installed app stayed open and unused; no real window
+was driven.
+
+- **RAM by clip (no pressure).** `exmr_batch` for 300 frames at 464×832, 300
+  frames at 1920×1080 and 1,800 frames at 1920×1080: 99.2 / 99.9 / 362.6 s;
+  peak working set 11.87 / 11.99 / 11.89 GiB, all in the Sapiens2 phase; body,
+  hand and motion phases 6.85 to 7.29 GiB; peak private allocation 14.70 GiB in
+  all three. In the first run the working set was above 9 GiB for about 1.5 s.
+  Find person: 1.68, 2.04 and 2.02 GiB.
+- **Low RAM without the desktop guard** (464×832, 300 frames, another process
+  holding touched memory). Available RAM at the start 7.75 / 7.31 / 7.39 / 3.45
+  / 3.45 GiB (9 GiB idle, 13 GiB idle, 14 GiB rewritten every second, 19 GiB
+  idle, 20 GiB rewritten every second): `exmr_batch` 108.2 / 114.9 / 110.8 /
+  109.9 / 121.7 s, each with exit 0 and complete receipts; available RAM fell
+  to 0.01 to 0.09 GiB; 5.8 to 14.5 GiB were written to the page file; allocation
+  headroom stayed above 27.9 GiB.
+- **The changed guard against a real worker.** The same take recomputed with
+  18.3 GiB held by another process (3.49 GiB available at the start), while two
+  `ProcessingGuard` objects of this branch were asked every 0.5 s: the one
+  without `paging` (the previous rule, PEAR's) answered a memory stop after
+  8.8 s (`Available RAM 1.39 GiB (system reserve 2.49 GiB); Windows allocation
+  headroom 40.13 GiB`); the one with `paging` never answered a stop in 211
+  checks, reported `tight` in 28 of them and recorded peaks of 10.75 GiB
+  working set and 14.70 GiB private allocation. The worker finished in 108.7 s
+  with exit 0. Neither guard was connected to the worker; this shows what each
+  rule decides, not the window stopping or continuing a job.
+- **Last ExMR step by length.** A finished 1,800-frame take's observations
+  repeated to 1,800 / 5,400 / 10,800 / 18,000 / 36,000 frames and the `exmr`
+  stage run on each: 0.84 / 0.99 / 1.92 / 4.29 / 13.64 GiB reserved PyTorch
+  memory, worker working set 2.1 to 2.6 GiB; 54,000 frames ran out of memory.
+  Only memory and time were read; the repeated motion means nothing.
+- **Tests** (unittest, Qt offscreen): `test_memory_fit_guard` 11,
+  `test_memory_fit` 30, `test_memory_fit_window` 16 (real `MainWindow`, memory
+  readings and the system sentence replaced), `test_memory_fit_parts` 8 (real
+  `MainWindow` on a scene on disk, GPU and disk readings replaced). Whole
+  `tests` folder: 979 passed, 17 skipped (914 passed, 17 skipped before).
+- **Pictures looked at:** the Reconstruct in Parts dialog rendered offscreen in
+  the dark and light theme with a time-limited and a disk-limited suggestion.
+- **Not run:** the real window stopping or not stopping a job (the app was in
+  use, so no second instance); the notes on a real screen; FlowHMR and GVHMR
+  under memory pressure or at length; several people in one batch; Low Memory
+  mode; Moving Camera; pressure on a clip longer than 10 s; a page file on a slow
+  disk; a job stopped by low allocation headroom; a fitted-length parts run
+  with real models; any PC with less RAM or video memory.
+
 ## Real runs of typed range, parts, take import and the memory note (2026-11-24)
 
 One PC (RTX 5060 Ti 16 GB, 31 GiB RAM, Windows 11), the real `MainWindow`

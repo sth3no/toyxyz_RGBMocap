@@ -3,6 +3,7 @@ from PySide6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QDoubleSpinB
 
 from . import parts
 from .clip_range import format_time
+from .memory_fit import LIMITS
 from .theme import ui_px
 
 DELETE_TIP = ('ExMR writes every frame of a part as a picture before it reconstructs it. Deleting them after each part '
@@ -11,7 +12,7 @@ NO_FRAMES = 'Only ExMR writes temporary frames.'
 
 
 class PartsDialog(QDialog):
-    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2., join_issue=None):
+    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2., join_issue=None, fit=None):
         super().__init__(parent)
         self.setWindowTitle('Reconstruct in Parts')
         self.setMinimumWidth(ui_px(420))
@@ -24,6 +25,9 @@ class PartsDialog(QDialog):
         intro.setWordWrap(True);layout.addWidget(intro)
         form = QFormLayout();layout.addLayout(form)
         self.part = self._seconds('Part length, in seconds', 4., 3600., part, 10.);form.addRow('Part length:', self.part)
+        # `fit`: (seconds, limit) of parts_runner.fitted, the longest part that fits the GPU and the disk now.
+        self.fit_line = QLabel(f'Suggested part length: {format_time(fit[0])}, {LIMITS[fit[1]]}.' if fit else '')
+        self.fit_line.setObjectName('muted');self.fit_line.setWordWrap(True);self.fit_line.setVisible(bool(fit));form.addRow(self.fit_line)
         self.overlap = self._seconds('Overlap of neighbouring parts, in seconds', .1, 600., overlap, .5);form.addRow('Overlap:', self.overlap)
         self.delete = QCheckBox('Delete temporary frames after each part');self.delete.setChecked(writes_frames);self.delete.setEnabled(writes_frames)
         self.delete.setToolTip(DELETE_TIP if writes_frames else NO_FRAMES);form.addRow(self.delete)
@@ -60,9 +64,10 @@ def ask(w):
     scene = parts_runner._scene(w.people_root);first, end = parts_runner.default_range(w, scene);fps = scene['fps']
     # The same range offers the last run's sizes, so its finished parts are planned again and skipped.
     record = parts_runner.saved(w.people_root);same = record is not None and (record['first'], record['end']) == (first, end)
-    sizes = dict(part=record['part']/fps, overlap=record['overlap']/fps) if same and record['overlap'] > 0 else {}
+    fit = parts_runner.fitted(w)
+    sizes = dict(part=record['part']/fps, overlap=record['overlap']/fps) if same and record['overlap'] > 0 else dict(part=fit[0])
     dialog = PartsDialog(w, first, end, fps, scene['width'], scene['height'], len(w.checked_people()), w.model_choice.currentData() == 'exmr', **sizes,
-                         join_issue=parts_runner.join_issue(w))
+                         join_issue=parts_runner.join_issue(w), fit=fit)
     try:
         if dialog.exec() != QDialog.Accepted:return None
         part, overlap, delete = dialog.choice()

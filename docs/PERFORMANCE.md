@@ -20,22 +20,45 @@ this is not a claim that every model layer is FP32.
 **Low Memory is primarily a VRAM-saving mode, not a system-RAM-saving mode.**
 With **Resource Safety** enabled (the default), actual RAM and Windows allocation
 headroom are monitored in both modes. Work stops with an error when the measured
-headroom becomes low. Decisions and memory advice appear in both the app Console
+Windows allocation headroom becomes low; low RAM alone is reported and the job
+keeps running. Decisions and memory advice appear in both the app Console
 and CMD window. See the independent safety control below.
 
 ### Resource Safety
 
 The **Resource Safety** checkbox sits below Resource Mode and defaults **on**.
 
-- **On:** retain the existing low-RAM/Windows commit-headroom stop and PyTorch
-  VRAM allocation budget. RAM reserve stays 1–4 GiB according to system size;
-  Windows commit headroom below 1 GiB also triggers the monitor. Ordinary low
-  samples must repeat; critical headroom below 256 MiB stops immediately.
-  The stop message adds the PC's total and free RAM and the largest programs by
-  resident memory, read once at the stop.
+- **On:** retain the Windows commit-headroom stop and PyTorch VRAM allocation
+  budget. A job stops when Windows can allocate less than 1 GiB more (two
+  samples in a row) or less than 256 MiB (at once). The stop message adds the
+  PC's total and free RAM and the largest programs by resident memory, read
+  once at the stop.
+  Available RAM under the reserve (1–4 GiB according to system size) no longer
+  stops an offline job while that headroom is left: Windows moves other
+  programs' memory to the page file and the job keeps running, usually slower.
+  Console and the status bar say so once per job
+  (`Memory is tight, so Windows is moving other programs' memory to disk. This
+  job keeps running and can be slower.`, followed by the same sentence about the
+  PC's RAM and largest programs). Where the headroom cannot be read (systems
+  other than Windows), and for PEAR's live workers, low RAM stops as before:
+  repeated samples under the reserve, or one under 256 MiB.
   The desktop checks every 0.5 seconds. The VRAM budget subtracts the existing
   600 MiB Windows external-use margin, or 700 MiB for GPUs over 15 GiB, from
   currently free VRAM. These thresholds have not been increased.
+- **Before a reconstruction starts** (Resource Safety on), Console and the
+  status bar say when memory is short for the chosen model; the job starts
+  anyway. Less free RAM than the model needs: `ExMR needs up to about 12.0 GiB
+  of RAM, more than is free, so Windows will move other programs' memory to
+  disk and this job can run slower.` Less Windows allocation headroom than the
+  model needs plus 1 GiB: `ExMR needs Windows to allocate about 14.7 GiB, and
+  Windows can allocate only 9.0 GiB more, so this job can stop for memory. Close
+  other programs or let Windows manage a larger page file.` The starting
+  numbers are 12.0 / 14.7 GiB for ExMR (measured, see below), 6.9 GiB of RAM
+  for GVHMR with its add-ons and 8.4 GiB for FlowHMR (the process-tree peaks of
+  the paired runs below; their allocation need is not known at first). After a
+  reconstruction finishes, the largest working set and private allocation its
+  workers reached replace a smaller number, kept per model under `memory_seen`
+  in `config/local.json`.
 - **Off:** skip that RAM/commit stop and remove the app's PyTorch allocator cap.
   This does not create additional memory. Actual allocation failures or system
   slowdowns can still occur; other applications and non-PyTorch allocations are
@@ -69,6 +92,39 @@ fixed-length bone path uses FP16 encoding/FP32 decoding, one requested frame per
 prediction and bounded latest-frame presentation. Its RAM monitor and CUDA
 allocation budget follow Resource Safety; it has no automatic offload/retry path. See the
 [PEAR timings and limitations](models/PEAR.md#placement-and-performance).
+
+### Why low RAM no longer stops a job (measured 2026-11-24)
+
+One PC: RTX 5060 Ti 16 GB, 31.1 GiB RAM, 52 GiB page file, Windows 11. ExMR,
+Static Camera, Automatic mode; the app's worker commands run without the
+desktop guard and sampled four times a second
+([validation record](VALIDATION.md#memory-fit-low-ram-keeps-running-2026-11-24)).
+
+- A model takes a fixed amount of RAM whatever the clip. ExMR's worker reached
+  11.9, 12.0 and 11.9 GiB of working set for 300 frames at 464×832, 300 frames
+  at 1920×1080 and 1,800 frames at 1920×1080. That peak lasts about 1.5 seconds
+  while Sapiens2 loads; afterwards the worker holds at most 7.3 GiB. Its private
+  allocation peaked at 14.7 GiB in all three. Shorter clips or parts do not
+  lower any of these.
+- With another process holding 9 to 20 GiB so that only 3.5 to 7.8 GiB of RAM
+  was available at the start, the same 300-frame reconstruction finished every
+  time, 9 to 23 % slower (108 to 122 s against 99 s), while Windows wrote 6 to
+  15 GiB to the page file and available RAM fell to 0.01 to 0.09 GiB. The
+  previous rule would have stopped each of these runs.
+- Not measured: FlowHMR and GVHMR under this pressure, clips longer than 10 s
+  under pressure, a page file on a slow disk.
+
+### Part length that fits (measured 2026-11-24)
+
+The last ExMR step holds every frame of a take on the GPU. Its reserved PyTorch
+memory was 0.84, 0.99, 1.92, 4.29 and 13.64 GiB for 1,800, 5,400, 10,800, 18,000
+and 36,000 frames (observations repeated to that length; 14 GiB free), and it
+ran out of memory at 54,000 frames. **Reconstruct in parts...** therefore
+suggests the longest part whose estimate (0.85 GiB + 9.9e-9 GiB × frames²) fits
+70 % of the free video memory budget and whose temporary frames fit a quarter of
+the free disk, at most 5 minutes and at least 10 seconds. For GVHMR it uses the
+app's existing attention estimate; for FlowHMR no relation was measured and the
+suggestion stays 60 s.
 
 ## Measured memory savings
 
