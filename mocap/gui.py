@@ -41,6 +41,7 @@ STAGES["footmr"] = "Refine Ankles / FootMR"
 STAGES["handflow"] = "Infer Fingers / HandFlow"
 STAGES['correct'] = 'Motion Correction'
 STAGES['take_join'] = 'Fill Hidden Ranges'
+STAGES['take_import'] = 'Import Take'
 STAGES['kimodo_setup'] = 'Setting up automatic fill'
 MODEL_JOB_STAGES = frozenset(('download', 'import_model', 'kimodo_setup'))  # the jobs Model Manager starts and shows
 from .workspace_ui import build_workspace

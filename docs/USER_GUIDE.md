@@ -1190,6 +1190,46 @@ Limits of this version:
   Manager**: the app keeps hard links of model files in other places, so
   deleting a file by hand may free no disk space.
 
+#### A take from another video
+
+A finished take from another video's project can continue a person of the open
+scene, for example 30 seconds of one long video followed by 30 seconds of
+another. Right-click the person in **People** and choose **Import take from
+another project...** (it is disabled while a job runs). In the dialog click
+**Choose Project...** and choose the other project's folder (it starts in the
+projects folder); **Take** then lists that project's finished takes with the
+person, the frames, the model and the length in seconds. **Gap** is the time
+between the person's last take and the imported take, 1.0 s by default:
+**Smooth join** fills up to 1.0 s and **Automatic (Experimental)** up to 9.6 s.
+Click **Import**. The take becomes the person's newest take, starting that many
+frames after their last take ends, and **Hidden ranges** lists the gap like any
+other: choose **Smooth join** or **Automatic (Experimental)**, click **Fill
+hidden ranges**, then export the joined take as usual. **Automatic
+(Experimental)** is still experimental: the generated motion is plausible, not
+what the person did.
+
+The two videos were filmed by different cameras, so nothing measures where the
+imported take belongs. It is placed by continuing the person: it starts where
+they were last seen, turned to face the way they last faced, with its own
+height above the floor and the person's body shape. The camera of the open
+scene is used for it. Its timeline frames show the open video's last frame,
+because the open video ends before them, and they have no tracking box.
+
+The import is refused, with the reason in the status bar, when the take is not
+30 fps (`Only 30 fps takes can be imported; the chosen take has 25 fps.`), was
+made with FlowHMR, MAMMA, PromptHMR or GEM-X, or is not finished; when the scene
+is not GVHMR or ExMR with **Static Camera**, or **HTD Refine** is on; when the
+person has no finished last take; when the result in use needs **FootMR** or
+**HandFlow** and the take lacks it; and when the gap is outside 1 to 290 frames.
+A GVHMR take has no finger motion: imported into an ExMR scene it is imported,
+the Console says `The imported take has no finger motion, so a take joined
+with it has none either.`, and a joined take with it has no finger motion.
+
+Running **Find person** again makes a new person list, so the imported take is
+no longer listed; its files stay on disk in the person's `takes` folder (a
+folder ending in `_import_v1`). The shared scene floor and **Apply Correction**
+include the imported take like any other take.
+
 ### One person found as two
 
 After an occlusion the tracker sometimes finds the same human again as a second

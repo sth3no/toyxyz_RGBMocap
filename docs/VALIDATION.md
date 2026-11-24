@@ -1,5 +1,41 @@
 # Source package validation
 
+## Take from another video (2026-11-24)
+
+**Import take from another project...** in the People list adds a finished
+take of another project as the person's newest take; Hidden ranges fill the
+gap.
+
+- Tests with synthetic scenes on disk (a 120-frame ffmpeg test video, a fake
+  SMPL-X file, no models, no inference; `tests/test_take_import.py`, 46):
+  placement (heading of the first imported frame equals the receiver's last to
+  1e-10 rad, horizontal pelvis position equal, own height kept, motion moved
+  rigidly, receiver betas), camera space (every imported frame pairs to the
+  receiver's last-frame camera pairing; `take_join.assemble` leaves the
+  imported rows unchanged); on disk for GVHMR, ExMR and a GVHMR take into an
+  ExMR scene: the import is a current take in `people.json`, K of the scene,
+  no boxes, nothing observed, its media beyond the video repeat the video's
+  last frame (decoded and compared), FootMR result imported, a second import
+  follows the first; then a real `take_join` with Smooth join (220-frame
+  joined take, padded media) and with a stub Automatic generator; every
+  refusal leaves the scene byte-identical; the GUI command loads no numeric
+  package.
+- `tests/test_take_import_window.py` (6): the menu action and its tooltip,
+  disabled while busy; the dialog lists the other project's finished take; the
+  real `MainWindow` offscreen ran the import job as a real process through its
+  own queue (export replaced by a stub that only reports), after which Hidden
+  ranges showed `Frames 101–130 (1.0 s)` with the same method choices as a
+  gap between two tracker takes; a refused gap goes to the status bar and
+  starts nothing; the imported take opens and shows its frame 90.
+- The whole `tests` folder in one process: 808 tests passed, 15 skipped, none
+  failed. ffmpeg and ffprobe were copied into the worktree's ignored
+  `tools/bin`, so the ffmpeg tests of `test_take_join` ran too (they were
+  skipped in the 756-test run of the typed trim range).
+- The dialog was drawn offscreen (dark theme) with and without a finished take
+  and looked at.
+- Not run: a real project or video, the export stage, real models, Automatic
+  with Kimodo, the dialog on a real screen.
+
 ## Typed trim range (2026-11-24)
 
 **From**, **To** and **Set** beside the timeline's Clip label trim the

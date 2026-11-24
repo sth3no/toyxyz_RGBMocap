@@ -23,7 +23,8 @@ PEOPLE_HELP = (
     'use Find person first.\n\n'
     'Check a person to reconstruct and show them. Select a row to preview their motion and '
     'edit their contact timings. Selecting a row does not change its checkbox.\n\n'
-    'Right-click a row to rename it, or to join it with another person (Continue as) and undo that (Separate again). Click its color square to change the display color. '
+    'Right-click a row to rename it, or to join it with another person (Continue as) and undo that (Separate again). '
+    'Import take from another project continues the person with a finished take from another video. Click the color square of a row to change the display color. '
     'Names are used for FBX files and rigs; colors affect the preview only.\n\n'
     'Use the take list to switch between saved frame ranges and see which results are ready.\n\n'
     'Automatic single-person tracking may switch people when they cross or overlap. '
@@ -59,7 +60,9 @@ class PeopleList(QListWidget):
     renameRequested=Signal(int)
     continueRequested=Signal(int,int)
     separateRequested=Signal(int,int)
+    importRequested=Signal(int)
     person_choices=None
+    import_choice=None
 
     def __init__(self):
         super().__init__()
@@ -95,6 +98,11 @@ class PeopleList(QListWidget):
     def person_menu(self,ident):
         menu=QMenu(self);menu.setToolTipsVisible(True)
         actions={menu.addAction('Rename...'):lambda:self.renameRequested.emit(ident)}
+        allowed=self.import_choice(ident) if self.import_choice else None
+        if allowed is not None:
+            action=menu.addAction('Import take from another project...');action.setEnabled(allowed)
+            action.setToolTip("Continue this person with a finished take from another video's project.")
+            actions[action]=lambda:self.importRequested.emit(ident)
         joinable,joined=self.person_choices(ident) if self.person_choices else ([],[])
         if joinable:
             sub=menu.addMenu('Continue as');sub.menuAction().setToolTip("This person and the chosen one are the same person. Their frames and takes become one person's.")
@@ -147,6 +155,7 @@ class PeopleWorkspace:
         self._people_return_id = None
         self._people_return_project=None
         self._join_result=None
+        self._import_result=None
         self._hidden_refresh=False
         from .scene_data import SceneDataLoader
         self.scene_data=None;self._scene_key=None
@@ -317,6 +326,8 @@ class PeopleWorkspace:
         self.people_list.continueRequested.connect(self.continue_person_as)
         self.people_list.separateRequested.connect(self.separate_person)
         self.people_list.person_choices=self.person_choices
+        self.people_list.importRequested.connect(self.import_take)
+        self.people_list.import_choice=self.import_choice
         column.addWidget(self.people_list,1)
         self.person_takes = QComboBox()
         self.person_takes.setAccessibleName('Visible motion interval')
@@ -629,6 +640,30 @@ class PeopleWorkspace:
         self._people_return_id=person['id'];self._people_return_project=self.project
         self._join_result=self.active_result;self._hidden_refresh=True
         self.start_jobs([('take_join',['--project',str(self.people_root),'--person-id',str(person['id']),'--result',self.active_result])])
+
+    def import_choice(self,ident):
+        """Whether Import take is offered for a person (None: not in this scene) and enabled."""
+        if self.people_state is None or self.model_choice.currentData() not in ('gvhmr','exmr'):return None
+        return not (self.busy or self.contact_saving)
+
+    def import_take(self,ident):
+        if self.busy or self.contact_saving or self.people_state is None:return
+        person=next((p for p in self.people_state['people'] if p['id']==ident),None)
+        if person is None:return
+        from . import take_import_ui
+        from .take_import_check import gap_frames,refusal
+        choice=take_import_ui.ask(self,person)
+        if choice is None:return
+        source,seconds=choice;frames=gap_frames(seconds)
+        reason=refusal(self.people_root,person,source,frames,self.active_result)
+        if reason:
+            self.status.setText(reason);return
+        self._people_batch=True;self._people_inference_jobs=[];self._people_post_jobs=[]
+        # The view stays on the open take of this person; the take list and Hidden ranges show the import.
+        self._people_return_id=ident;self._people_return_project=self.project if ident==self.active_person_id else None
+        self._import_result=self.active_result;self._hidden_refresh=True
+        self.start_jobs([('take_import',['--project',str(self.people_root),'--person-id',str(ident),'--source',str(source),
+                                         '--gap',str(frames),'--result',self.active_result])])
 
     def log_filled_exports(self,files):
         if not self.people_state:return
@@ -966,6 +1001,13 @@ class PeopleWorkspace:
             self.jobs.extend((stage,['--project',path,'--result',kind]) for path in event['projects'] for stage in stages)
             self.people_state=load_people(self.people_root)
             if event['projects']:self._people_return_project=Path(event['projects'][0])
+            return True
+        if event['type']=='take_imported' and self._import_result:
+            # The imported take needs its preview before Fill hidden ranges can use it.
+            from .motion_tools import base_result
+            kind=base_result(self._import_result)
+            self.jobs.extend(('export',['--project',path,'--result',kind]) for path in event['projects'])
+            self.people_state=load_people(self.people_root)
             return True
         if event['type']=='people_found':
             self._people_found_root=Path(event['project'])

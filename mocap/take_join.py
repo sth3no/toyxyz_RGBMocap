@@ -413,6 +413,47 @@ def _hand_receipt(target, kind, sources, frames, fps):
         detection_coverage=[min(c) for c in zip(*(r['detection_coverage'] for r in receipts))], prediction_cached=False, warning=warning, joined=True))
 
 
+def people_clip(root, first, end):
+    """Media of scene frames [first, end); a range that ends beyond the video (an imported take) repeats the video's last frame."""
+    import subprocess
+    from .project_storage import inherit_storage
+    from .storage import atomic_json
+    from .video import ensure_preview, executable, prepare_people_clip, probe
+    root = Path(root);state = json.loads((root/'project.json').read_text(encoding='utf-8'));frames, fps = state['frames'], state['fps']
+    if end <= frames:return prepare_people_clip(root, first, end)
+    if not 0 <= first < end:raise ValueError('Invalid person take frame range')
+    source = root/'input.mp4';stamp = source.stat()
+    identity = dict(version=1, input=[stamp.st_size, stamp.st_mtime_ns], first=first, end=end, video_frames=frames, fps=fps)
+    target = root/'people_media'/f'{first:09d}_{end:09d}_padded';video, receipt, manifest = target/'input.mp4', target/'media.json', target/'project.json'
+    try:
+        record, output = json.loads(receipt.read_text(encoding='utf-8')), video.stat()
+        if record['identity'] == identity and record['output'] == [output.st_size, output.st_mtime_ns] and json.loads(manifest.read_text(encoding='utf-8'))['frames'] == end-first:
+            return target
+    except (OSError, ValueError, KeyError):pass
+    target.mkdir(parents=True, exist_ok=True);temporary = target/'input.partial.mp4'
+    # The video's last frame repeated up to the end of the range, then the range; padding after a trim keeps too few frames.
+    pad = end-frames
+    try:
+        subprocess.run([executable('ffmpeg'), '-hide_banner', '-loglevel', 'error', '-i', str(source), '-map', '0:v:0', '-an',
+            '-vf', f'tpad=stop_mode=clone:stop={pad},trim=start_frame={first}:end_frame={end},setpts=N/({fps}*TB)',
+            '-frames:v', str(end-first), '-r', str(fps), '-fps_mode', 'cfr', '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+            '-pix_fmt', 'yuv420p', '-threads', '2', '-y', str(temporary)], check=True, capture_output=True, creationflags=0x08000000)
+        info = probe(temporary)
+        if info['frames'] != end-first or abs(info['fps']-fps) > .001:raise ValueError('Person take media does not match its scene frame range')
+        temporary.replace(video)
+        start = state['start']+first/fps
+        child = {**state, 'start': start, 'end': state['start']+end/fps, 'frames': end-first, 'stages': {}, 'pipeline': {'model': (state.get('pipeline') or {}).get('model', 'gvhmr')},
+                 'timeline': {'start': start, 'step': 1/fps, 'frames': end-first}, 'padded_frames': min(pad, end-first)}
+        for key in ('people_root', 'person_id', 'person_preview', 'person_frames', 'original_times'):child.pop(key, None)
+        inherit_storage(root, target, child)
+        if end-first <= 18000:child['original_times'] = [start+i/fps for i in range(end-first)]
+        atomic_json(manifest, child)
+        output = video.stat();atomic_json(receipt, dict(identity=identity, output=[output.st_size, output.st_mtime_ns]))
+        ensure_preview(target)
+    finally:temporary.unlink(missing_ok=True)
+    return target
+
+
 def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     import torch
     from .motion_tools import RESULTS
@@ -420,7 +461,6 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     from .person_tracking import _link
     from .project_storage import inherit_storage
     from .storage import atomic_json
-    from .video import prepare_people_clip
     first, end, lead = sources[0]['first'], sources[-1]['end'], sources[0]
     person = next((p for p in load_people(root)['people'] if p['id'] == ident), None)
     if person is None:raise Refused('Person no longer exists. Run Find person again.')
@@ -428,7 +468,7 @@ def _write(root, ident, sources, gaps, donors, joined, kinds, base, pipeline):
     target.mkdir(parents=True, exist_ok=True);pending = target/'fill_pending.json'
     # The marker stays after a failure, so a half-written folder is never current.
     atomic_json(pending, dict(version=1, person=ident, first=first, end=end))
-    clip = prepare_people_clip(root, first, end);shared = json.loads((clip/'project.json').read_text(encoding='utf-8'))
+    clip = people_clip(root, first, end);shared = json.loads((clip/'project.json').read_text(encoding='utf-8'))
     if shared['frames'] != end-first:raise RuntimeError('Joined take media does not match its frame range')
     for name in ('input.mp4', 'preview.mp4', 'preview.json'):
         if (clip/name).is_file():_link(clip/name, target/name)
