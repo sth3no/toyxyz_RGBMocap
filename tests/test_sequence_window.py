@@ -2,21 +2,26 @@
 Small real videos made with ffmpeg; paths.HOME is a temporary folder. Needs PySide6 and ffmpeg."""
 import json, os, shutil, subprocess, tempfile, time, unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtCore import QPoint, QPointF, Qt, QTimer
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QMenu
+from PySide6.QtWidgets import QApplication, QComboBox, QDialogButtonBox, QDoubleSpinBox, QLabel, QMenu
 
-from mocap import paths
+from mocap import paths, people_store
 from test_parts_window import scene, write_result
+import test_sequence_state   # its take builder; not its StateTest by name, which would run its tests here again
 
 APP = QApplication.instance() or QApplication([])
 FFMPEG = paths.ROOT/'tools/bin/ffmpeg.exe'
 OTHER = 'The sequence works with GVHMR, ExMR and FlowHMR.'
 BUSY = 'A job is running. This block can be opened when it is done.'
 LAST = 'A sequence needs at least one block.'
+EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
+ANNA, BEN = ((1, 'Anna', range(90)),), ((1, 'Ben', range(90)),)
+TWO = ((1, 'Ben', range(90)), (2, 'Cleo', range(90)))
 
 
 def application():
@@ -612,6 +617,175 @@ class SequenceWindowTest(unittest.TestCase):
         with mock.patch.object(c, 'load', wraps=c.load) as load:
             QTest.mouseClick(c.view, Qt.LeftButton, Qt.NoModifier, c.view.block_rect(second.id).center())
         self.assertEqual([call.args[0] for call in load.call_args_list], [second.id]);self.assertEqual(c.current, first.id)
+
+    # Stage 2: people who continue across neighbouring blocks
+
+    def clip(self, block, people, takes, mark):
+        """A finished ExMR scene of the block's 3 s video after Find person (tests/test_parts_window.py scene) with its takes
+        (ident, first, end) as the batch leaves them (tests/test_sequence_state.py StateTest.take) and the people list's
+        fingerprint `mark`, remembered for the block."""
+        video = Path(block.video);manifest = self.manifest(0., 3., 'exmr', exmr_options=dict(static_camera=True, smoothing='none'))
+        manifest['source'] = dict(path=str(video), fps=30.)
+        root = self.base/'projects'/f'{video.stem}_{block.id}'/'exmr';root.parent.mkdir(parents=True)
+        scene.video = video;scene(root, manifest, people)
+        for take in takes:test_sequence_state.StateTest.take(SimpleNamespace(root=root, manifest=manifest), *take)
+        self.mark(root, mark);block.folders['exmr'] = str(root)
+        return root
+
+    def mark(self, root, mark, people=None):
+        """The people list of `root` with a new fingerprint (and only `people` when given), as Find person again leaves it."""
+        state = people_store.load_people(root);state['fingerprint'] = mark
+        if people is not None:state['people'] = [p for p in state['people'] if p['id'] in people]
+        people_store.save_people(root, state)
+
+    def linkable(self, later=BEN, takes=((1, 0, 90),)):
+        """Two 3 s blocks tracked with ExMR: Anna alone in the first, `later` with `takes` in the second; then a refresh."""
+        self.pick('exmr');first, second = self.two()
+        self.clip(first, ANNA, ((1, 0, 90),), 'first');self.clip(second, later, takes, 'second');self.c.refresh()
+        return first, second
+
+    def saved(self):
+        return json.loads(self.c.sequence.path.read_text(encoding='utf-8'))
+
+    def test_one_person_each_is_linked_by_itself(self):   # after refresh: one link, status names both; unlink -> stays unlinked after another refresh
+        first, second = self.linkable();c, w = self.c, self.w;target = (second.id, 1)
+        self.assertEqual([(l.source, l.target, l.method, l.prints) for l in c.sequence.links], [((first.id, 1), target, 'smooth', ('first', 'second'))])
+        self.assertEqual(w.status.text(), 'Ben now continues Anna. Drag the bar to change it.')
+        self.assertEqual((c.view.rows[target], c.view.rows[(first.id, 1)]), (0, 0));self.assertEqual(c.view.row_states, {target:'linked'})
+        self.assertEqual(c.sequence.starts(), [0., 4.]);self.assertEqual(self.saved(), c.sequence.to_dict())
+        self.assertEqual(self.saved()['links'][0]['target'], [second.id, 1])
+        c.refresh();self.assertEqual(len(c.sequence.links), 1)   # made once
+        self.assertTrue(c.unlink(target));c.refresh();c.refresh()
+        self.assertEqual(c.sequence.links, []);self.assertIn(second.id, c.sequence.decided);self.assertNotIn('links', self.saved())
+        self.assertEqual(c.sequence.starts(), [0., 3.]);self.assertFalse(c.unlink(target))
+
+    def test_two_people_are_not_linked_by_themselves(self):
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c = self.c
+        self.assertEqual(c.sequence.links, []);self.assertEqual(c.sequence.decided, set())
+        self.assertEqual(c.view.rows, {(first.id, 1):0, (second.id, 1):0, (second.id, 2):1});self.assertEqual(c.sequence.starts(), [0., 3.])
+
+    def test_link_and_unlink_from_the_view(self):         # view.linked.emit(...) -> link saved in the sequence file; view.unlinked.emit(...) -> gone
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c = self.c
+        c.view.linked.emit((first.id, 1), (second.id, 2))
+        self.assertEqual(self.saved()['links'], [dict(source=[first.id, 1], target=[second.id, 2], method='smooth', prints=['first', 'second'])])
+        self.assertEqual(self.saved()['gaps'], {second.id:1.});self.assertEqual(c.view.rows[(second.id, 2)], 0);self.assertEqual(c.sequence.dropped, [])
+        c.view.linked.emit((first.id, 1), (second.id, 1))   # Ben's bar dragged onto Anna's row: he continues her instead of Cleo
+        self.assertEqual([l.target for l in c.sequence.links], [(second.id, 1)]);self.assertEqual(self.saved()['links'][0]['target'], [second.id, 1])
+        c.view.unlinked.emit((second.id, 1))
+        self.assertNotIn('links', self.saved());self.assertEqual(c.sequence.links, []);self.assertEqual(c.sequence.dropped, [])
+
+    def test_person_menu_continues_after_and_unlinks(self):   # Continue after lists the previous block's people, a refused one disabled with the reason; Unlink when linked
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c = self.c
+        from mocap.tooltips import plain_tooltip
+        menu = c._person_menu(second.id, 2);self.addCleanup(menu.deleteLater)
+        self.assertEqual([a.text() for a in menu.actions()], ['Continue after'])
+        after = menu.actions()[0].menu().actions();self.assertEqual([(a.text(), a.isEnabled(), a.isChecked()) for a in after], [('Anna', True, False)])
+        after[0].trigger();self.assertEqual([(l.source, l.target) for l in c.sequence.links], [((first.id, 1), (second.id, 2))])
+        menu = c._person_menu(second.id, 2);self.addCleanup(menu.deleteLater)
+        self.assertEqual([a.text() for a in menu.actions()], ['Continue after', 'Unlink']);self.assertTrue(menu.actions()[0].menu().actions()[0].isChecked())
+        menu.actions()[1].trigger();self.assertEqual(c.sequence.links, []);self.assertNotIn('links', self.saved())
+        menu = c._person_menu(first.id, 1);self.addCleanup(menu.deleteLater)   # the first block has no block before it
+        self.assertFalse(menu.actions()[0].isEnabled())
+        root = Path(first.folders['exmr'])
+        for take in people_store.load_people(root)['people'][0]['takes']:shutil.rmtree(root/take['project'])   # Anna's take is gone
+        c.refresh();menu = c._person_menu(second.id, 1);self.addCleanup(menu.deleteLater)
+        anna = menu.actions()[0].menu().actions()[0]
+        self.assertFalse(anna.isEnabled());self.assertEqual(plain_tooltip(anna.toolTip()), 'Anna has no finished take in the earlier block.')
+        with mock.patch.object(c, '_person_menu') as built:c.view.menu_requested.emit(second.id, 1, QPoint(5, 5))
+        built.assert_called_once_with(second.id, 1);built.return_value.exec.assert_called_once_with(QPoint(5, 5))
+
+    def test_refused_link_says_why(self):                 # later person with two takes -> status is the 'several takes' text, no link
+        first, second = self.linkable(BEN, ((1, 0, 40), (1, 50, 90)));c, w = self.c, self.w
+        self.assertEqual(c.sequence.links, [])   # not linked by itself either
+        c.view.linked.emit((first.id, 1), (second.id, 1))
+        self.assertEqual(w.status.text(), 'Ben has several takes in this block. Fill their hidden ranges or reconstruct the block in one piece first.')
+        self.assertEqual(c.sequence.links, []);self.assertFalse(c.link((first.id, 1), (second.id, 1)));self.assertNotIn('links', self.saved())
+
+    def test_transition_dialog_applies_and_refuses(self): # set_transition(target, smooth, 2.0) -> False with the panel's limit text; (auto, 3.0) -> True, starts() moved by 3.0
+        first, second = self.linkable();c, w = self.c, self.w;target = (second.id, 1)
+        self.assertFalse(c.set_transition(target, 'smooth', 2.))
+        self.assertEqual(w.status.text(), 'Smooth join is limited to 30 frames; this range has 60.')
+        self.assertEqual((c.sequence.gap(second.id), c.sequence.link_into(*target).method), (1., 'smooth'))
+        self.assertFalse(c.set_transition(target, 'auto', 10.));self.assertEqual(w.status.text(), 'Automatic fill is limited to 290 frames; this range has 300.')
+        self.assertTrue(c.set_transition(target, 'auto', 3.))
+        self.assertEqual(c.sequence.starts(), [0., 6.]);self.assertEqual(c.sequence.link_into(*target).method, 'auto')
+        self.assertEqual((self.saved()['gaps'], self.saved()['links'][0]['method']), ({second.id:3.}, 'auto'))
+        seen = []
+        def step():
+            dialog = APP.activeModalWidget()
+            try:
+                combo, spin = dialog.findChild(QComboBox), dialog.findChild(QDoubleSpinBox)
+                note = next(label for label in dialog.findChildren(QLabel) if label.objectName() == 'muted')
+                ok = dialog.findChild(QDialogButtonBox).button(QDialogButtonBox.Ok)
+                seen.append((dialog.windowTitle(), [combo.itemText(i) for i in range(combo.count())], combo.currentData(), spin.value(),
+                             (spin.minimum(), spin.maximum(), spin.singleStep()), note.text()))
+                combo.setCurrentIndex(combo.findData('smooth'));spin.setValue(2.);seen.append(note.text())
+                ok.click();seen.append((dialog.isVisible(), note.text()))   # refused: the dialog stays with the reason
+                combo.setCurrentIndex(combo.findData('auto'));spin.setValue(2.5);seen.append(note.text());ok.click()
+            finally:
+                if dialog.isVisible():dialog.reject()
+        QTimer.singleShot(0, step);c.edit_transition(target)
+        self.assertEqual(seen, [('Transition', ['Smooth join', 'Automatic (Experimental)'], 'auto', 3., (.03, 9.6, .1), EXPERIMENTAL), '',
+                                (True, 'Smooth join is limited to 30 frames; this range has 60.'), EXPERIMENTAL])
+        self.assertEqual((c.sequence.gap(second.id), c.sequence.link_into(*target).method), (2.5, 'auto'));self.assertEqual(self.saved()['gaps'], {second.id:2.5})
+        with mock.patch.object(c, 'edit_transition') as edit:c.view.transition_clicked.emit(target)
+        edit.assert_called_once_with(target)
+
+    def test_find_person_again_drops_links(self):         # rewrite the later block's people.json with a new fingerprint -> refresh drops the link with the status text
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c, w = self.c, self.w;later = Path(second.folders['exmr'])
+        self.assertTrue(c.link((first.id, 1), (second.id, 2)));self.assertIn(second.id, c.sequence.decided)
+        self.mark(later, 'again');c.refresh()
+        self.assertEqual(c.sequence.links, []);self.assertEqual(w.status.text(), 'The people of two.mp4 changed, so their links were removed.')
+        self.assertNotIn(second.id, c.sequence.decided);self.assertNotIn('links', self.saved());self.assertEqual(c.sequence.dropped, [])
+        self.mark(later, 'once more', people=(1,));c.refresh()   # one person each now: linked by itself again
+        self.assertEqual([(l.source, l.target, l.prints) for l in c.sequence.links], [((first.id, 1), (second.id, 1), ('first', 'once more'))])
+        self.assertEqual(w.status.text(), 'Ben now continues Anna. Drag the bar to change it.')
+
+    def test_a_model_switch_keeps_links(self):            # another model's states judge nothing and link nothing; back on ExMR the row is there
+        first, second = self.linkable();c = self.c;before = c.sequence.to_dict()
+        self.pick('gvhmr');self.assertEqual(c.sequence.to_dict(), before)
+        self.pick('flowhmr');self.assertEqual(c.sequence.to_dict(), before)
+        self.pick('exmr');self.assertEqual(c.sequence.to_dict(), before);self.assertEqual(c.view.row_states, {(second.id, 1):'linked'})
+
+    def test_cut_drops_links(self):                       # cut of a linked block -> no links, sequence saved
+        first, second = self.linkable();c, w = self.c, self.w;self.assertEqual(len(c.sequence.links), 1)
+        w.slider.setValue(30)
+        with mock.patch.object(c, 'ask', return_value=True):c.cut()
+        self.assertEqual(self.ranges(), [(0., 1.), (1., 3.), (0., 3.)]);self.assertEqual(c.sequence.links, []);self.assertEqual(c.sequence.dropped, [])
+        self.assertEqual(self.saved(), c.sequence.to_dict());self.assertNotIn('links', self.saved());self.assertEqual(c.sequence.starts(), [0., 1., 3.])
+
+    def test_busy_refuses_linking(self):
+        self.pick('exmr');first, second = self.two();c, w = self.c, self.w;target = (second.id, 1);done = self.busy()
+        self.clip(first, ANNA, ((1, 0, 90),), 'first');self.clip(second, BEN, ((1, 0, 90),), 'second');c.refresh()
+        self.assertEqual(c.sequence.links, []);before = c.sequence.to_dict()   # nothing is linked by itself while a job runs
+        for refused in (lambda:c.link((first.id, 1), target), lambda:c.unlink(target), lambda:c.set_transition(target, 'auto', 2.)):
+            w.status.setText('');self.assertFalse(refused());self.assertEqual(w.status.text(), BUSY)
+        with mock.patch('mocap.sequence_ui.QMenu') as shown, mock.patch('mocap.sequence_ui.QDialog') as dialog:
+            w.status.setText('');c.person_menu(second.id, 1, QPoint());self.assertEqual(w.status.text(), BUSY)
+            w.status.setText('');c.edit_transition(target);self.assertEqual(w.status.text(), BUSY)
+        self.assertEqual((shown.call_count, dialog.call_count), (0, 0));self.assertEqual(c.sequence.to_dict(), before)
+        done();self.assertEqual([l.target for l in c.sequence.links], [target])   # made once the job ended
+        self.pick('gemx');w.status.setText('')
+        self.assertFalse(c.unlink(target));self.assertEqual(w.status.text(), OTHER);self.assertEqual(len(c.sequence.links), 1)
+
+    def test_review_and_auto_advance_still_work(self):    # the other session's window test still passes with a linked row present
+        first, second = self.linkable();controller, window = self.c, self.w
+        self.assertEqual(len(controller.sequence.links), 1)
+        controller.sequence.set_review(first.id, dict(start=.5, end=1., result=None))
+        controller.sequence.set_review(second.id, dict(start=1.5, end=2., result=None))
+        controller.back()
+        self.assertEqual(controller.review_bounds(), (15, 30))
+        self.assertEqual(self.range(), (0., 3.))
+        controller.auto_advance.setChecked(True)
+        window.slider.setValue(0)
+        window.toggle_play()
+        self.assertEqual(window.slider.value(), 15)
+        self.assertTrue(controller.advance_review())
+        self.assertTrue(pump(lambda:controller.current == second.id and window.project is not None and window.video_readable), window.status.text())
+        self.assertTrue(Path(window.project).resolve().is_relative_to(Path(second.folders['exmr']).resolve()))
+        self.assertEqual(controller.review_bounds(), (45, 60))
+        self.assertTrue(pump(lambda:window.timer.isActive(), 5))
+        window.stop_playback();self.assertEqual(len(controller.sequence.links), 1)
 
 
 class BuildTest(unittest.TestCase):

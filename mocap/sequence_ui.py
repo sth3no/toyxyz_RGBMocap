@@ -8,14 +8,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy,
+                               QFormLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from . import paths, people_store, sequence_state
+from . import paths, people_store, sequence_links, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
-from .sequence import Sequence
-from .sequence_view import SequenceView
+from .sequence import METHODS, Sequence
+from .sequence_view import METHOD_LABELS, SequenceView
+from .take_import_check import gap_frames
 from .theme import ui_px
 from .tooltips import tooltip_text
 
@@ -31,6 +32,9 @@ MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the
 TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a video at the end of the sequence.',
         'cut': 'Split the block under the playhead at the playhead.', 'delete': 'Remove the selected block from the sequence. Its files stay on disk.',
         'frame': 'Fit the whole sequence in the timeline.'}
+STALE = 'The people of {} changed, so their links were removed.'
+AUTOMATIC = '{} now continues {}. Drag the bar to change it.'
+EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
 
 
 def video_length(path):
@@ -63,6 +67,12 @@ def free_name():
 def same_file(a, b):
     try:return Path(a).resolve() == Path(b).resolve()
     except (OSError, TypeError):return False
+
+
+def transition_issue(method, seconds):
+    """Why `method` cannot fill a transition of `seconds`, in the Hidden ranges panel's words, or None."""
+    if method not in METHODS:return f'Unknown method: {method}'
+    return sequence_links.gap_issue(method, gap_frames(seconds))
 
 
 class Controller(QObject):
@@ -149,6 +159,10 @@ class Controller(QObject):
         self.view.moved.connect(self.move)
         self.view.resized.connect(self.resize)
         self.view.removed.connect(self.delete)
+        self.view.linked.connect(lambda source, target:self.link(source, target))
+        self.view.unlinked.connect(lambda target:self.unlink(target))
+        self.view.transition_clicked.connect(lambda target:self.edit_transition(target))
+        self.view.menu_requested.connect(lambda block_id, person, point:self.person_menu(block_id, person, point))
         self._appearance()
 
     def _appearance(self):
@@ -233,7 +247,12 @@ class Controller(QObject):
         except OSError as error:self.w.status.setText(f'Cannot save the sequence: {error}')
 
     def _changed(self):
-        self.refresh();self._save()
+        self._let_go();self.refresh();self._save()
+
+    def _let_go(self):
+        """The one place where links that left the sequence (`Sequence.dropped`: by an edit, Unlink, a relink or a changed
+        people list) are let go. Nothing is built on them on disk yet, so the list is only cleared."""
+        self.sequence.dropped.clear()
 
     def opened_video(self, path):
         """File > Open Video: a new sequence with that one block; the window has started loading it."""
@@ -674,12 +693,181 @@ class Controller(QObject):
     def _click_done(self):
         self._clicked = None
 
+    # People who continue across neighbouring blocks
+
+    def _states(self):
+        model = self.w.model_choice.currentData()
+        return {block.id:sequence_state.read(block, model) for block in self.sequence.blocks}
+
+    def _may_link(self):
+        """Linking is refused while a job runs and unavailable for a model the sequence does not support."""
+        if self.busy():
+            self.w.status.setText(BUSY);return False
+        if not self.supported():
+            self.w.status.setText(OTHER_MODEL);return False
+        return True
+
+    @staticmethod
+    def _name(states, ident):
+        state = states.get(ident[0])
+        return next((p.name for p in state.people if p.id == ident[1]), f'Person {ident[1]}') if state else f'Person {ident[1]}'
+
+    @staticmethod
+    def _prints(states, source, target):
+        """The people-list fingerprints of the earlier and the later block, which notice Find person again."""
+        return tuple(getattr(states.get(person[0]), 'fingerprint', None) for person in (source, target))
+
+    def link(self, source, target):
+        """`target` (later block id, person id) continues `source` (a person of the block before), replacing their other
+        links; False with the reason in the status bar."""
+        if not self._may_link():return False
+        sequence, source, target = self.sequence, tuple(source), tuple(target)
+        if not {source[0], target[0]} <= self._ids():return False
+        old = sequence.link_into(*target)
+        if old is not None and old.source == source:return True
+        states = self._states()
+        reason = sequence_links.refusal(sequence, states, source, target, self.w.model_choice.currentData())
+        if reason:
+            self.w.status.setText(reason);return False
+        before = list(sequence.links)
+        try:sequence.link(source, target, prints=self._prints(states, source, target))
+        except ValueError as error:
+            self.w.status.setText(str(error));return False
+        sequence.dropped.extend(link for link in before if not any(link is kept for kept in sequence.links))
+        self._changed()
+        return True
+
+    def unlink(self, target):
+        """Take the link into `target` away; its later block is not linked by itself again."""
+        if not self._may_link():return False
+        link = self.sequence.unlink(tuple(target))
+        if link is None:return False
+        self.sequence.dropped.append(link);self._changed()
+        return True
+
+    def set_transition(self, target, method, seconds):
+        """The method of the link into `target` and the transition length of its pair of blocks; False with the reason, and
+        nothing changed, when the method cannot fill that length."""
+        if not self._may_link():return False
+        target = tuple(target)
+        if target[0] not in self._ids() or self.sequence.link_into(*target) is None:return False
+        issue = transition_issue(method, seconds)
+        if issue:
+            self.w.status.setText(issue);return False
+        try:self.sequence.set_gap(target[0], seconds)
+        except ValueError as error:
+            self.w.status.setText(str(error));return False
+        self.sequence.set_method(target, method);self._changed()
+        return True
+
+    def edit_transition(self, target):
+        """The transition dialog of the link into `target`: Method and Length. OK applies them; a length the method cannot
+        fill keeps the dialog open with the reason."""
+        if not self._may_link():return
+        target = tuple(target);link = self.sequence.link_into(*target) if target[0] in self._ids() else None
+        if link is None:return
+        dialog = QDialog(self.w)
+        dialog.setWindowTitle('Transition')
+        form = QFormLayout(dialog)
+        method, length = QComboBox(), QDoubleSpinBox()
+        for key in METHODS:
+            method.addItem(METHOD_LABELS[key], key)
+        method.setCurrentIndex(method.findData(link.method))
+        length.setDecimals(2)
+        length.setRange(.03, 9.6)
+        length.setSingleStep(.1)
+        length.setSuffix(' s')
+        length.setValue(self.sequence.gap(target[0]))
+        note = QLabel()
+        note.setObjectName('muted')
+        note.setWordWrap(True)
+        note.setMinimumWidth(ui_px(280))
+        form.addRow('Method', method)
+        form.addRow('Length', length)
+        form.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        form.addRow(buttons)
+        def explain():
+            note.setText(EXPERIMENTAL if method.currentData() == 'auto' else '')
+        def apply():
+            issue = transition_issue(method.currentData(), length.value())
+            if issue:
+                note.setText(issue);return
+            self.set_transition(target, method.currentData(), length.value())   # a refusal of its own is in the status bar
+            dialog.accept()
+        method.currentIndexChanged.connect(explain)
+        length.valueChanged.connect(explain)
+        buttons.accepted.connect(apply)
+        buttons.rejected.connect(dialog.reject)
+        explain()
+        dialog.exec()
+        dialog.deleteLater()
+
+    def person_menu(self, block_id, person, point):
+        menu = self._person_menu(block_id, person)
+        if menu is not None:
+            menu.exec(point);menu.deleteLater()
+
+    def _person_menu(self, block_id, person):
+        """A person bar's menu: Continue after with the people of the block before (the one continued checked, a refused one
+        disabled with its reason as tooltip) and Unlink when linked; None while linking is refused."""
+        if not self._may_link() or block_id not in self._ids():return None
+        sequence, states, target = self.sequence, self._states(), (block_id, person)
+        current, i = sequence.link_into(*target), sequence.index(block_id)
+        menu = QMenu(self.w);menu.setToolTipsVisible(True)
+        after = QMenu('Continue after', menu);after.setToolTipsVisible(True);menu.addMenu(after)
+        if i:
+            earlier = sequence.blocks[i - 1]
+            for giver in states[earlier.id].people:
+                source = (earlier.id, giver.id);action = after.addAction(giver.name)
+                action.setCheckable(True);action.setChecked(current is not None and current.source == source)
+                reason = sequence_links.refusal(sequence, states, source, target, self.w.model_choice.currentData())
+                if reason:
+                    action.setEnabled(False);action.setToolTip(tooltip_text(reason))
+                action.triggered.connect(lambda *_, source=source:self.link(source, target))
+        after.setEnabled(not after.isEmpty())
+        if current is not None:menu.addAction('Unlink').triggered.connect(lambda *_:self.unlink(target))
+        return menu
+
+    def _keep_links(self, states, model):
+        """Drop the links a changed people list made stale (their later block may be linked by itself again), then make the
+        automatic links; never while a job runs. Saves and says so when anything changed."""
+        if self.busy():return
+        sequence, texts = self.sequence, []
+        gone = sequence_links.stale(sequence, states)
+        for link in gone:
+            sequence.links.remove(link);sequence.decided.discard(link.target[0]);sequence.dropped.append(link)
+        texts += [STALE.format(name) for name in dict.fromkeys(self._changed_video(link, states) for link in gone)]
+        if gone:self._let_go()
+        for source, target in sequence_links.automatic(sequence, states, model):
+            sequence.link(source, target, prints=self._prints(states, source, target))
+            texts.append(AUTOMATIC.format(self._name(states, target), self._name(states, source)))
+        if texts:
+            self._save();self.w.status.setText(' '.join(texts))
+
+    def _changed_video(self, link, states):
+        """The video name of the block whose people list no longer holds `link`, the later block first."""
+        ids = self._ids()
+        def changed(person, mark):
+            state = states.get(person[0])
+            return person[0] in ids and state is not None and state.fingerprint is not None and (
+                mark not in (None, state.fingerprint) or all(p.id != person[1] for p in state.people))
+        found = [person[0] for person, mark in ((link.target, link.prints[1]), (link.source, link.prints[0])) if changed(person, mark)]
+        found = found or [person[0] for person in (link.target, link.source) if person[0] in ids]
+        return Path(self.sequence.block(found[0]).video).name if found else 'a block'
+
     # State
 
     def refresh(self):
-        """Re-read every block's state; update the view, the buttons and the playhead."""
-        model = self.w.model_choice.currentData()
-        self.view.show_sequence(self.sequence, {block.id:sequence_state.read(block, model) for block in self.sequence.blocks})
+        """Re-read every block's state; keep the links (for the selected model, when the sequence supports it); update the
+        view, the buttons and the playhead."""
+        model, states = self.w.model_choice.currentData(), self._states()
+        rows = row_states = None
+        if self.supported():
+            self._keep_links(states, model)
+            rows = sequence_links.rows(self.sequence, states)
+            row_states = {link.target:sequence_links.status(self.sequence, states, link.target, model) for link in self.sequence.links}
+        self.view.show_sequence(self.sequence, states, rows, row_states)
         self.view.set_current(self.current if self.current in self._ids() else None)
         count = len(self.sequence.blocks)
         self.summary.setText(f'{count} block{"" if count == 1 else "s"} | {format_time(self.sequence.total())}')
