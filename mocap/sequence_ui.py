@@ -35,7 +35,10 @@ TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a v
         'frame': 'Fit the whole sequence in the timeline.',
         'join': 'Join every linked row that is not joined yet into one animation in the scene of its first block. The later blocks are not changed.'}
 STALE = 'The people of {} changed, so their links were removed.'
-AUTOMATIC = '{} now continues {}. Drag the bar to change it.'
+AUTOMATIC = '{} in {} now continues {} from {}. Drag the bar to change it.'
+LINKED = '{} now continues {}.'
+UNLINKED = '{} no longer continues {}.'
+TRANSITION = 'Transition set to {:g} s {}.'
 EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
 
 
@@ -766,6 +769,9 @@ class Controller(QObject):
         state = states.get(ident[0])
         return next((p.name for p in state.people if p.id == ident[1]), f'Person {ident[1]}') if state else f'Person {ident[1]}'
 
+    def _video(self, ident):
+        return Path(self.sequence.block(ident[0]).video).name
+
     @staticmethod
     def _prints(states, source, target):
         """The people-list fingerprints of the earlier and the later block, which notice Find person again."""
@@ -791,6 +797,7 @@ class Controller(QObject):
         except ValueError as error:
             self.w.status.setText(str(error));return False
         sequence.dropped.extend(link for link in before if not any(link is kept for kept in sequence.links))
+        self.w.status.setText(LINKED.format(self._name(states, target), self._name(states, source)))   # before the change, whose own news wins
         self._changed()
         return True
 
@@ -800,6 +807,8 @@ class Controller(QObject):
         if not self._may_link():return False
         link = self.sequence.link_into(*tuple(target))
         if link is None or not self._may_take_apart([link]):return False
+        states = self._states()
+        self.w.status.setText(UNLINKED.format(self._name(states, link.target), self._name(states, link.source)))
         self.sequence.unlink(tuple(target));self.sequence.dropped.append(link);self._changed()
         return True
 
@@ -881,7 +890,8 @@ class Controller(QObject):
         try:self.sequence.set_gap(target[0], seconds)
         except ValueError as error:
             self.w.status.setText(str(error));return False
-        self.sequence.set_method(target, method);self._changed()
+        self.sequence.set_method(target, method)
+        self.w.status.setText(TRANSITION.format(round(float(seconds), 2), METHOD_LABELS[method]));self._changed()
         return True
 
     def edit_transition(self, target):
@@ -898,7 +908,7 @@ class Controller(QObject):
             method.addItem(METHOD_LABELS[key], key)
         method.setCurrentIndex(method.findData(link.method))
         length.setDecimals(2)
-        length.setRange(.03, 9.6)
+        length.setRange(.04, 9.6)   # one frame (1/30 s) as Sequence.set_gap accepts it, in two decimals
         length.setSingleStep(.1)
         length.setSuffix(' s')
         length.setValue(self.sequence.gap(target[0]))
@@ -920,7 +930,8 @@ class Controller(QObject):
             issue = transition_issue(method.currentData(), length.value())
             if issue:
                 say(issue);return
-            self.set_transition(target, method.currentData(), length.value())   # a refusal of its own is in the status bar
+            if not self.set_transition(target, method.currentData(), length.value()):
+                say(self.w.status.text());return   # its own refusal stays in the dialog too
             dialog.accept()
         method.currentIndexChanged.connect(explain)
         length.valueChanged.connect(explain)
@@ -974,7 +985,7 @@ class Controller(QObject):
         if gone:self._let_go()
         for source, target in sequence_links.automatic(sequence, states, model):
             sequence.link(source, target, prints=self._prints(states, source, target))
-            texts.append(AUTOMATIC.format(self._name(states, target), self._name(states, source)))
+            texts.append(AUTOMATIC.format(self._name(states, target), self._video(target), self._name(states, source), self._video(source)))
         if texts:
             self._save();self.w.status.setText(' '.join(texts))
 

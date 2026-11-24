@@ -18,6 +18,7 @@ SEVERAL = '{} has several takes in this block. Reconstruct the block in one piec
 FILLED = "{}'s take contains generated frames, which cannot be joined again."
 NOT_FINISHED = "{}'s take is not finished."
 NO_LIST = 'Run Find person in {} first. A block reconstructed without it has no person to continue.'
+HTD = "{}'s result uses HTD Refine, which cannot be joined. Reconstruct the block with HTD Refine off."
 
 
 def _person(state, ident) -> sequence_state.Person:
@@ -49,7 +50,8 @@ def row_count(rows) -> int:
 def refusal(sequence, states, source, target, model) -> str | None:
     """Why `target` (later block id, person id) cannot continue `source` (earlier block id, person id) for `model`, or None. The join
     continues the earlier person's last take with the later person's one whole take in use. The earlier block receives the
-    join, so it needs a people list (the import takes a clip folder without one as its source)."""
+    join, so it needs a people list (the import takes a clip folder without one as its source), and its Fill hidden ranges
+    must be able to join both people's results (HTD Refine, ExMR without Static Camera are refused here, not at Join)."""
     if model == 'flowhmr':return FLOWHMR
     early, late = states.get(source[0]), states.get(target[0])
     if any(state is None or state.kind in ('missing', 'untracked') for state in (early, late)):return SAME_MODEL
@@ -61,6 +63,24 @@ def refusal(sequence, states, source, target, model) -> str | None:
     if len(taker.takes) > 1:return SEVERAL.format(taker.name)
     if taker.takes and taker.takes[0].filled:return FILLED.format(taker.name)
     if not taker.takes or not taker.takes[0].ready:return NOT_FINISHED.format(taker.name)
+    return _fill_issue(sequence, model, ((source, giver.name), (target, taker.name)))
+
+
+def _fill_issue(sequence, model, people) -> str | None:
+    """The Hidden ranges panel's reason (hidden_ranges_state.disabled_reason) why Fill hidden ranges in the receiving scene
+    (the first person's block) cannot join the result each take in use of `people` ((block id, person id), name) selects."""
+    from .hidden_ranges_state import UNSUPPORTED, disabled_reason
+    static = False
+    if model == 'exmr':   # the receiving scene's own Static Camera, as the panel reads it
+        from .exmr_options import saved
+        try:static = saved(Path(sequence.block(people[0][0][0]).folders[model]))['static_camera']
+        except (OSError, ValueError, KeyError):pass
+    for (block_id, ident), name in people:
+        try:folders = _in_use(Path(sequence.block(block_id).folders[model]), ident)
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):folders = []
+        for folder in folders:
+            reason = disabled_reason(model, static, sequence_state.selected_kind(folder), lambda:True)
+            if reason:return HTD.format(name) if reason == UNSUPPORTED else reason
     return None
 
 

@@ -24,6 +24,15 @@ GPU was used.
   in-process for real and their events sent through the window's handler, and
   the export job writing the bone preview it leaves. The whole `tests` folder
   was not run in this step.
+- **Final fix wave** (same conditions): HTD Refine and ExMR without Static
+  Camera refused when linking, the copy recorded while its export still runs,
+  link drops off the rows ignored, the Transition dialog's least length, the
+  status texts, the automatic-link mark cleared by edits that clear results, and
+  Join's people-list check before opening the block. One covering run of the
+  same modules after the change: `test_sequence` 22, `test_sequence_state` 15,
+  `test_sequence_links` 11, `test_sequence_view` 30, `test_sequence_window` 69,
+  `test_sequence_join` 29, `test_tutorial_window` 36: **212 run, 212 passed**
+  in 209 s. The whole `tests` folder was not run in this step.
 - **Pictures looked at** (records, not in the package): the real window
   rendered offscreen at 1440×880, dark and light, with two blocks built as
   `test_sequence_join` builds them (Anna and Dan in the first video, Ben and

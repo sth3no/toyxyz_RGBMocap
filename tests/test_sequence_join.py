@@ -491,6 +491,31 @@ class JoinTest(unittest.TestCase):
         self.assertEqual(len(self.person()['takes']), 2)
         c._changed();self.assertEqual(c.sequence.dropped, []);self.assertEqual(self.person()['takes'], [dict(project=TAKE.format(1), first=0, end=90)])
 
+    # Final fix wave
+
+    def test_a_copy_is_recorded_while_its_export_runs(self):   # the import wrote its take, the batch has not ended: a tick records it and saves; the batch then fails: Join again leaves one copy
+        from mocap import take_import
+        first, second = self.linked();c, w = self.c, self.w;target = (second.id, 1);copy = 'p1/takes/000000120_000000210_import_v1'
+        self.join();args = self.wait_job('take_import')
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):take_import.main(args)   # the worker's take_imported effect
+        for line in out.getvalue().splitlines():
+            event = json.loads(line[len('@@MOCAP@@'):]) if line.startswith('@@MOCAP@@') else None
+            if event and event['type'] not in ('progress', 'complete'):w.handle_event(event)
+        self.assertEqual(self.person()['takes'][-1]['project'], copy);self.assertTrue(w.busy)   # the batch has not ended
+        c.joiner.tick()
+        self.assertEqual(c.sequence.links[0].built['copy'], copy);self.assertEqual(self.saved()['links'][0]['built']['copy'], copy)
+        self.fail_job();self.assertTrue(pump(lambda:c.joiner is None))
+        self.assertEqual(w.status.text(), 'Join stopped: Processing failed. The GPU ran out of memory.')
+        self.join();self.play_all();self.assertEqual(self.status(target), 'joined')
+        self.assertEqual(len([t for t in self.person()['takes'] if '_import_' in t['project']]), 1, self.person()['takes'])
+
+    def test_an_old_link_into_a_block_without_a_people_list_says_why(self):
+        first, second = self.blocks(None, ((1, 'Ben'),));c, w = self.c, self.w
+        c.sequence.link((first.id, 1), (second.id, 1));self.join();self.assertTrue(pump(lambda:c.joiner is None))
+        self.assertEqual(w.status.text(), 'Join stopped: Run Find person in one.mp4 first. A block reconstructed without it has no person to continue.')
+        self.assertEqual(self.jobs, [])
+
     def test_a_double_click_while_a_job_runs_opens_the_loaded_block(self):
         first, second = self.linked();c, w = self.c, self.w
         self.join();self.play_all();c.back();self.assertFalse(c.at_clip_level());w.busy = True

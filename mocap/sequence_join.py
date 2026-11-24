@@ -158,7 +158,9 @@ class Runner(QObject):
         w = self.w
         if self.phase == 'running':
             outcome = self.outcome()
-            if outcome is None:return
+            if outcome is None:
+                if self.stage == 'importing':self.watch()
+                return
             self.phase = 'next'
             if not getattr(self, 'ended_'+self.stage)(*outcome):return
         if self.phase != 'next':return
@@ -195,6 +197,7 @@ class Runner(QObject):
         states = c._states();self.name = c._name(states, chain[0])
         if folder is None:return self.stop(NOT_LOADED)
         self.root, self.ident = Path(folder), chain[0][1]
+        if not (self.root/'people.json').is_file():return self.stop(sequence_links.NO_LIST.format(Path(first.video).name))   # an old link into it
         if not c._open(first.id) or not self.ours():return self.stop(NOT_LOADED)
         reason = self.refusal(*self.judged(states, first.id))
         if reason:return self.stop(reason)
@@ -250,19 +253,33 @@ class Runner(QObject):
         reason = take_import_check.refusal(self.root, person, self.source, self.frames, w.active_result)
         if reason:return self.stop(reason)
         self.before, self.stamp = {t['project'] for t in person.get('takes') or []}, sequence_links.result_stamp(self.source)
-        self.mark = people_store.load_people(self.root).get('fingerprint')
+        self.mark, self.recorded = people_store.load_people(self.root).get('fingerprint'), False
         if not w.start_take_import(self.ident, self.source, self.frames):return self.stop(w.status.text() or NOT_STARTED)
         self.run(IMPORTING.format(self.name, self.i+1, len(self.links)))
 
-    def ended_importing(self, failed, cancelled, status):
-        """Records the copy on its link as soon as the import wrote it, whatever became of the export after it."""
-        link = self.links[self.i]
+    def record(self) -> bool:
+        """Records the copy on its link and saves the sequence file as soon as the import wrote it into people.json, so a
+        close, crash or power loss during the export after it leaves no copy the sequence does not know. True once
+        recorded."""
+        if self.recorded:return True
         new = [t for t in self.person().get('takes') or [] if t['project'] not in self.before]
-        if new:
-            link.built = dict(copy=new[-1]['project'], take=_relative(self.source, self.later), stamp=self.stamp, gap=self.frames,
-                              method=link.method, root=str(self.root.resolve()), person=self.ident, fingerprint=self.mark,
-                              **({'joins':self.own} if self.i == 0 else {}))
-            self.c._save()
+        if not new:return False
+        link = self.links[self.i]
+        link.built = dict(copy=new[-1]['project'], take=_relative(self.source, self.later), stamp=self.stamp, gap=self.frames,
+                          method=link.method, root=str(self.root.resolve()), person=self.ident, fingerprint=self.mark,
+                          **({'joins':self.own} if self.i == 0 else {}))
+        self.c._save();self.recorded = True
+        return True
+
+    def watch(self):
+        """While the import batch runs: record the copy once it is in people.json; a list being written is read next tick."""
+        try:self.record()
+        except Exception:pass
+
+    def ended_importing(self, failed, cancelled, status):
+        """Records the copy on its link once the import wrote it (unless a tick already did), whatever became of the export
+        after it."""
+        new = self.record()
         if cancelled or failed or not new:
             self.stop(CANCELLED if cancelled else status if failed else NOT_RECORDED);return False
         self.i += 1

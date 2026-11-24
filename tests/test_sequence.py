@@ -211,6 +211,19 @@ class SequenceTests(unittest.TestCase):
         s, a, b, c = _three(); s.model = 'exmr'; s.link((a.id, 1), (b.id, 7)); s.model = 'gvhmr'; s.link((a.id, 1), (b.id, 7))
         s.delete(b.id); self.assertEqual((len(s.dropped), s.decided), (2, set())); s.model = 'exmr'; self.assertEqual(s.decided, set())
 
+    def test_edits_that_clear_results_undecide_the_block_and_the_next(self):   # cut, resize, remember with a new range: every model's mark of that block and the one after goes
+        def decided():
+            s, a, b, c = _three()
+            for model in ('exmr', 'gvhmr'):s._decided[model] = {a.id, b.id, c.id}
+            return s, a, b, c
+        marks = lambda s:{model:ids for model, ids in s._decided.items() if ids}
+        s, a, b, c = decided(); s.cut(b.id, 5.0); self.assertEqual(marks(s), {'exmr': {a.id}, 'gvhmr': {a.id}})
+        s, a, b, c = decided(); s.resize(b.id, 1.0, 5.0); self.assertEqual(marks(s), {'exmr': {a.id}, 'gvhmr': {a.id}})
+        s, a, b, c = decided(); s.resize(c.id, 1.0, 5.0); self.assertEqual(marks(s), {'exmr': {a.id, b.id}, 'gvhmr': {a.id, b.id}})   # the last block
+        s, a, b, c = decided(); s.remember(a.id, 'exmr', 'F', 1.0, 10.0); self.assertEqual(marks(s), {'exmr': {c.id}, 'gvhmr': {c.id}})
+        s, a, b, c = decided(); s.resize(b.id, b.start, b.end); s.remember(b.id, 'exmr', 'F', b.start, b.end)   # the same range: kept
+        self.assertEqual(marks(s), {'exmr': {a.id, b.id, c.id}, 'gvhmr': {a.id, b.id, c.id}})
+
     def test_links_round_trip_and_old_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / 'seq.json'

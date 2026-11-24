@@ -75,14 +75,15 @@ class SequenceView(QWidget):
     def editable(self, value):
         self._editable = bool(value)
         if not self._editable and self._press and self._press['mode'] in ('start', 'end', 'body', 'person', 'piece'):
-            self._press = None
+            self._press = None;self.setCursor(Qt.ArrowCursor)
         self.update()
 
     # What is shown
 
     def show_sequence(self, sequence, states, rows=None, row_states=None):
         """`rows`: sequence_links.rows, the row of every (block id, person id); None puts each person at its index.
-        `row_states`: link target -> 'linked' | 'joined' | 'out of date'."""
+        `row_states`: link target -> 'linked' | 'joined' | 'out of date'. A gesture in progress ends."""
+        if self._press is not None:self.setCursor(Qt.ArrowCursor)
         self.sequence, self.states, self._press = sequence, dict(states), None
         self.rows, self.row_states = (None if rows is None else dict(rows)), dict(row_states or {})
         if self.view_span is not None and self.view_span >= .999 * self.total():
@@ -219,18 +220,24 @@ class SequenceView(QWidget):
             return None
         return next((self.row_states[t] for t in chain[1:] if t in self.row_states), 'linked')
 
-    def _drop(self, press, y):
-        """What dropping the dragged person at y does: ('link', source), ('unlink', None) or None."""
-        if y < self.TRACK_TOP + self.TRACK_HEIGHT:
+    def _drop(self, press, point):
+        """What dropping the dragged person at `point` does: ('link', source) on a row of a person of the block before,
+        ('unlink', None) on a drawn row of its own block that holds nobody of the block before, else None (outside the
+        widget, in the ruler or the Video row, below the last row)."""
+        x, y = point.x(), point.y()
+        if not (0 <= x <= self.width() and self.TRACK_TOP + self.TRACK_HEIGHT <= y <= self.height()):
             return None
         row, block, person = int((y - self.TRACK_TOP) // self.TRACK_HEIGHT) - 1, press['block'], press['person']
+        if row >= self._row_count():
+            return None
         i = self.sequence.index(block.id)
         before = self._person_in_row(self.sequence.blocks[i - 1], row) if i else None
         link = self.sequence.link_into(block.id, person.id)
         if before is not None:
             source = (self.sequence.blocks[i - 1].id, before.id)
             return None if link is not None and link.source == source else ('link', source)
-        return ('unlink', None) if link is not None else None
+        own = next((rect for b, _, rect in self._layout() if b.id == block.id), None)
+        return ('unlink', None) if link is not None and own is not None and own.left() <= x <= own.right() else None
 
     def _block_at(self, x):
         """The block whose drawn rectangle holds x; the narrowest wins, so a tiny block beside a long one stays clickable."""
@@ -335,7 +342,7 @@ class SequenceView(QWidget):
                 self.setCursor(Qt.ClosedHandCursor)
             elif press['mode'] == 'person' and (press['dragged'] or abs(point.y() - press['y']) > ui_px(8)):
                 # A vertical drag of a person's bar links it; it never moves the block.
-                press.update(dragged=True, dx=dx, dy=point.y() - press['y'], drop=self._drop(press, point.y()))
+                press.update(dragged=True, dx=dx, dy=point.y() - press['y'], drop=self._drop(press, point))
                 self.setCursor(Qt.ClosedHandCursor)
             self.update()
         event.accept()
@@ -355,7 +362,7 @@ class SequenceView(QWidget):
                 to = self._drop_index(block.id, event.position().x())
                 if to != self.sequence.index(block.id):self.moved.emit(block.id, to)
             elif press['mode'] == 'person' and press['dragged']:
-                drop = self._drop(press, event.position().y())
+                drop = self._drop(press, event.position())
                 if drop and drop[0] == 'link':self.linked.emit(drop[1], (block.id, press['person'].id))
                 elif drop:self.unlinked.emit((block.id, press['person'].id))
             elif press['mode'] == 'piece':

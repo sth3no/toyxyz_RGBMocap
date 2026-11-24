@@ -297,6 +297,7 @@ class LinkViewTest(unittest.TestCase):
         self.assertEqual((self.signals['unlinked'], self.signals['selected']), ([], []))
 
     def test_drag_linked_bar_away_unlinks(self):
+        self.states[self.b.id].people.append(person(4, (0, 300)))   # b's third row: no person of a
         self.link((self.a.id, 2), (self.b.id, 3))
         start = self.view.person_rect(self.b.id, 3).center()
         drag(self.view, start, start + QPoint(0, self.view.TRACK_HEIGHT))   # row 2: no person of a
@@ -305,6 +306,28 @@ class LinkViewTest(unittest.TestCase):
         self.assertEqual((self.signals['linked'], len(self.signals['unlinked'])), ([], 1))
         drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 1).center().y()))
         self.assertEqual(self.signals['linked'], [((self.a.id, 1), (self.b.id, 3))])
+
+    def test_a_drag_released_off_the_rows_does_nothing(self):   # below the last row, in the ruler or the Video row, outside the widget, beside the block: no link, no unlink
+        self.link((self.a.id, 2), (self.b.id, 3))
+        start, view = self.view.person_rect(self.b.id, 3).center(), self.view
+        for end in (start + QPoint(0, view.TRACK_HEIGHT), QPoint(start.x(), view.height() - 2), QPoint(start.x(), 5),
+                    QPoint(start.x(), view.block_rect(self.b.id).center().y()), QPoint(start.x(), view.height() + 40),
+                    QPoint(view.width() + 40, view.person_rect(self.a.id, 1).center().y()), QPoint(-40, view.person_rect(self.a.id, 1).center().y()),
+                    QPoint(view.block_rect(self.a.id).center().x(), start.y() + view.TRACK_HEIGHT)):
+            drag(view, start, end)
+            self.assertEqual((self.signals['linked'], self.signals['unlinked']), ([], []), end)
+        self.states[self.b.id].people.append(person(4, (0, 300)));self.show()
+        drag(view, start, QPoint(view.block_rect(self.a.id).center().x(), start.y() + view.TRACK_HEIGHT))   # a real row, but under the block before
+        self.assertEqual(self.signals['unlinked'], [])
+        drag(view, start, start + QPoint(0, view.TRACK_HEIGHT));self.assertEqual(self.signals['unlinked'], [((self.b.id, 3),)])
+
+    def test_a_refresh_during_a_drag_resets_the_cursor(self):
+        start = self.view.person_rect(self.b.id, 3).center()
+        QTest.mousePress(self.view, Qt.LeftButton, Qt.NoModifier, start)
+        for dy in (5, 15, 25):QTest.mouseMove(self.view, start + QPoint(0, dy))
+        self.assertEqual(self.view.cursor().shape(), Qt.ClosedHandCursor)
+        self.show();self.assertEqual(self.view.cursor().shape(), Qt.ArrowCursor);self.assertIsNone(self.view._press)
+        QTest.mouseRelease(self.view, Qt.LeftButton, Qt.NoModifier, start + QPoint(0, 25))
 
     def test_vertical_drag_never_moves_a_block(self):
         start = self.view.person_rect(self.b.id, 3).center()

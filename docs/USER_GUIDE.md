@@ -1205,8 +1205,11 @@ and ExMR.
 **Linking.**
 
 - Drag a person's bar up or down onto the row of a person of the block before:
-  the person then continues that person. Dropping a linked bar on a row where
-  the block before has nobody unlinks it.
+  the person then continues that person. Dropping a linked bar on a row of its
+  own block where the block before has nobody unlinks it. A drop anywhere else
+  (the ruler, the Video row, below the last row, outside the timeline) changes
+  nothing. The status bar says what changed, for example `Ben now continues
+  Anna.` or `Ben no longer continues Anna.`
 - Right-click a person's bar. **Continue after** lists the people of the block
   before: the one continued is checked, and one that cannot be continued is
   greyed out with the reason as its tooltip. **Unlink** takes the link away.
@@ -1214,8 +1217,11 @@ and ExMR.
   joined animation** and **Export joined animation...**.
 - The app links by itself when two neighbouring blocks both read `tracked`
   with exactly one person each and neither person is linked. It does this once
-  for each pair and says so, for example `Ben now continues Anna. Drag the bar
-  to change it.` After you unlink them it does not link them again.
+  for each pair and says so, for example `Ben in two.mp4 now continues Anna
+  from one.mp4. Drag the bar to change it.` After you unlink them it does not
+  link them again, until a cut or a changed range clears the results of one of
+  the two blocks; once it is tracked again, the pair may be linked by itself
+  again.
 - **Find person** run again in a block makes a new people list. The links of
   that block are then removed (`The people of two.mp4 changed, so their links
   were removed.`), and the automatic link may be made again.
@@ -1240,6 +1246,8 @@ tooltip) says why:
 | `Anna's take is not finished.` | The earlier person's last take, or the later person's take, is not finished. |
 | `Ben has several takes in this block. Reconstruct the block in one piece, or join parts that share frames with Fill hidden ranges, first.` | The later person must have one take in use. A take joined from parts that share frames counts as one. |
 | `Ben's take contains generated frames, which cannot be joined again.` | The later person's take is a joined take with filled hidden ranges. |
+| `Ben's result uses HTD Refine, which cannot be joined. Reconstruct the block with HTD Refine off.` | The result a take in use selects, in either block, was made with GVHMR's **HTD Refine** (on by default). [Hidden ranges](#hidden-ranges) cannot join it, and switching HTD Refine off in the window does not change a saved result. |
+| `Hidden ranges need a fixed camera in this version.` | The earlier block's scene is ExMR without **Static Camera**, so Fill hidden ranges cannot join there. |
 
 **Transition.** Between the bars of a linked row a hatched piece shows the
 transition's length and method, for example `1.0 s Smooth join` (only the
@@ -1253,9 +1261,11 @@ the piece to change it in the **Transition** dialog:
   the methods of [Hidden ranges](#hidden-ranges). For Automatic the dialog
   says `Experimental: the generated motion is plausible, not what the person
   did.` Automatic needs Kimodo to be set up, as in Hidden ranges.
-- **Length** in seconds, at least one frame. **OK** with a length the method
-  cannot fill keeps the dialog open with the reason, for example `Smooth join
-  is limited to 30 frames; this range has 60.`
+- **Length** in seconds, at least one frame (0.04 s in the dialog's two
+  decimals). **OK** with a length the method cannot fill keeps the dialog open
+  with the reason, for example `Smooth join is limited to 30 frames; this
+  range has 60.` After OK the status bar says, for example, `Transition set to
+  2.5 s Automatic (Experimental).`
 
 The method belongs to the link; a new link gets **Smooth join**. The length
 belongs to the pair of blocks, 1.0 s for a new pair: every link between the

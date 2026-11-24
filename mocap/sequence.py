@@ -142,7 +142,7 @@ class Sequence:
         if seconds - block.start < MIN_SECONDS or block.end - seconds < MIN_SECONDS:
             raise ValueError(_SHORT)
         second = Block(uuid.uuid4().hex[:12], block.video, float(seconds), block.end, block.length)
-        block.end = float(seconds); block.folders = {}; block.review = None
+        block.end = float(seconds); block.folders = {}; block.review = None; self._undecide(i)
         self.blocks.insert(i + 1, second)
         self._drop(self.links_touching(id))
         return block, second
@@ -169,6 +169,7 @@ class Sequence:
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
             block.review = None
+            self._undecide(self.index(id))
             self._drop(self.links_touching(id))
         block.start, block.end = start, end
 
@@ -177,6 +178,7 @@ class Sequence:
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
             block.review = None
+            self._undecide(self.index(id))
             self._drop(self.links_touching(id))
         block.start, block.end = float(start), float(end)
         block.folders[model] = str(folder)
@@ -243,6 +245,11 @@ class Sequence:
         if link is None:
             raise KeyError(target)
         link.method = _method(method)
+
+    def _undecide(self, i) -> None:
+        """Block i lost its results: every model may link it, and the block after it, by itself again once tracked."""
+        for ids in self._decided.values():
+            ids.difference_update(block.id for block in self.blocks[i:i + 2])
 
     def _neighbours(self, link) -> bool:
         ids = [block.id for block in self.blocks]

@@ -82,6 +82,24 @@ class LinksTest(unittest.TestCase):
         self.assertEqual(self.refusal((s,1),(b,1)),'Run Find person in video.mp4 first. A block reconstructed without it has no person to continue.')
         self.sequence.links=[];self.sequence.blocks=[self.sequence.block(i) for i in (s,b)]
         self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[])
+    def test_a_result_the_fill_cannot_join_is_refused(self):   # the Hidden ranges panel's rule over the result each take selects: HTD Refine in either block, ExMR without Static Camera in the receiving scene
+        a=self.clip('a',ANNA,(1,0,300)).id;b=self.clip('b',ANNA,(1,0,300)).id;take='p1/takes/000000000_000000300_scene_v1'
+        self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[((a,1),(b,1))])
+        def result(name,kind):
+            d=self.base/name/take;m=json.loads((d/'project.json').read_text(encoding='utf-8'));m['pipeline']['result']=kind
+            (d/'project.json').write_text(json.dumps(m),encoding='utf-8');write_result(d,kind,b'result '+kind.encode())
+        text="Anna's result uses HTD Refine, which cannot be joined. Reconstruct the block with HTD Refine off."
+        for name,kind in (('b','refined'),('a','footmr_refined')):
+            result(name,kind);self.assertEqual(self.states()[a if name=='a' else b].kind,'tracked')
+            self.assertEqual(self.refusal((a,1),(b,1)),text);self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[])
+            result(name,'footmr_initial' if name=='b' else 'initial')
+        self.assertIsNone(self.refusal((a,1),(b,1)))   # a FootMR result without HTD Refine joins
+        def static(name,on):
+            path=self.base/name/'project.json';m=json.loads(path.read_text(encoding='utf-8'));m['exmr_options']['static_camera']=on
+            path.write_text(json.dumps(m),encoding='utf-8')
+        static('b',False);self.assertIsNone(self.refusal((a,1),(b,1)))   # the later block is only the source of the import
+        static('a',False);self.assertEqual(self.refusal((a,1),(b,1)),'Hidden ranges need a fixed camera in this version.')
+        self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[])
     def test_overlap_joined_take_can_link(self):
         a=self.clip('a',ANNA,(1,0,300)).id;b=self.joined('b')
         root=Path(b.folders['exmr']);overlap(root)
