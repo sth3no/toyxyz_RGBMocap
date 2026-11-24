@@ -95,6 +95,37 @@ gap.
 - Not run: a real project or video, the export stage, real models, Automatic
   with Kimodo, the dialog on a real screen.
 
+### Fixes after a review of the take import (2026-11-24)
+
+- Removed: a GVHMR take into an ExMR scene (and ExMR into GVHMR) is now
+  refused, because ExMR puts its world's lowest vertex at y = 0 (`put_on_ground`
+  in `third_party/ExMR/exmr/model/exmr.py`) while GVHMR's saved world starts
+  its translation at 0 (`rollout_vel` in `hmr_global.py`, no ground shift), and
+  the import keeps its own height. The "no finger motion" Console line and its
+  test went with it; the GVHMR-into-ExMR test class (12 tests, all of
+  `ImportWriteTest` again) became two refusal tests, one per direction.
+- Added tests in `tests/test_take_import.py` (51 now): a take with filled
+  frames (`fill.json` with hidden ranges, or unreadable) is refused and not
+  listed, a joined take of parts with only shared frames is listed as
+  `joined`; another trimmed range of the same video under the scene root is
+  not "already in this scene" and imports; a chosen model folder lists its
+  `clips`; reused padded media call `ensure_preview` again; a receiver whose
+  last take is the second of the join chain keeps heading and floor position
+  across the seam (1e-9) and the import moves rigidly; on disk with the
+  receiver's shaped pelvis (betas 0.1), every imported frame pairs to the
+  receiver's last-frame pairing to 1e-6 and the pelvis height equals the
+  source's plus the rest-leg lift to 1e-6 (this check failed when the shape
+  swap was changed to use the receiver's pelvis; the camera pairing alone is
+  the same for any pelvis, because a rigid change applied about one pelvis
+  pairs the same about any other); `SCENE_MODEL`, `LAST` and, for ExMR,
+  `STATIC` refused on disk with the scene byte-identical (each failed when
+  its check was removed).
+- `tests/test_take_import_window.py` (6): the dialog's hint now ends with
+  "Automatic motion is plausible, not what the person did."
+- The whole `tests` folder in one process: 870 tests passed, 17 skipped, none
+  failed.
+- Not run: the dialog on a real screen, a real project, real models.
+
 ## Typed trim range (2026-11-24)
 
 **From**, **To** and **Set** beside the timeline's Clip label trim the
@@ -138,6 +169,12 @@ opens; the status bar's tooltip holds its whole text.
   2.0 GiB, svchost 1.6 GiB, T3 Code (Beta) 1.3 GiB, vmmemWSL 1.2 GiB." in
   under 0.3 s for the whole Python start.
 - Not run: a real low-memory stop, the message on a real screen.
+- After a review (same day): below 1 GiB of Windows allocation headroom the
+  note adds ", but Windows can allocate only 0.4 GiB more" when RAM is above
+  the reserve (", and" otherwise). `tests/test_memory_note.py` (15) checks
+  both wordings, no clause at 8 GiB headroom, and `collect()` with the
+  headroom reading replaced; the whole folder ran as above (870 passed,
+  17 skipped). Not run: a real stop with a full page file.
 
 ## Auto Setup (2026-11-23)
 
