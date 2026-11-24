@@ -1,6 +1,6 @@
 """Which person of a block can continue a person of the block before, the rows, the automatic link, stale links and a
 linked row's state on disk, from synthetic clip folders built as tests/test_sequence_state.py builds them."""
-import json,tempfile,unittest
+import json,shutil,tempfile,unittest
 from pathlib import Path
 
 from mocap import people_store as ps
@@ -47,6 +47,12 @@ class LinksTest(unittest.TestCase):
         self.sequence.link((a,2),(b,3));rows=links.rows(self.sequence,self.states())
         self.assertEqual(rows,{(a,1):0,(a,2):1,(b,3):1,(b,1):0,(b,2):2})
         self.assertEqual(links.row_count(rows),3);self.assertEqual(links.row_count({}),0)
+    def test_rows_of_two_links_into_one_block_and_a_chain_of_three(self):
+        a=self.clip('a',TWO).id;b=self.clip('b',THREE).id;c=self.clip('c',TWO).id
+        self.sequence.link((a,1),(b,3));self.sequence.link((a,2),(b,1));self.sequence.link((b,3),(c,2))
+        rows=links.rows(self.sequence,self.states())
+        self.assertEqual(rows,{(a,1):0,(a,2):1,(b,3):0,(b,1):1,(b,2):2,(c,2):0,(c,1):1})
+        self.assertEqual(links.row_count(rows),3)
     def test_refusals(self):
         a=self.clip('a',ANNA,(1,0,300)).id;b=self.add().id   # the later block has no folder for the model
         self.assertEqual(self.refusal((a,1),(b,1)),'Both blocks must be tracked with the same model.')
@@ -91,14 +97,21 @@ class LinksTest(unittest.TestCase):
         self.assertEqual(links.automatic(self.sequence,self.states(),'exmr'),[])
     def test_stale_links(self):
         a=self.clip('a',ANNA,(1,0,300)).id;b=self.clip('b',TWO,(1,0,300),(2,0,100)).id
-        good=self.sequence.link((a,1),(b,1));self.assertEqual(links.stale(self.sequence,self.states()),[])
-        missing=Link((a,1),(b,5));self.sequence.links.append(missing)   # person missing from the state
-        self.assertEqual(links.stale(self.sequence,self.states()),[missing])
-        state=ps.load_people(self.base/'b');state['fingerprint']='old';ps.save_people(self.base/'b',state)
-        self.sequence.links.remove(missing);good.prints=(None,'old');self.assertEqual(links.stale(self.sequence,self.states()),[])
+        good=self.sequence.link((a,1),(b,1),prints=(None,'old'));missing=Link((a,1),(b,5));self.sequence.links.append(missing)
+        self.assertEqual(links.stale(self.sequence,self.states()),[])   # lists without a fingerprint are not judged
+        for name,mark in(('a','first'),('b','old')):
+            state=ps.load_people(self.base/name);state['fingerprint']=mark;ps.save_people(self.base/name,state)
+        self.assertEqual(links.stale(self.sequence,self.states()),[missing])   # person missing from the state
+        self.assertEqual(links.stale(self.sequence,self.states('gvhmr')),[])   # another model: both blocks untracked, nothing judged
+        self.sequence.links.remove(missing)
         state['fingerprint']='new';ps.save_people(self.base/'b',state)   # Find person again
         self.assertEqual(links.stale(self.sequence,self.states()),[good])
         good.prints=(None,None);self.assertEqual(links.stale(self.sequence,self.states()),[])   # a print of None matches anything
+        good.prints=(None,'old');(self.base/'b'/'input.mp4').write_bytes(b'another video')   # the list is out of date: not judged
+        self.assertEqual(self.states()[b].reason,'Person detection is out of date. Run Find person again.')
+        self.assertEqual(links.stale(self.sequence,self.states()),[])
+        g=self.sequence.add(self.base/'gone.mp4',10.).id;self.sequence.link((b,1),(g,1),prints=('x','y'))
+        self.assertEqual(self.states()[g].kind,'missing');self.assertEqual(links.stale(self.sequence,self.states()),[])   # missing video
         gone=Link(('deleted',1),(a,1));self.sequence.links.append(gone)   # block deleted
         self.assertEqual(links.stale(self.sequence,self.states()),[gone])
     def test_status(self):
@@ -116,6 +129,10 @@ class LinksTest(unittest.TestCase):
         link.built['copy']=S(0,100);self.assertEqual(status(),'joined')   # also a source of the current join
         link.built['copy']='p1/takes/elsewhere';self.assertEqual(status(),'out of date')
         link.built['copy']=str((root/S(120,200)).resolve());self.assertEqual(status(),'joined')   # an absolute path names the same take
+        later=self.base/'b';state=ps.load_people(later);take=state['people'][0]['takes'][0];old=take['project']
+        shutil.copytree(source,later/'p1/takes/000000000_000000250_scene_v1');take.update(project='p1/takes/000000000_000000250_scene_v1',end=250)
+        ps.save_people(later,state);self.assertEqual(status(),'out of date')   # tracked again over another range: the old folder is untouched
+        take.update(project=old,end=300);ps.save_people(later,state);self.assertEqual(status(),'joined')
         state=ps.load_people(root);state['people'][0]['takes']=state['people'][0]['takes'][:1];ps.save_people(root,state)   # copy withdrawn
         self.assertEqual(status(),'out of date')
     def test_status_of_a_partly_built_row(self):

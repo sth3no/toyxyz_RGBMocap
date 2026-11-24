@@ -74,13 +74,15 @@ def automatic(sequence, states, model) -> list[tuple[tuple, tuple]]:
 
 
 def stale(sequence, states) -> list:
-    """Links whose block is gone, whose person is not in its block's state, or whose block's people list has another
-    fingerprint than the one the link keeps (a kept print of None matches any list)."""
+    """Links whose block is gone, or whose block reads a people list with a fingerprint that lacks the person or differs
+    from the one the link keeps (a kept print of None matches any list). A block without such a list for the selected
+    model (no folder, missing video, an out-of-date list) judges nothing."""
     ids = {block.id for block in sequence.blocks}
     def gone(person, mark):
         state = states.get(person[0])
-        return person[0] not in ids or state is None or all(p.id != person[1] for p in state.people) \
-            or (mark is not None and mark != state.fingerprint)
+        if person[0] not in ids:return True
+        if state is None or state.kind not in ('found', 'partly', 'tracked') or state.fingerprint is None:return False
+        return all(p.id != person[1] for p in state.people) or (mark is not None and mark != state.fingerprint)
     return [link for link in sequence.links if gone(link.source, link.prints[0]) or gone(link.target, link.prints[1])]
 
 
@@ -104,14 +106,23 @@ def result_stamp(folder) -> list | None:
     return [stat.st_size, stat.st_mtime_ns]
 
 
+def _in_use(root, ident) -> list[Path]:
+    """The folders of the takes in use of person `ident` of clip folder `root`; the folder itself without a people list."""
+    state = people_store.load_people(root)
+    if state is None:return [root.resolve()]
+    person = next(p for p in state['people'] if p['id'] == ident)
+    return [(root / t['project']).resolve() for t in people_store.active_takes(root, person, sequence_state.selected_kind(root))]
+
+
 def _built_current(sequence, link, model) -> bool:
-    """The link's recorded join still matches it: its transition in frames, its method and the source take's result.
-    `built['take']` is the source take folder, absolute or relative to the later block's clip folder."""
+    """The link's recorded join still matches it: the source take is still the later person's only take in use, with the
+    same result, and the transition in frames and the method are unchanged. `built['take']` is the source take folder,
+    absolute or relative to the later block's clip folder."""
     built = link.built
-    take = Path(sequence.block(link.target[0]).folders[model]) / built['take']
+    root = Path(sequence.block(link.target[0]).folders[model]);take = root / built['take']
     stamp = result_stamp(take)
     return built['gap'] == gap_frames(sequence, link.target[0]) and built['method'] == link.method \
-        and stamp is not None and list(built['stamp']) == stamp
+        and stamp is not None and list(built['stamp']) == stamp and _in_use(root, link.target[1]) == [take.resolve()]
 
 
 def _joined(sequence, row, links, model) -> bool:
