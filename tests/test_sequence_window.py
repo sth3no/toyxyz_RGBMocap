@@ -682,7 +682,7 @@ class SequenceWindowTest(unittest.TestCase):
         after = menu.actions()[0].menu().actions();self.assertEqual([(a.text(), a.isEnabled(), a.isChecked()) for a in after], [('Anna', True, False)])
         after[0].trigger();self.assertEqual([(l.source, l.target) for l in c.sequence.links], [((first.id, 1), (second.id, 2))])
         menu = c._person_menu(second.id, 2);self.addCleanup(menu.deleteLater)
-        self.assertEqual([a.text() for a in menu.actions()], ['Continue after', 'Unlink']);self.assertTrue(menu.actions()[0].menu().actions()[0].isChecked())
+        self.assertEqual([a.text() for a in menu.actions()], ['Continue after', 'Unlink', 'Join']);self.assertTrue(menu.actions()[0].menu().actions()[0].isChecked())
         menu.actions()[1].trigger();self.assertEqual(c.sequence.links, []);self.assertNotIn('links', self.saved())
         menu = c._person_menu(first.id, 1);self.addCleanup(menu.deleteLater)   # the first block has no block before it
         self.assertFalse(menu.actions()[0].isEnabled())

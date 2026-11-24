@@ -3,6 +3,7 @@ at levels 1 and 2 (page "sequence"), loading the selected block into the window,
 between the levels. Play and the transport stay the window's own and act on the loaded block."""
 import json
 import math
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, 
                                QFormLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from . import paths, people_store, sequence_links, sequence_state
+from . import paths, people_store, sequence_join, sequence_links, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
 from .sequence import DEFAULT_METHOD, METHODS, Sequence
@@ -31,7 +32,8 @@ MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the
         'new': 'Start a new sequence. The loaded video or project stays open, as its one block when a video is loaded.'}
 TIPS = {'back': 'Show the sequence timeline around this block.', 'add': 'Add a video at the end of the sequence.',
         'cut': 'Split the block under the playhead at the playhead.', 'delete': 'Remove the selected block from the sequence. Its files stay on disk.',
-        'frame': 'Fit the whole sequence in the timeline.'}
+        'frame': 'Fit the whole sequence in the timeline.',
+        'join': 'Join every linked row into one animation in the scene of its first block. The later blocks are not changed.'}
 STALE = 'The people of {} changed, so their links were removed.'
 AUTOMATIC = '{} now continues {}. Drag the bar to change it.'
 EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
@@ -86,6 +88,7 @@ class Controller(QObject):
         self._opening = None     # the video File > Open Video is opening, so its metadata does not start a sequence again
         self._advance_to = None
         self._yielded = False    # the window shows a project or workspace of its own that is not the loaded block
+        self.joiner = None       # the Join run (sequence_join.Runner) while it runs
         self._settle = QTimer(self);self._settle.setSingleShot(True);self._settle.setInterval(250)
         self._settle.timeout.connect(self._changed)   # a dragged trim is shown and saved once it rests
         self._build()
@@ -108,8 +111,8 @@ class Controller(QObject):
         self.refresh()
 
     def busy(self):
-        """A job runs, or Reconstruct in parts, also between its parts."""
-        return bool(self.w.busy) or getattr(self.w, 'parts_runner', None) is not None
+        """A job runs, or Reconstruct in parts or Join, also between their jobs."""
+        return bool(self.w.busy) or getattr(self.w, 'parts_runner', None) is not None or (self.joiner is not None and self.joiner.running)
 
     def _reset(self, sequence):
         self._settle.stop()
@@ -135,12 +138,14 @@ class Controller(QObject):
         actions.layout().insertWidget(0, self.back_button)
         bar = self.bar = QWidget();bar.setObjectName('editorHeader');bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         row = QHBoxLayout(bar)
-        self.add_button, self.cut_button, self.delete_button, self.frame_button = (QPushButton(text) for text in ('Add Video...', 'Cut', 'Delete', 'Frame All'))
+        self.add_button, self.cut_button, self.delete_button, self.join_button, self.frame_button = (
+            QPushButton(text) for text in ('Add Video...', 'Cut', 'Delete', 'Join', 'Frame All'))
         self.add_button.clicked.connect(self.choose_video)
         self.cut_button.clicked.connect(self.cut)
         self.delete_button.clicked.connect(lambda:self.delete())
+        self.join_button.clicked.connect(lambda:self.join())
         self.frame_button.clicked.connect(lambda:self.view.frame_all())
-        for button in (self.add_button, self.cut_button, self.delete_button, self.frame_button):row.addWidget(button)
+        for button in (self.add_button, self.cut_button, self.delete_button, self.join_button, self.frame_button):row.addWidget(button)
         self.review_button = QPushButton('Review Range...')
         self.review_button.clicked.connect(self.edit_review)
         self.auto_advance = QCheckBox('Auto-advance')
@@ -155,7 +160,7 @@ class Controller(QObject):
         self.stack = QStackedWidget();self.stack.addWidget(self.clip_page);self.stack.addWidget(self.sequence_page)
         layout.insertWidget(1, self.stack, 1)
         self.view.selected.connect(self._select)
-        self.view.opened.connect(self.open_block)
+        self.view.opened.connect(lambda block_id, person:self._opened(block_id, person))
         self.view.scrubbed.connect(self._scrubbed)
         self.view.moved.connect(self.move)
         self.view.resized.connect(self.resize)
@@ -252,8 +257,47 @@ class Controller(QObject):
 
     def _let_go(self):
         """The one place where links that left the sequence (`Sequence.dropped`: by an edit, Unlink, a relink or a changed
-        people list) are let go. Nothing is built on them on disk yet, so the list is only cleared."""
+        people list) are let go: the copies their rows recorded are taken out of the first block's take list (files stay),
+        then the list is cleared. The actions that drop a joined row's link asked first."""
+        self._take_apart(self.sequence.dropped)
         self.sequence.dropped.clear()
+
+    def _take_apart(self, links):
+        """Withdraw the joined copies of the rows of `links` and clear their records; the window shows the changed take list.
+        False with the reason in the status bar when a take list cannot be saved."""
+        try:roots = sequence_join.take_apart(self.sequence, links)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.w.status.setText(f'Cannot take the join back: {error}');return False
+        for root in roots:self._reload(root)
+        return True
+
+    def _may_take_apart(self, links):
+        """No row of `links` is joined, or the user agrees to take it apart."""
+        return not any(link.built for link in sequence_join.rows(self.sequence, links)) or self.ask(sequence_join.TAKE_APART, 'Joined Row')
+
+    def _may_change(self, edit):
+        """`edit` (of a Sequence) would drop no link of a joined row, or the user agrees; tried on a copy of the sequence."""
+        trial = deepcopy(self.sequence)
+        try:edit(trial)
+        except (ValueError, KeyError):return True   # the edit itself is refused, and says why
+        key = lambda link:(link.source, link.target, link.model)
+        kept = {key(link) for link in trial.links}
+        return self._may_take_apart([link for link in self.sequence.links if key(link) not in kept])
+
+    def _reload(self, root):
+        """After a take list of `root` changed outside a job: the window, when it shows that scene, reads it again as after an
+        import, staying on the take it shows while that take is still listed."""
+        w = self.w
+        if w.busy or w.people_root is None or not same_file(w.people_root, root):return
+        try:state = people_store.load_people(w.people_root)
+        except (OSError, ValueError) as error:
+            w.status.setText(f'Cannot read the people list: {error}');return
+        if state is None:return
+        w.people_state = state;shown = w.project
+        listed = any(same_file(people_store.safe_child(w.people_root, t['project']), shown) for p in state['people']
+                     for t in (p.get('takes') or [])+(p.get('joins') or [])) if shown is not None else False
+        w.activate_person(w.active_person_id, shown if listed else None)
+        w.request_people_scene(force=True)
 
     def opened_video(self, path):
         """File > Open Video: a new sequence with that one block; the window has started loading it."""
@@ -381,8 +425,8 @@ class Controller(QObject):
 
     # Editing
 
-    def ask(self, text):
-        return QMessageBox.question(self.w, 'Change Block', text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+    def ask(self, text, title='Change Block'):
+        return QMessageBox.question(self.w, title, text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
 
     def _source_time(self):
         """(block, source seconds) under the playhead: the window's frame in the loaded block, else the drawn playhead."""
@@ -397,7 +441,7 @@ class Controller(QObject):
         found = self._source_time()
         if found is None:return
         block, seconds = found
-        if block.folders and not self.ask(CHANGE):return
+        if block.folders and not self.ask(CHANGE) or not self._may_change(lambda s:s.cut(block.id, seconds)):return
         try:_, second = self.sequence.cut(block.id, seconds)
         except ValueError as error:
             self.w.status.setText(str(error));return
@@ -410,6 +454,7 @@ class Controller(QObject):
         if self.busy() or block_id not in self._ids():return
         if len(self.sequence.blocks) == 1:
             self.w.status.setText(LAST);return
+        if not self._may_change(lambda s:s.delete(block_id)):return
         i = self.sequence.index(block_id);self.sequence.delete(block_id)
         if block_id == self.current:
             blocks = self.sequence.blocks
@@ -418,13 +463,15 @@ class Controller(QObject):
 
     def move(self, block_id, index):
         if self.busy() or block_id not in self._ids():return
+        if not self._may_change(lambda s:s.move(block_id, index)):
+            self.refresh();return
         self.sequence.move(block_id, index)
         self._changed();self._follow()
 
     def resize(self, block_id, start, end):
         if self.busy() or block_id not in self._ids():return
         block = self.sequence.block(block_id)
-        if block.folders and not self.ask(CHANGE):
+        if block.folders and not self.ask(CHANGE) or not self._may_change(lambda s:s.resize(block_id, start, end)):
             self.refresh();return
         try:self.sequence.resize(block_id, start, end)
         except ValueError as error:
@@ -483,10 +530,14 @@ class Controller(QObject):
     def load(self, block_id, seconds=None):
         """Load the block into the window: its remembered folder for the selected model, else its video trimmed to its range.
         `seconds` (source time) is then sought. False with the reason in the status bar when it cannot be loaded."""
-        w = self.w
         if self.busy():
-            if block_id != self.current:w.status.setText(BUSY)
+            if block_id != self.current:self.w.status.setText(BUSY)
             return False
+        return self._open(block_id, seconds)
+
+    def _open(self, block_id, seconds=None):
+        """`load` without the busy check, for the Join run that keeps the sequence busy."""
+        w = self.w
         block = self.sequence.block(block_id);model = w.model_choice.currentData()
         state = sequence_state.read(block, model)
         folder = block.folders.get(model)
@@ -732,8 +783,10 @@ class Controller(QObject):
         reason = sequence_links.refusal(sequence, states, source, target, self.w.model_choice.currentData())
         if reason:
             self.w.status.setText(reason);return False
+        method, prints = old.method if old else DEFAULT_METHOD, self._prints(states, source, target)
+        if not self._may_change(lambda s:s.link(source, target, method, prints)):return False
         before = list(sequence.links)
-        try:sequence.link(source, target, old.method if old else DEFAULT_METHOD, self._prints(states, source, target))
+        try:sequence.link(source, target, method, prints)
         except ValueError as error:
             self.w.status.setText(str(error));return False
         sequence.dropped.extend(link for link in before if not any(link is kept for kept in sequence.links))
@@ -741,12 +794,75 @@ class Controller(QObject):
         return True
 
     def unlink(self, target):
-        """Take the link into `target` away; its later block is not linked by itself again."""
+        """Take the link into `target` away (a joined row is taken apart, after asking); its later block is not linked by
+        itself again."""
         if not self._may_link():return False
-        link = self.sequence.unlink(tuple(target))
-        if link is None:return False
-        self.sequence.dropped.append(link);self._changed()
+        link = self.sequence.link_into(*tuple(target))
+        if link is None or not self._may_take_apart([link]):return False
+        self.sequence.unlink(tuple(target));self.sequence.dropped.append(link);self._changed()
         return True
+
+    # Join
+
+    def _chains(self, target=None):
+        """The linked rows to join: the row of `target`, else every linked row, in block order."""
+        sequence = self.sequence
+        chains = [sequence.chain(*target)] if target is not None else list(dict.fromkeys(tuple(sequence.chain(*l.target)) for l in sequence.model_links()))
+        return sorted((list(chain) for chain in chains if len(chain) > 1), key=lambda chain:(sequence.index(chain[0][0]), str(chain[0][1])))
+
+    def join(self, target=None):
+        """Join the row of the bar `target` (block id, person id), or every linked row: asks, then runs; False when nothing
+        started."""
+        if not self._may_link():return False
+        if target is not None and tuple(target)[0] not in self._ids():return False
+        chains = self._chains(None if target is None else tuple(target))
+        if not chains or not self.ask(sequence_join.QUESTION, 'Join'):return False
+        self.joiner = sequence_join.Runner(self, chains);self.joiner.start()
+        return True
+
+    def take_back(self, target):
+        """Take the joined copies of the row of the bar `target` out of its first block's take list, after asking when it has
+        copies; the links stay. False when the user says No or the list cannot be saved."""
+        if not self._may_link():return False
+        target = tuple(target);links = [l for l in (self.sequence.link_into(*target), self.sequence.link_out(*target)) if l]
+        if not self._may_take_apart(links):return False
+        done = self._take_apart(links);self.refresh();self._save()
+        return done
+
+    def _joined(self, target):
+        """The receiving person (block id, person id) and the folder of the joined take of `target`'s row while it is joined,
+        else None."""
+        model = self.w.model_choice.currentData()
+        if sequence_links.status(self.sequence, {}, target, model) != 'joined':return None
+        row = self.sequence.chain(*target);copies = [self.sequence.link_into(*person).built['copy'] for person in row[1:]]
+        try:folder = sequence_join.joined_take(self.sequence.block(row[0][0]).folders[model], row[0][1], copies)
+        except (OSError, ValueError, KeyError, StopIteration):folder = None
+        return (row[0], folder) if folder is not None else None
+
+    def open_joined(self, target):
+        """Level 3 of the first block of `target`'s joined row, its receiving person active on the joined take."""
+        if not self._may_link():return False
+        found = self._joined(tuple(target)) if tuple(target)[0] in self._ids() else None
+        if found is None:return False
+        (block_id, person), folder = found
+        if not self.load(block_id):return False
+        self.open_block(block_id, person)
+        if not same_file(self.w.project, folder):self.w.activate_person(person, folder)
+        return same_file(self.w.project, folder)
+
+    def export_joined(self, target):
+        """The joined animation of `target`'s row opened, then the window's own export of the current take."""
+        if not self.open_joined(target):return False
+        if self.w.export_action.isEnabled():self.w.export_action.trigger()
+        else:self.w.save_fbx()   # says why it cannot export now
+        return True
+
+    def _opened(self, block_id, person):
+        """A double-click on a bar: the joined animation for a bar of a joined row, else the block as before."""
+        if person is not None and self.supported():
+            self.sequence.model = self.w.model_choice.currentData()
+            if self._joined((block_id, person)) is not None:return self.open_joined((block_id, person))
+        self.open_block(block_id, person)
 
     def set_transition(self, target, method, seconds):
         """The method of the link into `target` and the transition length of its pair of blocks; False with the reason, and
@@ -830,6 +946,11 @@ class Controller(QObject):
                 action.triggered.connect(lambda *_, source=source:self.link(source, target))
         after.setEnabled(not after.isEmpty())
         if current is not None:menu.addAction('Unlink').triggered.connect(lambda *_:self.unlink(target))
+        if current is not None or sequence.link_out(*target) is not None:
+            menu.addAction('Join').triggered.connect(lambda *_:self.join(target))
+            if self._joined(target) is not None:
+                menu.addAction('Open joined animation').triggered.connect(lambda *_:self.open_joined(target))
+                menu.addAction('Export joined animation...').triggered.connect(lambda *_:self.export_joined(target))
         return menu
 
     def _keep_links(self, states, model):
@@ -881,7 +1002,8 @@ class Controller(QObject):
         self.review_button.setEnabled(supported and not busy and loaded)
         self.auto_advance.setEnabled(supported and not busy and count > 1)
         for key, button, enabled in (('back', self.back_button, True), ('add', self.add_button, not busy), ('frame', self.frame_button, True),
-                                     ('cut', self.cut_button, not busy and loaded), ('delete', self.delete_button, not busy and loaded)):
+                                     ('cut', self.cut_button, not busy and loaded), ('delete', self.delete_button, not busy and loaded),
+                                     ('join', self.join_button, not busy and bool(self.sequence.model_links()))):
             button.setEnabled(supported and enabled);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))
         if not supported:self._show_clip()
         self._playhead()
