@@ -1062,8 +1062,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 root=root_for(project)
                 if root is None:
                     raise ValueError('This project uses the previous folder format. Open its video to create a new model-folder project.')
-                if self.load_project(project) and project!=root:
-                    self.restore_track_face(self.saved_track_face(read(root).get('view',{})))
+                if self.load_project(project):
+                    self.sequence_ui.opened_project(project)
+                    if project!=root:self.restore_track_face(self.saved_track_face(read(root).get('view',{})))
             except (OSError,ValueError,KeyError) as error:self.status.setText('Cannot open project: '+str(error))
 
     @batch_readiness
@@ -1927,6 +1928,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 atomic_json(saved_root/'workspace_state.json',dict(version=1,name=saved_root.name,
                     active=self.project.resolve().relative_to(saved_root).as_posix(),frame=0,trim=None))
             self.load_project(self.project, keep_current_options=True)
+            self.sequence_ui.prepared(self.project, event['manifest'])
         elif kind == 'project_saved':
             self._project_saved_root=Path(event['root'])
         elif kind == 'save_cancelled':

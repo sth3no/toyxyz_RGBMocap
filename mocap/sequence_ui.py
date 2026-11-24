@@ -1,13 +1,15 @@
 """The sequence in the main window: one stacked timeline with today's slider at level 3 (page "clip") and the sequence view
 at levels 1 and 2 (page "sequence"), loading the selected block into the window, the playhead in sequence time and the way
 between the levels. Play and the transport stay the window's own and act on the loaded block."""
+import json
 import math
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
 
-from . import sequence_state
+from . import paths, people_store, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
 from .sequence import Sequence
@@ -16,6 +18,12 @@ from .theme import ui_px
 from .tooltips import tooltip_text
 
 OTHER_MODEL = 'The sequence works with GVHMR, ExMR and FlowHMR.'
+PROJECT_MODEL = 'Only GVHMR, ExMR and FlowHMR projects can be added to a sequence.'
+BUSY = 'A job is running. The block opens when it is done.'
+CHANGE = 'This block has results. They belong to the old range and stay on disk; the changed block will show as not tracked. Change it?'
+MENU = {'project': 'Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results.',
+        'open': 'Open a saved sequence. A sequence saves itself on every change under projects/sequences.',
+        'new': 'Start an empty sequence. The loaded video or project stays open.'}
 TIPS = {'back': 'Show the sequence: all blocks on one timeline.', 'add': 'Add a video at the end of the sequence.',
         'cut': 'Split the selected block at the playhead.', 'delete': 'Remove the selected block from the sequence.',
         'frame': 'Fit the whole sequence in the timeline.'}
@@ -36,6 +44,18 @@ def video_length(path):
         capture.release()
 
 
+def sequences_folder():
+    return paths.HOME/'projects'/'sequences'
+
+
+def free_name():
+    """projects/sequences/Sequence <date time>.json, with a number when that name is taken."""
+    folder = sequences_folder();folder.mkdir(parents=True, exist_ok=True)
+    stem = f'Sequence {datetime.now():%Y-%m-%d %H%M}';path, n = folder/f'{stem}.json', 2
+    while path.exists():path, n = folder/f'{stem} ({n}).json', n + 1
+    return path
+
+
 def same_file(a, b):
     try:return Path(a).resolve() == Path(b).resolve()
     except (OSError, TypeError):return False
@@ -46,16 +66,22 @@ class Controller(QObject):
         super().__init__(w)
         self.w, self.sequence, self.current = w, Sequence(), None
         self._pending = None  # (block id, source seconds or None): the block's video is opening
+        self._video_info = None  # the window's info of a whole video it opened (not of a project), once this controller saw it
+        self._trimming = False   # the controller sets the trim itself
+        self._clicked = None     # a click's block, so its following scrub does not try the load again
         self._build()
-        action = file_menu.addAction('Add Video to Sequence...', self.choose_video)
-        action.setToolTip(tooltip_text('Add a video at the end of the sequence, as a new block covering the whole video.'))
-        w.open_actions.append(action)
+        for text, slot, tip in (('Add Video to Sequence...', self.choose_video, 'Add a video at the end of the sequence, as a new block covering the whole video.'),
+                                ('Add Project to Sequence...', self.choose_project, MENU['project']),
+                                ('Open Sequence...', self.choose_sequence, MENU['open']), ('New Sequence', self.new, MENU['new'])):
+            action = file_menu.addAction(text, slot);action.setToolTip(tooltip_text(tip))
+            w.open_actions.append(action)   # the window disables these while a job runs
         # After the window's own slots, so the clip is set up when these run.
         w.video_view.metadata_ready.connect(self._video_ready)
         w.video_view.decode_error.connect(self._video_failed)
         w.slider.valueChanged.connect(self._playhead)
-        w.slider.trim_enabled_changed.connect(lambda _:self.refresh())
-        w.model_choice.currentIndexChanged.connect(lambda _:self.refresh())
+        w.slider.clip_changed.connect(self._trim_changed)
+        w.slider.trim_enabled_changed.connect(lambda _:self.refresh())   # a job starts or ends
+        w.model_choice.currentIndexChanged.connect(self._model_changed)
         w.slider.installEventFilter(self)
         self.view.installEventFilter(self)
         w.installEventFilter(self)
@@ -74,6 +100,8 @@ class Controller(QObject):
         row = QHBoxLayout(bar)
         self.add_button, self.cut_button, self.delete_button, self.frame_button = (QPushButton(text) for text in ('Add Video...', 'Cut', 'Delete', 'Frame All'))
         self.add_button.clicked.connect(self.choose_video)
+        self.cut_button.clicked.connect(self.cut)
+        self.delete_button.clicked.connect(lambda:self.delete())
         self.frame_button.clicked.connect(lambda:self.view.frame_all())
         for button in (self.add_button, self.cut_button, self.delete_button, self.frame_button):row.addWidget(button)
         self.summary = QLabel('');self.summary.setMinimumWidth(0);self.summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -84,9 +112,12 @@ class Controller(QObject):
         page.addWidget(bar);page.addWidget(self.view, 1)
         self.stack = QStackedWidget();self.stack.addWidget(self.clip_page);self.stack.addWidget(self.sequence_page)
         layout.insertWidget(1, self.stack, 1)
-        self.view.selected.connect(lambda id:id != self.current and self.load(id))
+        self.view.selected.connect(self._select)
         self.view.opened.connect(self.open_block)
         self.view.scrubbed.connect(self._scrubbed)
+        self.view.moved.connect(self.move)
+        self.view.resized.connect(self.resize)
+        self.view.removed.connect(self.delete)
         self._appearance()
 
     def _appearance(self):
@@ -129,8 +160,36 @@ class Controller(QObject):
         return {block.id for block in self.sequence.blocks}
 
     def new(self):
+        """File > New Sequence: an empty sequence; the window keeps what it shows."""
         self.sequence, self.current, self._pending = Sequence(), None, None
+        if self.supported():self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
         self.refresh()
+
+    def choose_sequence(self):
+        folder = sequences_folder()
+        name, _ = QFileDialog.getOpenFileName(self.w, 'Open Sequence', str(folder if folder.is_dir() else folder.parent), 'Sequence (*.json)')
+        if name:self.open(Path(name))
+
+    def open(self, path):
+        """A saved sequence, shown whole, with its first block loaded; a bad file keeps the current sequence."""
+        try:sequence = Sequence.load(path)
+        except (OSError, ValueError) as error:
+            self.w.status.setText(f'Cannot open the sequence: {error}');return False
+        self.sequence, self.current, self._pending = sequence, None, None
+        if sequence.blocks:self.load(sequence.blocks[0].id)
+        if self.supported():self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
+        self.refresh()
+        return True
+
+    def _save(self):
+        """After every change; a sequence of one whole video needs no file until it has one."""
+        sequence = self.sequence
+        if sequence.path is None and (sequence.plain() or not sequence.blocks):return
+        try:sequence.save(free_name() if sequence.path is None else None)
+        except OSError as error:self.w.status.setText(f'Cannot save the sequence: {error}')
+
+    def _changed(self):
+        self.refresh();self._save()
 
     def opened_video(self, path):
         """File > Open Video: a new sequence with that one block; the window has started loading it."""
@@ -151,31 +210,183 @@ class Controller(QObject):
         try:length = video_length(path)
         except ValueError as error:
             w.status.setText(f'Cannot add the video: {error}');return None
+        return self._append(path, length)
+
+    def _append(self, video, length, start=0., end=None, folders=None):
+        """A new last block; it is loaded when the window showed no block of the sequence, else the sequence is shown whole."""
         empty = not self.sequence.blocks or self.current not in self._ids()
-        block = self.sequence.add(path, length)
+        block = self.sequence.add(video, length, start, end, folders)
         if empty:
             self.load(block.id)
         else:
             self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
-        self.refresh()
+        self._changed()
         return block
+
+    # Existing projects
+
+    def _project(self, folder):
+        """(model, clip folder, video, start, end, video length) of the clip folder holding `folder` (a clip, person or take;
+        a named project gives its active model's clip)."""
+        from . import project_workspace
+        if project_workspace.is_workspace(folder):folder = project_workspace.model_project(folder, project_workspace.read(folder)['active_model'])
+        root = people_store.root_for(folder)
+        manifest = json.loads((root/'project.json').read_text(encoding='utf-8'))
+        start, end = float(manifest['start']), float(manifest['end'])
+        from .project_storage import source_video
+        try:video = source_video(root, manifest)
+        except (OSError, ValueError, KeyError):video = Path(manifest['source']['path'])
+        try:length = max(end, video_length(video))
+        except ValueError:length = end   # the video is gone; the block still opens as a project
+        return manifest.get('pipeline', {}).get('model', 'gvhmr'), root, video, start, end, length
+
+    def opened_project(self, project):
+        """File > Open Project: a new sequence with that project's clip as its one block, at level 3. The window's loaded
+        project is read when there is one (a named workspace opens one of its model folders)."""
+        self.sequence, self.current, self._pending = Sequence(), None, None
+        try:
+            model, root, video, start, end, length = self._project(self.w.project or project)
+            if model in MODELS:self.current = self.sequence.add(video, length, start, end, {model:str(root)}).id
+        except (OSError, ValueError, KeyError, TypeError):pass   # the window opened it; it is not a block
+        self._show_clip()
+        self.refresh()
+
+    def choose_project(self):
+        name, _ = QFileDialog.getOpenFileName(self.w, 'Add Project to Sequence', str(paths.HOME/'projects'), 'Project (project.json)')
+        if name:self.add_project(Path(name).parent)
+
+    def add_project(self, folder):
+        w = self.w
+        if not self.supported():
+            w.status.setText(OTHER_MODEL);return None
+        try:model, root, video, start, end, length = self._project(folder)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            w.status.setText(f'Cannot add the project: {error}');return None
+        if model not in MODELS:
+            w.status.setText(PROJECT_MODEL);return None
+        return self._append(video, length, start, end, {model:str(root)})
+
+    def prepared(self, project, manifest):
+        """A job prepared a clip folder from the loaded block: the block takes its range and remembers it for the model."""
+        model = self.w.model_choice.currentData()
+        if model not in MODELS or self.current not in self._ids():return
+        try:
+            root = people_store.root_for(project)
+            if not same_file(root, project):manifest = json.loads((root/'project.json').read_text(encoding='utf-8'))
+            start, end = float(manifest['start']), float(manifest['end'])
+        except (OSError, ValueError, KeyError, TypeError):return
+        self.sequence.remember(self.current, model, root, start, end)
+        self._changed()
+
+    # Editing
+
+    def ask(self, text):
+        return QMessageBox.question(self.w, 'Change Block', text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+
+    def _source_time(self):
+        """(block, source seconds) under the playhead: the window's frame in the loaded block, else the drawn playhead."""
+        w = self.w
+        if self.current in self._ids() and w.info and self._pending is None and (w.project is not None or w.info is self._video_info):
+            return self.sequence.block(self.current), w.source_offset + w.slider.value() / w.info['fps']
+        return self.sequence.locate(self.view.playhead)
+
+    def cut(self):
+        """Split the block under the playhead at the playhead; the second piece becomes the loaded block."""
+        if self.w.busy or not self.supported():return
+        found = self._source_time()
+        if found is None:return
+        block, seconds = found
+        if block.folders and not self.ask(CHANGE):return
+        try:_, second = self.sequence.cut(block.id, seconds)
+        except ValueError as error:
+            self.w.status.setText(str(error));return
+        if block.id == self.current:self.current = second.id
+        self._changed();self._follow(seconds)
+
+    def delete(self, block_id=None):
+        """Remove a block from the sequence; its files stay on disk. The neighbour of a deleted loaded block is loaded."""
+        block_id = block_id or self.current
+        if self.w.busy or block_id not in self._ids():return
+        i = self.sequence.index(block_id);self.sequence.delete(block_id)
+        if block_id == self.current:
+            blocks = self.sequence.blocks
+            self.current = blocks[min(i, len(blocks) - 1)].id if blocks else None
+        self._changed();self._follow()
+
+    def move(self, block_id, index):
+        if self.w.busy or block_id not in self._ids():return
+        self.sequence.move(block_id, index)
+        self._changed();self._follow()
+
+    def resize(self, block_id, start, end):
+        if self.w.busy or block_id not in self._ids():return
+        block = self.sequence.block(block_id)
+        if block.folders and not self.ask(CHANGE):
+            self.refresh();return
+        try:self.sequence.resize(block_id, start, end)
+        except ValueError as error:
+            self.w.status.setText(str(error));self.refresh();return
+        found = self._source_time() if block_id == self.current else None
+        self._changed()
+        if found:self._follow(max(block.start, min(block.end, found[1])))
+
+    def _follow(self, seconds=None):
+        """Load the loaded block again when what the window shows no longer is that block."""
+        if self.current in self._ids() and not self._shows(self.sequence.block(self.current)):self.load(self.current, seconds)
+
+    def _shows(self, block):
+        """The window shows `block` for the selected model: its remembered folder, else its video trimmed to its range."""
+        w, model = self.w, self.w.model_choice.currentData()
+        if self._pending is not None and self._pending[0] == block.id:return True
+        folder = block.folders.get(model)
+        if folder and not sequence_state.read(block, model).reason:
+            try:return w.project is not None and same_file(people_store.root_for(w.project), folder)
+            except (OSError, ValueError, KeyError):return False
+        if w.project is not None or not w.info or w.info is not self._video_info or not same_file(w.video_path, block.video):return False
+        start, end = w.processing_range();near = .5 / w.info['fps'] + 1e-6
+        return abs(start - block.start) <= near and abs(end - block.end) <= near
+
+    def _trim_changed(self, *_):
+        """The trim of a block without results for the selected model, on its video, is the block's range."""
+        w = self.w
+        if self._trimming or w.busy or not self.supported() or self.current not in self._ids():return
+        block = self.sequence.block(self.current)
+        if block.folders.get(w.model_choice.currentData()) or w.project is not None or self._pending is not None:return
+        if not w.info or w.info is not self._video_info or not same_file(w.video_path, block.video):return
+        start, end = w.processing_range()
+        if abs(start - block.start) <= 1e-6 and abs(end - block.end) <= 1e-6:return
+        try:self.sequence.resize(block.id, start, end)
+        except ValueError:return
+        self._changed()
+
+    def _model_changed(self, _):
+        """After a model switch the loaded block is opened again for that model."""
+        self.refresh()
+        if self.supported() and not self.w.busy and self.current in self._ids():
+            found = self._source_time()
+            self._follow(found[1] if found and found[0].id == self.current else None)
 
     # Loading a block
 
     def load(self, block_id, seconds=None):
         """Load the block into the window: its remembered folder for the selected model, else its video trimmed to its range.
         `seconds` (source time) is then sought. False with the reason in the status bar when it cannot be loaded."""
-        w = self.w;block = self.sequence.block(block_id);model = w.model_choice.currentData()
+        w = self.w
+        if w.busy:
+            if block_id != self.current:w.status.setText(BUSY)
+            return False
+        block = self.sequence.block(block_id);model = w.model_choice.currentData()
         state = sequence_state.read(block, model)
         folder = block.folders.get(model)
         if folder and not state.reason:
             if not w.load_project(Path(folder)):return False
             self._pending = None;self._loaded(block_id);self._seek(seconds)
+            if not Path(block.video).is_file():w.status.setText(f'The video file is missing: {block.video}')
             return True
         if not Path(block.video).is_file():
             w.status.setText(f'Cannot open the block: {state.reason or "the video file is missing."}');return False
         if folder:w.status.setText(state.reason)   # why its saved results do not open
-        if w.project is None and w.info and self._pending is None and same_file(w.video_path, block.video):
+        if w.project is None and w.info and w.info is self._video_info and self._pending is None and same_file(w.video_path, block.video):
             self._loaded(block_id);self._trim(block, seconds)
             return True
         self._pending = block_id, seconds;self._loaded(block_id)
@@ -188,18 +399,32 @@ class Controller(QObject):
     def _video_ready(self, _info):
         w = self.w
         pending, self._pending = self._pending, None
-        if pending is None or w.project is not None or not w.info:return
+        whole = w.project is None and not w._workspace_video_reference   # not a project's clip
+        self._video_info = w.info if whole else None
+        if not whole or not w.info:return
+        if pending is None:
+            if self._foreign():self.opened_video(Path(w.video_path))
+            return
         block_id, seconds = pending
         if block_id in self._ids() and same_file(w.video_path, self.sequence.block(block_id).video):
             self._trim(self.sequence.block(block_id), seconds)
             self.refresh()
+
+    def _foreign(self):
+        """The window opened a video by another way than this controller or Open Video (a drop, the guide's sample video,
+        the command line) that is not the loaded block's video."""
+        w = self.w
+        if w.video_path is None or getattr(w, '_pear_active', False) or w.model_choice.currentData() == 'mamma':return False
+        return self.current not in self._ids() or not same_file(self.sequence.block(self.current).video, w.video_path)
 
     def _video_failed(self, _message):
         self._pending = None   # the window reported it; the next load opens the video again
 
     def _trim(self, block, seconds):
         w, fps = self.w, self.w.info['fps']
-        w.slider.set_clip(round((block.start - w.source_offset) * fps), round((block.end - w.source_offset) * fps))
+        self._trimming = True
+        try:w.slider.set_clip(round((block.start - w.source_offset) * fps), round((block.end - w.source_offset) * fps))
+        finally:self._trimming = False
         w.slider.show_frames(w.slider.clip_in, w.slider.clip_out)
         if seconds is None:w.slider.setValue(w.slider.clip_in)
         else:self._seek(seconds)
@@ -227,7 +452,16 @@ class Controller(QObject):
             self._seek(source)
         else:
             self.view.set_playhead(seconds)
-            if final:self.load(block.id, source)
+            # A click tried this block already (its `selected` comes first); a refused load leaves the playhead in the loaded block.
+            if final and (block.id == self._clicked or not self.load(block.id, source)):self._playhead()
+
+    def _select(self, block_id):
+        if block_id == self.current:return
+        self._clicked = block_id;QTimer.singleShot(0, self._click_done)
+        self.load(block_id)
+
+    def _click_done(self):
+        self._clicked = None
 
     # State
 
@@ -238,11 +472,12 @@ class Controller(QObject):
         self.view.set_current(self.current if self.current in self._ids() else None)
         count = len(self.sequence.blocks)
         self.summary.setText(f'{count} block{"" if count == 1 else "s"} | {format_time(self.sequence.total())}')
-        supported = self.supported()
-        for key, button in (('back', self.back_button), ('add', self.add_button), ('frame', self.frame_button)):
-            button.setEnabled(supported);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))
-        for key, button in (('cut', self.cut_button), ('delete', self.delete_button)):
-            button.setEnabled(False);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))
+        supported, busy, loaded = self.supported(), self.w.busy, self.current in self._ids()
+        self.view.editable = not busy
+        self.view.set_busy(self.current if busy and loaded else None)
+        for key, button, enabled in (('back', self.back_button, True), ('add', self.add_button, not busy), ('frame', self.frame_button, True),
+                                     ('cut', self.cut_button, not busy and loaded), ('delete', self.delete_button, not busy and loaded)):
+            button.setEnabled(supported and enabled);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))
         if not supported:self._show_clip()
         self._playhead()
 
