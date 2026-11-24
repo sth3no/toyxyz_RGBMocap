@@ -14,6 +14,11 @@ _SAME = 1e-6
 _SHORT = 'A block must be at least 4 frames long.'
 _BAD = 'This is not a sequence file.'
 _NEWER = 'This sequence was saved by a newer version of RGB MoCap.'
+METHODS = ('smooth', 'auto')   # the keys of Smooth join and Automatic in hidden_ranges.METHODS
+DEFAULT_METHOD = METHODS[0]
+DEFAULT_GAP = 1.0
+_FRAME = 1 / 30
+_NEIGHBOUR = 'A person can continue only a person of the block before.'
 
 
 @dataclass
@@ -25,6 +30,39 @@ class Block:
     length: float
     folders: dict[str, str] = field(default_factory=dict)
     review: dict | None = None
+
+
+@dataclass
+class Link:
+    """`target` (later block id, person id) continues `source` (earlier block id, person id) after the transition gap."""
+    source: tuple
+    target: tuple
+    method: str = DEFAULT_METHOD
+    prints: tuple = (None, None)   # people-list fingerprints of the earlier and the later block
+    built: dict | None = None      # set by Join: copy, take, stamp, gap, method
+    model: str | None = None       # the model whose results it links; a sequence shows the selected model's links only
+
+
+def _method(method) -> str:
+    if method not in METHODS:
+        raise ValueError(f'Unknown method: {method}')
+    return method
+
+
+def _person(item) -> tuple:
+    if not isinstance(item, list) or len(item) != 2 or not isinstance(item[0], str) \
+            or isinstance(item[1], bool) or not isinstance(item[1], (int, str)):
+        raise ValueError(_BAD)
+    return item[0], item[1]
+
+
+def _link(item) -> Link:
+    if not isinstance(item, dict):
+        raise ValueError(_BAD)
+    prints, built = item.get('prints', [None, None]), item.get('built')
+    if not isinstance(prints, list) or len(prints) != 2 or not (built is None or isinstance(built, dict)):
+        raise ValueError(_BAD)
+    return Link(_person(item.get('source')), _person(item.get('target')), item.get('method'), tuple(prints), built, item.get('model'))
 
 
 def _number(value) -> float:
@@ -70,6 +108,19 @@ class Sequence:
     def __init__(self, blocks: list[Block] | None = None, path: Path | None = None):
         self.blocks: list[Block] = blocks if blocks is not None else []
         self.path = path
+        self.links: list[Link] = []        # of every model
+        self.gaps: dict[str, float] = {}   # later block id -> transition seconds, used while a link crosses into it
+        self.dropped: list[Link] = []      # links the edits dropped (of every model); the controller reads and clears it
+        self.model: str | None = None      # the selected model, set by the controller (not saved): link queries see its links
+        self._decided: dict = {}           # model -> later block ids whose automatic link was already decided
+
+    @property
+    def decided(self) -> set[str]:
+        """The later block ids whose automatic link was already decided for the selected model."""
+        return self._decided.setdefault(self.model, set())
+
+    def model_links(self) -> list[Link]:
+        return [link for link in self.links if link.model == self.model]
 
     def add(self, video, length, start=0.0, end=None, folders=None) -> Block:
         block = Block(uuid.uuid4().hex[:12], str(video), float(start), float(length if end is None else end),
@@ -91,16 +142,24 @@ class Sequence:
         if seconds - block.start < MIN_SECONDS or block.end - seconds < MIN_SECONDS:
             raise ValueError(_SHORT)
         second = Block(uuid.uuid4().hex[:12], block.video, float(seconds), block.end, block.length)
-        block.end = float(seconds); block.folders = {}; block.review = None
+        block.end = float(seconds); block.folders = {}; block.review = None; self._undecide(i)
         self.blocks.insert(i + 1, second)
+        self._drop(self.links_touching(id))
         return block, second
 
     def delete(self, id) -> None:
         del self.blocks[self.index(id)]
+        self.gaps.pop(id, None)
+        for ids in self._decided.values():
+            ids.discard(id)
+        self._drop(self.links_touching(id))
 
     def move(self, id, index) -> None:
+        before = [block.id for block in self.blocks]
         block = self.blocks.pop(self.index(id))
         self.blocks.insert(max(0, min(int(index), len(self.blocks))), block)
+        if [block.id for block in self.blocks] != before:
+            self._drop(self.links_touching(id) + [link for link in self.links if not self._neighbours(link)])
 
     def resize(self, id, start, end) -> None:
         block = self.block(id)
@@ -110,6 +169,8 @@ class Sequence:
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
             block.review = None
+            self._undecide(self.index(id))
+            self._drop(self.links_touching(id))
         block.start, block.end = start, end
 
     def remember(self, id, model, folder, start, end) -> None:
@@ -117,6 +178,8 @@ class Sequence:
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
             block.review = None
+            self._undecide(self.index(id))
+            self._drop(self.links_touching(id))
         block.start, block.end = float(start), float(end)
         block.folders[model] = str(folder)
 
@@ -127,20 +190,97 @@ class Sequence:
         block = self.block(id)
         block.review = None if value is None else _review(value, block.start, block.end)
 
-    def starts(self) -> list[float]:
+    def link(self, source, target, method=DEFAULT_METHOD, prints=(None, None)) -> Link:
+        source, target = tuple(source), tuple(target)
+        if self.index(target[0]) != self.index(source[0]) + 1:
+            raise ValueError(_NEIGHBOUR)
+        link = Link(source, target, _method(method), tuple(prints), model=self.model)
+        self._add(link)
+        self.gaps.setdefault(target[0], DEFAULT_GAP); self.decided.add(target[0])
+        return link
+
+    def _add(self, link) -> None:
+        self.links = [old for old in self.links
+                      if old.model != link.model or old.target != link.target and old.source != link.source] + [link]
+
+    def unlink(self, target) -> Link | None:
+        link = self.link_into(*target)
+        if link is not None:
+            self.links.remove(link)
+        return link
+
+    def link_into(self, block_id, person) -> Link | None:
+        return next((link for link in self.model_links() if link.target == (block_id, person)), None)
+
+    def link_out(self, block_id, person) -> Link | None:
+        return next((link for link in self.model_links() if link.source == (block_id, person)), None)
+
+    def chain(self, block_id, person) -> list[tuple]:
+        """The whole linked row of this person, from its first block to its last."""
+        first = (block_id, person)
+        while (link := self.link_into(*first)) is not None:
+            first = link.source
+        row = [first]
+        while (link := self.link_out(*row[-1])) is not None:
+            row.append(link.target)
+        return row
+
+    def links_touching(self, block_id) -> list[Link]:
+        """Every model's links that touch the block (an edit drops them all)."""
+        return [link for link in self.links if block_id in (link.source[0], link.target[0])]
+
+    def gap(self, later_block_id) -> float:
+        """The transition before this block: its length while a link crosses into it, else none."""
+        if not any(link.target[0] == later_block_id for link in self.model_links()):
+            return 0.0
+        return self.gaps.get(later_block_id, DEFAULT_GAP)
+
+    def set_gap(self, later_block_id, seconds) -> None:
+        if float(seconds) < _FRAME - _SAME:
+            raise ValueError('The transition must be at least one frame long.')
+        self.gaps[later_block_id] = float(seconds)
+
+    def set_method(self, target, method) -> None:
+        link = self.link_into(*target)
+        if link is None:
+            raise KeyError(target)
+        link.method = _method(method)
+
+    def _undecide(self, i) -> None:
+        """Block i lost its results: every model may link it, and the block after it, by itself again once tracked."""
+        for ids in self._decided.values():
+            ids.difference_update(block.id for block in self.blocks[i:i + 2])
+
+    def _neighbours(self, link) -> bool:
+        ids = [block.id for block in self.blocks]
+        return link.source[0] in ids and link.target[0] in ids and ids.index(link.target[0]) == ids.index(link.source[0]) + 1
+
+    def _drop(self, links) -> None:
+        gone = [link for link in self.links if any(link is other for other in links)]
+        self.links = [link for link in self.links if not any(link is other for other in gone)]
+        self.dropped.extend(gone)
+
+    def _layout(self) -> tuple[list[float], float]:
         out, at = [], 0.0
-        for block in self.blocks:
+        for i, block in enumerate(self.blocks):
+            if i:
+                at += self.gap(block.id)
             out.append(at); at += block.end - block.start
-        return out
+        return out, at
+
+    def starts(self) -> list[float]:
+        return self._layout()[0]
 
     def total(self) -> float:
-        return sum(block.end - block.start for block in self.blocks)
+        return self._layout()[1]
 
     def locate(self, seconds) -> tuple[Block, float] | None:
         if not self.blocks:
             return None
         starts = self.starts()
-        for block, at in zip(self.blocks, starts):
+        for i, (block, at) in enumerate(zip(self.blocks, starts)):
+            if i and seconds < at:   # inside the transition gap: the earlier block's end
+                return self.blocks[i - 1], self.blocks[i - 1].end
             if seconds < at + block.end - block.start:
                 return block, block.start + max(0.0, seconds - at)
         return self.blocks[-1], self.blocks[-1].end
@@ -153,10 +293,15 @@ class Sequence:
         return len(self.blocks) == 1   # one block, as today's single video or project, whatever its range
 
     def to_dict(self) -> dict:
+        links = [{'source': list(l.source), 'target': list(l.target), 'method': l.method, 'prints': list(l.prints),
+                  **({'built': dict(l.built)} if l.built is not None else {}), 'model': l.model} for l in self.links]
+        decided = {model: sorted(ids) for model, ids in self._decided.items() if isinstance(model, str) and ids}
         return {'version': VERSION, 'blocks': [{'id': b.id, 'video': b.video, 'start': b.start, 'end': b.end,
                                                 'length': b.length, 'folders': dict(b.folders),
                                                 **({'review': dict(b.review)} if b.review is not None else {})}
-                                               for b in self.blocks]}
+                                               for b in self.blocks],
+                **({'links': links} if links else {}), **({'gaps': dict(self.gaps)} if self.gaps else {}),
+                **({'decided': decided} if decided else {})}
 
     @classmethod
     def from_dict(cls, data) -> Sequence:
@@ -164,9 +309,22 @@ class Sequence:
             raise ValueError(_BAD)
         if data['version'] > VERSION:
             raise ValueError(_NEWER)
-        if not isinstance(data.get('blocks'), list):
+        links, gaps, decided = data.get('links', []), data.get('gaps', {}), data.get('decided', {})
+        if isinstance(decided, list) and all(isinstance(k, str) for k in decided):
+            decided = {}   # a file from before links had a model: decided for no model
+        if not isinstance(data.get('blocks'), list) or not isinstance(links, list) or not isinstance(gaps, dict) \
+                or not isinstance(decided, dict) or not all(isinstance(k, str) for k in [*gaps, *decided]) \
+                or not all(isinstance(v, list) and all(isinstance(k, str) for k in v) for v in decided.values()):
             raise ValueError(_BAD)
-        return cls([_block(item) for item in data['blocks']])
+        sequence = cls([_block(item) for item in data['blocks']])
+        ids = {block.id for block in sequence.blocks}
+        gaps = {k: _number(v) for k, v in gaps.items()}
+        sequence.gaps = {k: v for k, v in gaps.items() if k in ids and math.isfinite(v) and v >= _FRAME - _SAME}
+        sequence._decided = {model: {k for k in v if k in ids} for model, v in decided.items()}
+        for link in map(_link, links):   # to a missing block, between non-neighbours, by an unknown method or of no model: dropped
+            if link.method in METHODS and isinstance(link.model, str) and sequence._neighbours(link):
+                sequence._add(link)
+        return sequence
 
     def save(self, path=None) -> None:
         if path is not None:

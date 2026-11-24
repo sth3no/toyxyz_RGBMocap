@@ -1,5 +1,249 @@
 # Source package validation
 
+## Sequence: people who continue across videos, stage 2 (2026-11-24)
+
+A person of one block linked to a person of the block before (by drag, the
+bar's menu, or by the app when both neighbouring blocks have one tracked
+person), the transition between them with its method and length, **Join**
+(import of each later take into the first block's scene, the export after it,
+the links' methods, Fill hidden ranges) through the window's own job queue,
+taking a join back, opening and exporting the joined animation. Everything
+below ran offscreen on one PC (Windows 11). The tests and pictures below used
+synthetic takes without a worker process or the GPU; the real run with ExMR
+workers is described in its own part at the end of this section.
+
+- **Tests** (unittest, Qt offscreen, `paths.HOME` in a temporary folder), one
+  covering run after the last change: `test_sequence` 21, `test_sequence_state`
+  15, `test_sequence_links` 10, `test_sequence_view` 28, `test_sequence_window`
+  66, `test_sequence_join` 27, `test_tutorial_window` 36: **203 run, 203
+  passed** in 197 s; the output holds only ffmpeg metadata lines and
+  `moov atom not found` from existing fixtures. `test_sequence_join` uses the
+  real `MainWindow` with blocks of 3-second 64×48 ffmpeg videos whose ExMR clip
+  folders hold synthetic finished takes; the queue starts no worker: each job
+  is played as it would end, with `take_import.main` and `take_join.main` run
+  in-process for real and their events sent through the window's handler, and
+  the export job writing the bone preview it leaves. The whole `tests` folder
+  was not run in this step.
+- **Final fix wave** (same conditions): HTD Refine and ExMR without Static
+  Camera refused when linking, the copy recorded while its export still runs,
+  link drops off the rows ignored, the Transition dialog's least length, the
+  status texts, the automatic-link mark cleared by edits that clear results, and
+  Join's people-list check before opening the block. One covering run of the
+  same modules after the change: `test_sequence` 22, `test_sequence_state` 15,
+  `test_sequence_links` 11, `test_sequence_view` 30, `test_sequence_window` 69,
+  `test_sequence_join` 29, `test_tutorial_window` 36: **212 run, 212 passed**
+  in 209 s. The whole `tests` folder was not run in this step.
+- **Pictures looked at** (records, not in the package): the real window
+  rendered offscreen at 1440×880, dark and light, with two blocks built as
+  `test_sequence_join` builds them (Anna and Dan in the first video, Ben and
+  Cleo in the second), Ben linked to Anna, the Join answered **Yes** and its
+  jobs played in-process: `{dark,light}_linked.png` (hatched `1.0 s Smooth
+  join` piece, Dan and Cleo unlinked), `{dark,light}_dialog_automatic.png`
+  and `{dark,light}_dialog_refused.png` (the Transition dialog with the
+  Experimental note, and OK refused with `Smooth join is limited to 30 frames;
+  this range has 90.`), `{dark,light}_join_question.png`,
+  `{dark,light}_joined.png` (solid piece, one outline, `Anna | joined`, the
+  loaded joined take 7.00 s long), `{dark,light}_out_of_date.png` (after the
+  transition was changed to 0.5 s: dashed outline, `join out of date`) and
+  the same three timelines as `*_window.png`. The first dialog pictures showed
+  the second line of the note cut off; the dialog now grows with its note, and
+  a test checks it. The synthetic takes are not real motion files, so the 3D
+  view of the window pictures is empty and the status bar says `Cannot load
+  the motion preview. 'frames_file'`; the timeline is what they show.
+- **Not run in the tests and pictures:** real videos and models (see the real
+  run below), a real screen and real mouse gestures on it, UI scales other than
+  100 %, three or more linked blocks outside the tests, long blocks.
+
+### Real run of people who continue across videos
+
+The real `MainWindow`, Qt offscreen at 1440×880, real worker processes for
+every job, ExMR with **Static Camera** and default options (HTD Refine, FootMR
+and HandFlow off, Compute mode Automatic, result `corrected_initial`, Motion
+Correction on), Resource Safety on, Kimodo installed. Code at e8dbe54. Video A:
+the juggler clip of the stage 1 run, cut at the window frame at 6 s, so block A
+is 0–6.0023 s (180 frames at 30 fps). Video B: 6 s cut from A at 60 s with the
+bundled ffmpeg (359 frames at 60 fps, 5.983 s), the whole video as block B
+(179 frames at 30 fps). The job workspace and the sequences folder were
+redirected to a scratch folder, and a guard refused any job outside it (it
+refused none). Dialogs were answered by patches (the questions Yes), and the
+controller methods `join`, `open_joined`, `export_joined`, `set_transition` and
+`unlink` were called from code. The final run took 395 s (a first attempt
+stopped on an error in the driver, not in the app, after the same Join).
+
+| Step | Wall | Outcome |
+| --- | --- | --- |
+| 1 Open A, Add B, cut/delete, track both | 266.8 s | OK |
+| 2 Automatic link | 4.2 s | Link made; its message not shown (D1) |
+| 3 Join, 1.0 s Smooth join | 31.3 s (Join 27.2 s) | OK, row `joined` |
+| 4 Open the joined animation | 8.0 s | OK, 389 frames |
+| 5 Export the joined take (BVH, FBX) | 8.3 s | OK |
+| 8 Save / New / reopen (after step 5) | 6.8 s | OK, `joined` again |
+| 6 Automatic 3.0 s, Join again | 62.3 s (Join 51.2 s) | OK, 449 frames, one copy |
+| 7 Unlink | 4.4 s | OK, no file deleted; its message not shown (D2) |
+
+1. **Track.** Block A: Find person 33.9 s (1 person, peak tree RSS 1.85 GiB,
+   GPU 1544 MiB), Reconstruct 3D 91.7 s (peak RSS 12.05 GiB, GPU 7184 MiB,
+   least free RAM 7.5 GiB). Block B: Find person 33.4 s (1 person),
+   Reconstruct 3D 92.6 s (peak RSS 11.23 GiB, GPU 7184 MiB). Takes A 0–180,
+   B 0–179.
+2. **Automatic link.** Made when B's Reconstruct job ended: source A person 1,
+   target B person 1, method `smooth`, gap 1.0 s (30 frames), both
+   fingerprints kept, B in `decided`, row `linked`, Join enabled. Level 2
+   showed one People row with a hatched `1.0 s` piece and `2 blocks | 0:13.0`.
+3. **Join, Smooth join 1.0 s.** One busy period of 27.2 s: `take_import`
+   (Console `Import Take: 4.97 s`), its export, then `take_join` (`Fill Hidden
+   Ranges: 6.52 s`), Motion Correction and export; the second batch started
+   only after the first had ended, and no job started while another ran. Peak
+   tree RSS 1.26 GiB, GPU 900 MiB (baseline). The status texts followed the
+   guide, ending `Joined Person 1 across 2 blocks. Double-click the row to open
+   it.`; the worker's progress replaced the Join step text within 2–6 s, as
+   the guide says. `link.built` and A's people list (own take, import 210–389,
+   join 0–389, `gap_fill` `180_210` Smooth) were as designed.
+4. **Open joined.** Block A at level 3 on the fill take, **389 frames = 180 +
+   30 + 179**, `Clip: 1–389 | 12.97 s`, Hidden ranges `Frames 181–210 (1.0 s)`
+   with Smooth join; level 2 showed the solid piece and one outline. Seam jumps
+   per frame: into the first generated frame 0.53 mm pelvis horizontal,
+   0.10 mm vertical, 0.05° root, 1.16° largest joint; out of the last 0.64 mm,
+   0.05 mm, 0.05°, 1.16°. The whole take: pelvis 1.8 / 7.1 / 7.2 mm and joint
+   5.0 / 13.5 / 15.6° (median / p99 / max), so the seam is no jump above the
+   take's own motion.
+5. **Export** through the window's own export: BVH (`copy_bvh`, 2.5 s)
+   811,304 bytes, 389 frames, Frame Time 0.0333333; FBX (`save_fbx`, 3.0 s)
+   707,244 bytes. The Console said `30 of 389 frames are interpolated across
+   hidden ranges.` for each.
+6. **Save / reopen.** The file held both blocks, the link with its `built`,
+   the gap and `decided`; after New Sequence and Open the links were identical,
+   the row `joined`, block A loaded on the joined take.
+7. **Automatic 3.0 s, Join again.** `Transition set to 3 s Automatic
+   (Experimental).`, row `out of date`. The earlier copy was taken out of the
+   take list before the import job. Jobs as in step 3, 51.2 s in all (`Import
+   Take: 4.94 s`, `Fill Hidden Ranges: 30.11 s`), tree RSS 3.24 GiB, GPU
+   2219 MiB; Kimodo 100 frames in 17.8 s, known poses kept to 2.28 cm on
+   average, peak video memory 1.13 GiB. One imported copy (270–449), joined
+   take **449 frames = 180 + 90 + 179**, `built.gap` 90, row `joined`. Seam:
+   into the first generated frame 4.2 mm, 1.5 mm, 0.20°, 12.3° (right wrist);
+   out of the last 3.8 mm, 1.1 mm, 0.53°, 5.4°. Inside the generated range the
+   largest joint step was **27.0° at frame 182** (23.5° at 183, 22.0° at 181),
+   above anything in the captured parts (max 15.6°); the largest pelvis step
+   inside was 5.6 mm.
+8. **Unlink** asked once and took the join apart: A's take list back to its
+   own take, in use again, links empty; 398 files / 77,814,139 bytes in A's
+   take folders before and after, all five take folders still there. B was not
+   linked again by itself, as the guide says.
+
+**Defects found, fixed in this commit:**
+- **D1.** The automatic link's message (`… now continues … from …`) never
+  reached the user: the link is made when the block's Reconstruct job ends, and
+  the window's `Complete. Total time…` text replaced it in the same turn; it
+  was not in the Console either.
+- **D2.** After Unlink, `… no longer continues …` was replaced at once by
+  `Motion loaded…`, because Unlink reloads the person's own take.
+
+Every message the sequence writes about links (the automatic link, people
+changed so links were removed, link, unlink, transition set, the take-back
+texts) now goes to the Console too, and is written to the status bar again
+once the event loop is idle, never over a newer message of the sequence and
+never while a job runs. Tests in `test_sequence_window` and
+`test_sequence_join` play a job end followed by the completion text and an
+Unlink followed by the reload's `Motion loaded…`. One covering run after the
+change: `test_sequence_window`, `test_sequence_join`, `test_sequence_links`,
+`test_sequence`: **134 run, 134 passed** in 138 s (the output holds only ffmpeg
+metadata lines and `moov atom not found` from existing fixtures). The real run
+was not repeated after the fix.
+
+**Observations:** `gap_fill` keeps the old `180_210` Smooth choice after the
+rejoin at 180–270 and keeps both entries after Unlink (harmless now; a later
+manual import at frame 210 would find a Smooth choice waiting). The Automatic
+transition's right-wrist spike of 22–27° per frame at its first generated
+frames is about 1.7× the largest captured step and may show as a wrist snap;
+pelvis and root rotation are continuous. Console warnings came from the
+workers only (MANO 10 shape coefficients, HaMeR `torch.cross`, YOLO NMS time
+limit); no error, traceback, message box or guard refusal. The owner's
+projects folder was the same before and after, with no `sequences` folder.
+
+**Not covered:** the Join button for all rows, the bar menu and double-click
+(controller methods were called), the Transition dialog and drag-linking,
+Cancel Job during Join, a failed or refused Join, three or more blocks, two
+people, GVHMR, the default export file name ending in `_filled`, the FBX frame
+count and opening the files in Blender, the ` · filled` take selector text
+(cut off in the picture), a real on-screen window with its 3D rig and real
+mouse input, the light theme and other UI scales.
+
+## Sequence: real run of stage 1 with ExMR (2026-11-24)
+
+The real `MainWindow`, Qt offscreen at 1440×880, ExMR with **Static Camera**
+and default options (HTD Refine, FootMR and HandFlow off, Compute mode
+Automatic, result `corrected_initial`, Motion Correction on), Resource Safety
+on. Video A: the looped juggler clip of the long-video runs (464×832, 10,934
+frames, 59.64 fps variable, 183.32 s). Video B: 10 s cut from A at 60 s with
+the bundled ffmpeg (596 frames, 59.70 fps, 9.98 s). The job workspace and the
+sequences folder were redirected to a scratch folder, and a guard refused any
+job outside it (it refused none). The final run took 182 s.
+
+| Step | Wall | Outcome |
+| --- | --- | --- |
+| 1 Open Video A + Add Video B | 3.2 s | OK |
+| 2 Cut A at 6 s, delete the second piece | 6.6 s | OK |
+| 3 Open A, Find person, Reconstruct 3D | 132.5 s | OK |
+| 4 Back to the sequence | 1.0 s | OK |
+| 5 Select B, select A again | 4.6 s | OK |
+| 6 GVHMR and back to ExMR | 20.5 s | OK for the workspace; once an error status, not reproduced |
+| 7 Save / New / Open | 4.6 s | OK |
+| 8 Pictures | 6.4 s | OK |
+
+1. **Open / Add.** One block `juggler_3min.mp4` 0–183.3217 s, loaded, `not
+   tracked`; the second block 0–9.9833 s, `not tracked`. The view went to level
+   1 and the sequence was saved at once in the redirected folder.
+2. **Cut / Delete.** The cut at frame 358 (6.0023 s, the window's own frame,
+   not exactly 6.000 s) gave 3 blocks 0–6.0023, 6.0023–183.3217 and B; the
+   second piece was loaded with trim 358–10934. Delete left 2 blocks, summary
+   `2 blocks | 0:16.0`, and loaded the next block (B), trim 0–596.
+3. **Track A.** Level 3, trim 0–358, processing range 0–6.0023 s. Find person:
+   36.7 s wall (Console `Find People: 29.02 s`), 1 person, peak tree RSS 1.85
+   GiB, GPU 1608 MiB. Reconstruct 3D: 93.7 s wall, status `Complete. Total
+   time: 1m 31s.` (Prepare Person Motion 1.48 s, keypoints 47.25 s, body
+   features 20.98 s, hand features 6.38 s, Reconstruct Motion 2.36 s, Process
+   ExMR Motion 77.83 s, Motion Correction 3.25 s, Export 4.55 s);
+   peak driver-tree RSS 12.01 GiB, peak GPU used 7235 MiB (whole GPU, baseline
+   about 950), least free RAM 8.67 GiB; no memory stop, no modal dialog. One
+   take of 180 frames at 30 fps.
+4. **Back.** Level 1; block A `tracked`, 180 frames, Person 1 checked with one
+   finished take 0–180, its ExMR folder inside the scratch workspace.
+5. **Select.** B: video B, no project, trim = its range, `not tracked`. A again:
+   its project loaded in 2.5 s with motion, still `tracked`.
+6. **Model switch.** GVHMR: the window kept A's workspace with `GVHMR has no
+   saved motion in this project. Use Reconstruct 3D.`, block A read `not
+   tracked` for GVHMR and kept its ExMR folder. Back to ExMR: A's take and
+   motion again, `tracked`. The status bar then read `Cannot load the motion
+   preview. Target motion changed while loading`, although the motion was
+   loaded; four control runs (project opened with and without the sequence,
+   and twice through the saved sequence file) did not show it again. The
+   result in use changed on the switch, so a preview load raced with it; a
+   part of the sequence in it could not be shown. Recorded as a timing
+   observation.
+7. **Save / reopen.** The file held both blocks (A 0–6.002300774343028 with its
+   ExMR folder, B 0–9.98333). New Sequence: one block of the whole video, no
+   file, the window kept A's project. Open: blocks A and B with the same ids, A
+   `tracked` and loaded first, level 1, `2 blocks | 0:16.0`.
+8. **Pictures** (dark, 100 %): level 1 with both block labels and the bar, level
+   2 with one `Person 1` bar under block 1, level 3 with `Clip: 1–180 | 6.00 s`
+   and the Motion and contact rows; nothing clipped. The window skips the rig
+   preview offscreen, so its 3D view showed no body.
+
+No defect of the sequence feature was found: every step behaved as the user
+guide describes, with no exception and no modal dialog. Console warnings came
+from the ExMR worker only (the MANO 10 shape coefficients warning and a HaMeR
+`torch.cross` deprecation). The owner's projects folder was the same before
+and after, with no `sequences` folder in it.
+
+**Not covered:** drag-resize and move of blocks, wheel navigation between the
+levels, the "Change it?" question on cutting a tracked block, Reconstruct in
+parts and Fill on a block, a job on block B, GVHMR or FlowHMR tracking of a
+block, Review Range and Auto-advance playback, Open Project and Add Project to
+Sequence, a missing video, two people, the light theme and other UI scales, a
+real on-screen window with its 3D rendering, and real mouse clicks (signals and
+button clicks from code were used).
+
 ## Combined Windows integration (2026-11-24)
 
 The local integration combines the fork toolkit, current sequence timeline and
@@ -21,6 +265,19 @@ part ranges formed one continuous overlap chain in the synthetic scene.
 The full Windows regression run completed 1,224 tests with 1,206 passing and
 18 skipped. The targeted follow-up passed 13 tests, including the mixed-length
 retry case on both scene frame grids. These checks did not run AI inference on the GPU.
+
+## Reconstruction recovery and sequence integration (2026-11-24)
+
+The combined Windows suite ran 1,318 tests with 1,300 passing and 18 skipped.
+The Import Take regression used a completed receiver and a superseded take
+with a later ending frame. Import continued from the completed take. The
+sequence and hidden-range tests ran offscreen with synthetic clips and takes.
+
+A stdio client initialized and pinged the MCP toolkit from both the integration
+checkout and the installed CLI entry point. Each listed 40 tools. The installed
+entry point completed the read-only ExMR check through `job_status`, reporting a
+verified runtime and no missing models. The clients closed both processes by
+closing stdin. This integration check did not start a desktop or run GPU inference.
 
 ## Native FBX import in Unreal 5.8.4 (2026-11-24)
 

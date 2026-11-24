@@ -12,6 +12,16 @@ from test_take_joins import J,build
 OUT_OF_DATE='Person detection is out of date. Run Find person again.'
 
 
+def overlap(root):
+    """build()'s scene turned into two parts sharing frames 90-100, joined over them without a fill method: fill.json lists
+    the shared frames and no hidden range, and people.json has the marks Reconstruct in parts writes."""
+    from mocap import hidden_ranges as h
+    state=ps.load_people(root);person=state['people'][0];person['takes'][1]['first']=90
+    person['gap_fill']={h.seam_key(s):h.parts_mark(s) for s in h.seams(person['takes']) if s.get('kind')};ps.save_people(root,state)
+    path=root/J/'fill.json';fill=json.loads(path.read_text(encoding='utf-8'));fill['sources'][1]['first']=90
+    fill.update(gaps=[],overlaps=[dict(first=90,end=100)]);path.write_text(json.dumps(fill),encoding='utf-8')
+
+
 class StateTest(unittest.TestCase):
     """A 10 s ExMR clip folder (frames 0-299 of its video) after Find person with Anna and Ben."""
     def setUp(self):
@@ -81,6 +91,20 @@ class StateTest(unittest.TestCase):
         state=self.read()
         self.assertEqual([(t.first,t.end,t.ready,t.joined) for t in state.people[0].takes],[(0,200,True,True)])
         self.assertEqual(state.kind,'tracked')   # the joined take stands in for its two unfinished sources
+    def test_take_says_filled(self):
+        """A join made with a fill method holds generated frames; a join of parts over the frames they share holds none."""
+        self.root.mkdir();root=build(self.root)[0];(root/'project.json').write_text(json.dumps(self.manifest),encoding='utf-8')
+        self.assertEqual([(t.first,t.end,t.joined,t.filled) for t in self.read().people[0].takes],[(0,200,True,True)])
+        overlap(root)
+        self.assertTrue(ps.join_current(root,ps.load_people(root)['people'][0],ps.load_people(root)['people'][0]['joins'][0]))
+        self.assertEqual([(t.first,t.end,t.joined,t.filled) for t in self.read().people[0].takes],[(0,200,True,False)])
+        state=ps.load_people(root);state['people'][0]['gap_fill']={};ps.save_people(root,state)   # the join is not in use: its sources are
+        self.assertEqual([(t.first,t.end,t.joined,t.filled) for t in self.read().people[0].takes],[(0,100,False,False),(90,200,False,False)])
+    def test_people_list_fingerprint(self):
+        self.assertIsNone(self.read().fingerprint)   # no clip folder
+        self.people();self.assertIsNone(self.read().fingerprint)   # a list without one
+        state=ps.load_people(self.root);state['fingerprint']='abc';ps.save_people(self.root,state)
+        self.assertEqual(self.read().fingerprint,'abc')
     def test_stale_people_list_is_reported(self):
         self.people();(self.root/'input.mp4').write_bytes(b'another video')
         state=self.read()

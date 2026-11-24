@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from .clip_range import format_time
@@ -18,6 +18,19 @@ LEAST = MIN_SECONDS * (1 + 1e-9)  # a dragged edge keeps a range the document ac
 STEPS = (.1, .2, .5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000, 36000)
 HINT = 'Add a video to start a sequence.'
 VIDEO = '#6289ad'
+GENERATED = ('#d8a24a', '#8a4809')   # generated frames, as TimelineSlider paints its fill_runs
+METHOD_LABELS = {'smooth': 'Smooth join', 'auto': 'Automatic (Experimental)'}   # the Hidden ranges panel's names
+SUFFIX = {'joined': 'joined', 'out of date': 'join out of date'}
+PIECE_TIP = ("Generated transition between the end of {}'s last take and the start of {}'s take, wherever they sit in "
+             "their blocks. Click to change it.")
+
+
+def piece_text(seconds, method):
+    return f"{seconds:.1f} s {METHOD_LABELS[method].replace(' (Experimental)', '')}"
+
+
+def piece_tip(seconds, method, earlier, later):
+    return f'{seconds:.1f} s {METHOD_LABELS[method]}\n' + PIECE_TIP.format(earlier, later)
 
 
 class SequenceView(QWidget):
@@ -27,6 +40,10 @@ class SequenceView(QWidget):
     moved = Signal(str, int)
     resized = Signal(str, float, float)  # source seconds, on release
     removed = Signal(str)
+    linked = Signal(object, object)            # source, target: (block id, person id) each
+    unlinked = Signal(object)                  # target
+    transition_clicked = Signal(object)        # target of the link whose piece was clicked
+    menu_requested = Signal(str, object, object)  # block id, person id, global QPoint
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -34,6 +51,7 @@ class SequenceView(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self.setMouseTracking(True)
         self.sequence, self.states = Sequence(), {}
+        self.rows, self.row_states = None, {}
         self.current = self.busy = None
         self.playhead = 0.
         self.view_start, self.view_span = 0., None
@@ -56,14 +74,18 @@ class SequenceView(QWidget):
     @editable.setter
     def editable(self, value):
         self._editable = bool(value)
-        if not self._editable and self._press and self._press['mode'] in ('start', 'end', 'body'):
-            self._press = None
+        if not self._editable and self._press and self._press['mode'] in ('start', 'end', 'body', 'person', 'piece'):
+            self._press = None;self.setCursor(Qt.ArrowCursor)
         self.update()
 
     # What is shown
 
-    def show_sequence(self, sequence, states):
+    def show_sequence(self, sequence, states, rows=None, row_states=None):
+        """`rows`: sequence_links.rows, the row of every (block id, person id); None puts each person at its index.
+        `row_states`: link target -> 'linked' | 'joined' | 'out of date'. A gesture in progress ends."""
+        if self._press is not None:self.setCursor(Qt.ArrowCursor)
         self.sequence, self.states, self._press = sequence, dict(states), None
+        self.rows, self.row_states = (None if rows is None else dict(rows)), dict(row_states or {})
         if self.view_span is not None and self.view_span >= .999 * self.total():
             self.view_span = None
         self._clamp_view()
@@ -110,7 +132,14 @@ class SequenceView(QWidget):
             for block, _, rect in self._layout():
                 for i, person in enumerate(self._people(block)):
                     if block.id == block_id and person.id == person_id:
-                        return self._cell(rect, i).intersected(self._track()).toAlignedRect()
+                        return self._cell(rect, self._row(block.id, i, person)).intersected(self._track()).toAlignedRect()
+        return QRect()
+
+    def transition_rect(self, target):
+        """The transition piece before the linked person `target` (block id, person id), as drawn; empty at level 1."""
+        for link, rect in self._pieces():
+            if link.target == tuple(target):
+                return rect.intersected(self._track()).toAlignedRect()
         return QRect()
 
     # Geometry
@@ -154,6 +183,62 @@ class SequenceView(QWidget):
         state = self.states.get(block.id)
         return state.people if state else []
 
+    def _row(self, block_id, index, person):
+        return index if self.rows is None else self.rows.get((block_id, person.id), index)
+
+    def _row_count(self):
+        return max((self._row(block.id, i, person) + 1 for block in self.sequence.blocks
+                    for i, person in enumerate(self._people(block))), default=0)
+
+    def _person_in_row(self, block, row):
+        return next((person for i, person in enumerate(self._people(block)) if self._row(block.id, i, person) == row), None)
+
+    def _pieces(self, layout=None):
+        """(link, rect) of each transition piece: the gap between the two blocks, in the row of the link's later person."""
+        if self.level() == 1:
+            return []
+        rects, out = {block.id: rect for block, _, rect in layout or self._layout()}, []
+        for link in self.sequence.model_links():
+            earlier, later = rects.get(link.source[0]), rects.get(link.target[0])
+            people = self._people(self.sequence.block(link.target[0])) if later is not None else []
+            index = next((i for i, person in enumerate(people) if person.id == link.target[1]), None)
+            if earlier is None or index is None or later.left() <= earlier.right():continue
+            cell = self._cell(later, self._row(link.target[0], index, people[index]))
+            out.append((link, QRectF(earlier.right(), cell.top(), later.left() - earlier.right(), cell.height())))
+        return out
+
+    def _piece_at(self, point):
+        return next((link for link, rect in self._pieces() if rect.contains(point)), None)
+
+    def _name(self, ident):
+        return next((person.name for person in self._people(self.sequence.block(ident[0])) if person.id == ident[1]), f'Person {ident[1]}')
+
+    def _row_state(self, ident):
+        """'linked', 'joined' or 'out of date' of the linked row holding `ident`; None when it has no link."""
+        chain = self.sequence.chain(*ident)
+        if len(chain) < 2:
+            return None
+        return next((self.row_states[t] for t in chain[1:] if t in self.row_states), 'linked')
+
+    def _drop(self, press, point):
+        """What dropping the dragged person at `point` does: ('link', source) on a row of a person of the block before,
+        ('unlink', None) on a drawn row of its own block that holds nobody of the block before, else None (outside the
+        widget, in the ruler or the Video row, below the last row)."""
+        x, y = point.x(), point.y()
+        if not (0 <= x <= self.width() and self.TRACK_TOP + self.TRACK_HEIGHT <= y <= self.height()):
+            return None
+        row, block, person = int((y - self.TRACK_TOP) // self.TRACK_HEIGHT) - 1, press['block'], press['person']
+        if row >= self._row_count():
+            return None
+        i = self.sequence.index(block.id)
+        before = self._person_in_row(self.sequence.blocks[i - 1], row) if i else None
+        link = self.sequence.link_into(block.id, person.id)
+        if before is not None:
+            source = (self.sequence.blocks[i - 1].id, before.id)
+            return None if link is not None and link.source == source else ('link', source)
+        own = next((rect for b, _, rect in self._layout() if b.id == block.id), None)
+        return ('unlink', None) if link is not None and own is not None and own.left() <= x <= own.right() else None
+
     def _block_at(self, x):
         """The block whose drawn rectangle holds x; the narrowest wins, so a tiny block beside a long one stays clickable."""
         hits = [(rect.width(), (block, at, rect)) for block, at, rect in self._layout() if rect.left() <= x <= rect.right()]
@@ -170,9 +255,9 @@ class SequenceView(QWidget):
         row = max(0, int((y - self.TRACK_TOP) // self.TRACK_HEIGHT))
         if found and row == 0:
             return 'block', found, None
-        people = self._people(found[0]) if found and self.level() == 2 else []
-        if 0 < row <= len(people):
-            return 'person', found, people[row - 1]
+        person = self._person_in_row(found[0], row - 1) if found and row > 0 and self.level() == 2 else None
+        if person is not None:
+            return 'person', found, person
         return 'empty', None, None
 
     def _edge(self, rect, x):
@@ -211,7 +296,10 @@ class SequenceView(QWidget):
             self.setFocus(Qt.MouseFocusReason)
             hit = self._hit(point)
             self._press = None
-            if hit and hit[0] in ('ruler', 'empty'):
+            piece = self._piece_at(point) if self.editable and hit else None
+            if piece is not None:
+                self._press = dict(mode='piece', target=piece.target, x=point.x(), far=0., dragged=False)
+            elif hit and hit[0] in ('ruler', 'empty'):
                 self._press = dict(mode='scrub', x=point.x())
                 self._scrub(point.x(), False)
             elif hit:
@@ -219,8 +307,12 @@ class SequenceView(QWidget):
                 mode = 'click'
                 if self.editable and hit[0] == 'block':
                     mode = self._edge(rect, point.x()) or 'body'
-                self._press = dict(mode=mode, block=block, at=at, x=point.x(), far=0., dragged=False)
+                elif self.editable and hit[0] == 'person':
+                    mode = 'person'
+                self._press = dict(mode=mode, block=block, at=at, person=hit[2], x=point.x(), y=point.y(), far=0., dragged=False)
                 if mode in ('start', 'end'):self.setCursor(Qt.SizeHorCursor)
+        elif event.button() == Qt.RightButton and self.editable and (hit := self._hit(point)) and hit[0] == 'person':
+            self.menu_requested.emit(hit[1][0].id, hit[2].id, event.globalPosition().toPoint())
         else:
             super().mousePressEvent(event)
             return
@@ -248,6 +340,10 @@ class SequenceView(QWidget):
             elif press['mode'] == 'body' and press['far'] > ui_px(8):
                 press.update(dragged=True, dx=dx, to=self._drop_index(press['block'].id, point.x()))
                 self.setCursor(Qt.ClosedHandCursor)
+            elif press['mode'] == 'person' and (press['dragged'] or abs(point.y() - press['y']) > ui_px(8)):
+                # A vertical drag of a person's bar links it; it never moves the block.
+                press.update(dragged=True, dx=dx, dy=point.y() - press['y'], drop=self._drop(press, point))
+                self.setCursor(Qt.ClosedHandCursor)
             self.update()
         event.accept()
 
@@ -265,6 +361,12 @@ class SequenceView(QWidget):
             elif press['mode'] == 'body' and press['dragged']:
                 to = self._drop_index(block.id, event.position().x())
                 if to != self.sequence.index(block.id):self.moved.emit(block.id, to)
+            elif press['mode'] == 'person' and press['dragged']:
+                drop = self._drop(press, event.position())
+                if drop and drop[0] == 'link':self.linked.emit(drop[1], (block.id, press['person'].id))
+                elif drop:self.unlinked.emit((block.id, press['person'].id))
+            elif press['mode'] == 'piece':
+                if press['far'] <= ui_px(8):self.transition_clicked.emit(press['target'])
             elif press['far'] <= ui_px(8):
                 self._click(press)
             self.setCursor(Qt.ArrowCursor)
@@ -318,8 +420,11 @@ class SequenceView(QWidget):
     def event(self, event):
         if event.type() == QEvent.ToolTip:
             hit = self._hit(QPointF(event.pos()))
+            piece = self._piece_at(QPointF(event.pos())) if hit else None
             text = ''
-            if hit and hit[0] == 'block':
+            if piece is not None:
+                text = piece_tip(self.sequence.gap(piece.target[0]), piece.method, self._name(piece.source), self._name(piece.target))
+            elif hit and hit[0] == 'block':
                 state = self.states.get(hit[1][0].id)
                 text = '\n'.join(filter(None, (hit[1][0].video, state.reason if state else '')))
             elif hit and hit[0] == 'person':
@@ -342,17 +447,25 @@ class SequenceView(QWidget):
             p.drawText(QRectF(0, self.RULER_HEIGHT, self.width(), self.height() - self.RULER_HEIGHT), Qt.AlignCenter, HINT)
             return
         layout = sorted(self._layout(), key=lambda item: -item[2].width())  # a tiny block is drawn over a long one
-        people_rows = max((len(self._people(block)) for block, _, _ in layout), default=0) if self.level() == 2 else 0
+        people_rows = self._row_count() if self.level() == 2 else 0
+        pieces = self._pieces(layout) if people_rows else []
+        chains = {self.sequence.chain(*link.target)[0]: self._row_state(link.target) for link in self.sequence.model_links()}
         track = self._track()
         p.save()
         p.setClipRect(track)
+        bars = {}
         for block, at, rect in layout:
             self._paint_block(p, block, rect)
             for i, person in enumerate(self._people(block) if people_rows else ()):
-                self._paint_person(p, block, at, rect, i, person)
+                bars[(block.id, person.id)] = self._paint_person(p, block, at, rect, self._row(block.id, i, person), person,
+                                                                 SUFFIX.get(chains.get((block.id, person.id))))
+        for link, rect in pieces:
+            self._paint_piece(p, link, rect)
         self._paint_grid(p)
         for block, at, rect in layout:
             self._paint_label(p, block, rect)
+        for first, row_state in chains.items():
+            if people_rows and row_state in SUFFIX:self._paint_row(p, first, row_state, bars, pieces)
         self._paint_drag(p, layout)
         p.restore()
         p.setPen(QColor(theme_color('#aaaaaa')))
@@ -383,26 +496,61 @@ class SequenceView(QWidget):
             p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(theme_color('#d9e8fa')), 1.5))
             p.drawRect(shown.adjusted(.75, .75, -.75, -.75))
 
-    def _paint_person(self, p, block, at, rect, index, person):
-        state, cell = self.states[block.id], self._cell(rect, index)
-        color = QColor(theme_color(person.color))
-        bars = []
+    def _bars(self, block, at, cell, person):
+        """(rect, take) of each of the person's takes inside its cell."""
+        fps, out = self.states[block.id].fps, []
         for take in person.takes:
-            left = max(cell.left(), self.x_of(at + take.first / state.fps))
-            right = min(cell.right(), self.x_of(at + take.end / state.fps))
-            if right <= left:continue
-            bar = QRectF(left, cell.top(), max(1., right - left), cell.height());bars.append(bar)
+            left = max(cell.left(), self.x_of(at + take.first / fps))
+            right = min(cell.right(), self.x_of(at + take.end / fps))
+            if right > left:out.append((QRectF(left, cell.top(), max(1., right - left), cell.height()), take))
+        return out
+
+    def _paint_person(self, p, block, at, rect, row, person, suffix=None):
+        """Paint the person's bars in its row and return their rects; `suffix` follows the name (a joined row's state)."""
+        cell = self._cell(rect, row)
+        color = QColor(theme_color(person.color))
+        bars = self._bars(block, at, cell, person)
+        for bar, take in bars:
             tint = QColor(color);tint.setAlpha(80 if take.ready else 25)
             p.fillRect(bar, tint)
             if not take.ready:
                 p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1, Qt.DashLine));p.drawRect(bar.adjusted(.5, .5, -.5, -.5))
         if bars:
-            left = max(self.LEFT, bars[0].left()) + ui_px(6)
+            left = max(self.LEFT, bars[0][0].left()) + ui_px(6)
             width = min(self.width() - self.RIGHT, cell.right()) - left - ui_px(6)
             if width > ui_px(10):
                 p.setPen(QColor(theme_color('#aebeb4')))
                 p.drawText(QRectF(left, cell.top(), width, cell.height()), Qt.AlignVCenter,
-                           self.fontMetrics().elidedText(person.name, Qt.ElideRight, round(width)))
+                           self.fontMetrics().elidedText(' | '.join(filter(None, (person.name, suffix))), Qt.ElideRight, round(width)))
+        return [bar for bar, _ in bars]
+
+    def _paint_piece(self, p, link, rect):
+        """The generated transition: hatched in the colour of generated frames, solid once the row is joined."""
+        color, joined = QColor(theme_color(*GENERATED)), self._row_state(link.target) == 'joined'
+        tint = QColor(color);tint.setAlpha(120 if joined else 35)
+        p.fillRect(rect, tint)
+        if not joined:
+            hatch = QColor(color);hatch.setAlpha(170)
+            p.fillRect(rect, QBrush(hatch, Qt.BDiagPattern))
+        width, seconds, metrics = rect.width() - 2 * ui_px(4), self.sequence.gap(link.target[0]), self.fontMetrics()
+        if width > ui_px(10):
+            # A narrow piece keeps its length rather than half a method name; the tooltip has the rest.
+            text = piece_text(seconds, link.method)
+            if metrics.horizontalAdvance(text) > width:text = f'{seconds:.1f} s'
+            p.setPen(QColor(theme_color('#e6e6e6', '#202020')))
+            p.drawText(rect.adjusted(ui_px(4), 0, -ui_px(4), 0), Qt.AlignCenter, metrics.elidedText(text, Qt.ElideRight, round(width)))
+
+    def _paint_row(self, p, first, row_state, bars, pieces):
+        """One outline around a joined row from its first bar to its last; dashed while the join is out of date."""
+        chain = self.sequence.chain(*first)
+        shapes = [bar for ident in chain for bar in bars.get(ident, ())] + [rect for link, rect in pieces if link.target in chain]
+        if not shapes:return
+        box = shapes[0]
+        for shape in shapes[1:]:box = box.united(shape)
+        person = next((q for q in self._people(self.sequence.block(first[0])) if q.id == first[1]), None)
+        color = QColor(theme_color(person.color)) if person else QColor(theme_color('#d9e8fa'))
+        p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1.5, Qt.SolidLine if row_state == 'joined' else Qt.DashLine))
+        p.drawRect(box.adjusted(-1, -1, 1, 1))
 
     def _paint_label(self, p, block, rect):
         shown = self._shown(rect).intersected(self._track())  # the text starts where the block comes into view
@@ -436,7 +584,7 @@ class SequenceView(QWidget):
 
     def _paint_drag(self, p, layout):
         press = self._press
-        if not press or not press['dragged']:return
+        if not press or not press.get('dragged'):return   # a scrub has no drag
         block, at = press['block'], press['at']
         if press['mode'] in ('start', 'end'):
             start, end = press['range']
@@ -454,6 +602,31 @@ class SequenceView(QWidget):
             x = rect.left() if not others else others[0][0] if press['to'] == 0 else others[press['to'] - 1][1]
             p.setPen(QPen(QColor(theme_color('#74a6e0')), 2))
             p.drawLine(QPointF(x, self.TRACK_TOP), QPointF(x, self.TRACK_TOP + self.TRACK_HEIGHT))
+        elif press['mode'] == 'person':
+            self._paint_link_drag(p, layout, press)
+
+    def _paint_link_drag(self, p, layout, press):
+        """The rows of the block before that would take the dragged person, the one under the cursor outlined, and a ghost
+        of the person's bars following the cursor."""
+        block, person, mark = press['block'], press['person'], QColor(theme_color('#74a6e0'))
+        rects, i = {b.id: r for b, _, r in layout}, self.sequence.index(block.id)
+        link, drop = self.sequence.link_into(block.id, person.id), press['drop']
+        if i:
+            before = self.sequence.blocks[i - 1]
+            for j, other in enumerate(self._people(before)):
+                if link is None or link.source != (before.id, other.id):
+                    fill = QColor(mark);fill.setAlpha(70)
+                    p.fillRect(self._cell(rects[before.id], self._row(before.id, j, other)), fill)
+        if drop:
+            row = int((press['y'] + press['dy'] - self.TRACK_TOP) // self.TRACK_HEIGHT) - 1
+            target = self._cell(rects[before.id] if drop[0] == 'link' else rects[block.id], row)
+            p.setBrush(Qt.NoBrush);p.setPen(QPen(mark, 2));p.drawRect(target.adjusted(1, 1, -1, -1))
+        index = next(j for j, other in enumerate(self._people(block)) if other.id == person.id)
+        color = QColor(theme_color(person.color))
+        tint = QColor(color);tint.setAlpha(70)
+        for bar, _ in self._bars(block, press['at'], self._cell(rects[block.id], self._row(block.id, index, person)), person):
+            ghost = bar.translated(press['dx'], press['dy'])
+            p.fillRect(ghost, tint);p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1, Qt.DashLine));p.drawRect(ghost.adjusted(.5, .5, -.5, -.5))
 
     def _paint_playhead(self, p):
         x = self.x_of(self.playhead)

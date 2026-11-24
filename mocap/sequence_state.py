@@ -19,6 +19,7 @@ class Take:
     end: int
     ready: bool
     joined: bool
+    filled: bool = False   # it holds frames a join generated across hidden ranges (take_import_check.filled)
 
 
 @dataclass
@@ -38,6 +39,7 @@ class State:
     frames: int
     fps: float
     label: str
+    fingerprint: str | None = None   # the people list's own, which Find person makes anew
 
 
 def selected_kind(folder) -> str:
@@ -52,11 +54,11 @@ def selected_kind(folder) -> str:
     return base_result(result)
 
 
-def _state(kind, reason='', people=(), frames=0, fps=FPS) -> State:
+def _state(kind, reason='', people=(), frames=0, fps=FPS, fingerprint=None) -> State:
     people = list(people)
     if kind == 'found' and reason and not people:label = 'people list out of date'
     else:label = LABELS.get(kind) or ('1 person' if len(people) == 1 else f'{len(people)} people')
-    return State(kind, reason, people, frames, fps, label)
+    return State(kind, reason, people, frames, fps, label, fingerprint)
 
 
 def _ready(check, project) -> bool:
@@ -66,10 +68,13 @@ def _ready(check, project) -> bool:
 
 def _people(root, state, kind) -> list[Person]:
     from .parts_runner import ready_result
+    from .take_import_check import filled
     def ready(project):   # each take by the result its own project.json selects
         return ready_result(root, selected_kind(people_store.safe_child(root, project)))(project)
+    generated = lambda project: filled(people_store.safe_child(root, project))
     return [Person(p['id'], str(p.get('name') or f"Person {p['id']}"), p['color'], bool(p.get('checked')),
-                   [Take(t['first'], t['end'], _ready(ready, t['project']), bool(t.get('join'))) for t in people_store.active_takes(root, p, kind)])
+                   [Take(t['first'], t['end'], _ready(ready, t['project']), bool(t.get('join')), _ready(generated, t['project']))
+                    for t in people_store.active_takes(root, p, kind)])
             for p in state['people']]
 
 
@@ -112,4 +117,5 @@ def read(block, model) -> State:
     if checked and all(p.takes and all(t.ready for t in p.takes) for p in checked):kind = 'tracked'
     elif any(t.ready for p in checked for t in p.takes):kind = 'partly'
     else:kind = 'found'
-    return _state(kind, people=people, frames=frames, fps=fps)
+    mark = state.get('fingerprint')
+    return _state(kind, people=people, frames=frames, fps=fps, fingerprint=mark if isinstance(mark, str) else None)

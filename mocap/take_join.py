@@ -304,7 +304,7 @@ def _check(root, ident, result):
             if method != 'copy':continue
             donor = next((p for p in people if p['id'] == params['person']), None)
             if donor is None:raise Refused('Choose a person to copy from.')
-            take = gaps[-1][-1]['take'] = hidden_ranges.donor_take(donor['takes'], g, params['offset'])
+            take = gaps[-1][-1]['take'] = hidden_ranges.donor_take(seam_takes(donor), g, params['offset'])
             name = gaps[-1][-1]['name'] = _typed(donor.get('name') or 'Person '+str(donor['id']))
             try:
                 folder = safe_child(root, take['project']);manifest = json.loads((folder/'project.json').read_text(encoding='utf-8'))

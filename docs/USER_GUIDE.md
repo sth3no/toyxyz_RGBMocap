@@ -1036,6 +1036,7 @@ an estimate and can leave residual sliding or penetration.
 | **← Sequence** | First button of the timeline's action bar. Shows the [sequence](#sequence-several-videos-on-one-timeline) timeline around the loaded block. Turning the wheel out while the whole clip is shown does the same, also for a single video. GVHMR, ExMR and FlowHMR only. |
 | **Add Video... / File > Add Video to Sequence...** | Add a video at the end of the sequence, as a new block covering the whole video. The button is in the bar above the sequence timeline. |
 | **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. The last block cannot be deleted. Both are unavailable while a job runs. |
+| **Join** | In the bar above the sequence timeline. Joins every linked row that is not joined yet into one animation in the scene of its first block, after a question; a linked bar's right-click menu joins only its row. Unavailable while a job runs and while no person is linked. See [People who continue in the next video](#people-who-continue-in-the-next-video). |
 | **File > Add Project to Sequence...** | Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results. |
 | **File > Open Sequence... / New Sequence** | Open a saved sequence: it is shown whole and its first block is loaded / start a new sequence with the loaded video as its one block, or an empty one when no video is loaded; the loaded video or project stays open. A sequence of two or more blocks saves itself under `projects/sequences`. |
 
@@ -1079,15 +1080,17 @@ project and the status bar says that the video file is missing.
    example `2 blocks | 0:06.0`.
 2. **People.** Turn the wheel in anywhere and the **People** rows appear under
    the blocks that have people. Row 1 holds the first person of each block,
-   row 2 the second, and so on. The people of two blocks are not linked:
-   Person 1 of one video and Person 1 of the next are separate people. A
-   person's bars show where their takes are; a dashed bar is a take whose
-   motion is not finished.
+   row 2 the second, and so on. Person 1 of one video and Person 1 of the
+   next are separate people unless they are linked: a person who continues a
+   person of the block before shares that person's row; see
+   [People who continue in the next video](#people-who-continue-in-the-next-video). A person's bars show where their takes are; a dashed bar is a
+   take whose motion is not finished.
 3. **Tracking.** Double-click a block, or keep turning the wheel in over one
    block: once it fills the view, the next turn opens it. The timeline is then
    the one of that block, as for a single video: Video, Motion, L/R foot, L/R
    hand, the trim and **From** / **To**. Double-clicking a person's bar also
-   selects that person in the People list. Track the block here with the usual
+   selects that person in the People list; on a joined row it opens the
+   joined animation instead. Track the block here with the usual
    buttons (**Find person**, **Reconstruct 3D**, **Reconstruct in parts...**);
    nothing is tracked from levels 1 and 2.
 
@@ -1116,7 +1119,9 @@ the playhead there too. Play and the frame buttons act on the loaded block only.
   deleted: `A sequence needs at least one block.`
 - Drag the edge of a block to change its range within its video. Drag the
   middle of a block to move it to another place. A press that hardly moves is
-  a click. Blocks have an order only; there are no gaps between them.
+  a click. Blocks have an order only; there are no gaps between them, except
+  the transition before a block in which a person continues a person of the
+  block before.
 - At level 3 the trim is the block's range: dragging the trim or typing
   **From** / **To** resizes the block, but only while the block has no results
   for any model. With results the trim works as for a single video and the
@@ -1127,7 +1132,8 @@ Cutting or resizing a block that has results asks first: `This block has
 results. They belong to the old range and stay on disk; the changed block will
 show as not tracked. Change it?` After **Yes** the changed blocks show as not
 tracked. The old results are neither deleted nor used for the new range.
-Deleting a block does not ask; its files stay on disk.
+Deleting a block does not ask; its files stay on disk. An edit that would take
+a joined row apart asks as well (see below).
 
 **Results of a block.** When **Find person** or **Reconstruct 3D** prepares a
 clip from the loaded block, the block takes that clip's range and remembers its
@@ -1154,8 +1160,8 @@ clip of that model, or its video with the block's range.
 Hover over a block to see its video's path and, when there is one, the reason
 for its state. Nothing is repaired automatically.
 
-**While a job runs** (also while **Reconstruct in parts...** runs, between its
-parts too) the level can change, but no other block can be loaded and blocks
+**While a job runs** (also while **Reconstruct in parts...** or **Join** runs,
+between their jobs too) the level can change, but no other block can be loaded and blocks
 cannot be added, cut, deleted, moved or resized. A click on another block says
 `A job is running. This block can be opened when it is done.` The File menu's
 sequence entries are unavailable too.
@@ -1179,10 +1185,204 @@ Limits of this version:
 - GVHMR, ExMR and FlowHMR only.
 - People rows that do not fit the height of the Timeline panel are cut off;
   there is no vertical scrolling yet.
-- No joining of a person across videos, no transitions, no playback across
-  blocks and no export of the whole sequence. Export works for the loaded
-  block as for a single video.
+- No continuous playback of a person across blocks and no export of the whole
+  sequence. A joined row plays and exports in the scene of its first block
+  (see below); **Auto-advance** plays block after block, each with its own
+  video and takes. Otherwise export works for the loaded block as for a single
+  video.
 - One video row, no thumbnails, no free position of blocks.
+
+#### People who continue in the next video
+
+When the same person appears in two videos, for example 30 seconds of one long
+video and 30 seconds of the next, link them at level 2. The later person's bars
+then sit in the row of the person they continue, and a **transition** between
+the two blocks stands for the time between the two takes. **Join** copies the
+later take into the scene of the first block and joins the two there into one
+animation, which you open, play and export in that block. Links work with GVHMR
+and ExMR.
+
+**Linking.**
+
+- Drag a person's bar up or down onto the row of a person of the block before:
+  the person then continues that person. Dropping a linked bar on a row of its
+  own block where the block before has nobody unlinks it. A drop anywhere else
+  (the ruler, the Video row, below the last row, outside the timeline) changes
+  nothing. The status bar says what changed, for example `Ben now continues
+  Anna.` or `Ben no longer continues Anna.`
+- Right-click a person's bar. **Continue after** lists the people of the block
+  before: the one continued is checked, and one that cannot be continued is
+  greyed out with the reason as its tooltip. **Unlink** takes the link away.
+  A linked bar's menu also has **Join**, and a bar of a joined row has **Open
+  joined animation** and **Export joined animation...**.
+- The app links by itself when two neighbouring blocks both read `tracked`
+  with exactly one person each and neither person is linked. It does this once
+  for each pair and says so, for example `Ben in two.mp4 now continues Anna
+  from one.mp4. Drag the bar to change it.` After you unlink them it does not
+  link them again, until a cut or a changed range clears the results of one of
+  the two blocks; once it is tracked again, the pair may be linked by itself
+  again.
+- **Find person** run again in a block makes a new people list. The links of
+  that block are then removed (`The people of two.mp4 changed, so their links
+  were removed.`), and the automatic link may be made again.
+- A person continues at most one person and is continued by at most one.
+  Linking a bar to another person replaces its link and keeps its method.
+- A link belongs to the model it was made with. After a model switch the
+  links of the other model stay in the sequence but are not shown; switching
+  back shows them again. To link the same people for another model, link them
+  again with that model selected.
+- Only neighbouring blocks can be linked. Linking is unavailable while a job
+  runs.
+
+When a person cannot continue another, the status bar (or the greyed entry's
+tooltip) says why:
+
+| Message | Meaning |
+| --- | --- |
+| `FlowHMR results cannot be joined.` | FlowHMR is selected. Its people rows show no links. |
+| `Both blocks must be tracked with the same model.` | One of the two blocks has no results for the selected model. |
+| `Run Find person in one.mp4 first. A block reconstructed without it has no person to continue.` | The earlier block was reconstructed without **Find person**, so it has no people list to receive the take. The later block may be reconstructed without it. |
+| `Anna has no finished take in the earlier block.` | The earlier person has no finished take. |
+| `Anna's take is not finished.` | The earlier person's last take, or the later person's take, is not finished. |
+| `Ben has several takes in this block. Reconstruct the block in one piece, or join parts that share frames with Fill hidden ranges, first.` | The later person must have one take in use. A take joined from parts that share frames counts as one. |
+| `Ben's take contains generated frames, which cannot be joined again.` | The later person's take is a joined take with filled hidden ranges. |
+| `Ben's result uses HTD Refine, which cannot be joined. Reconstruct the block with HTD Refine off.` | The result a take in use selects, in either block, was made with GVHMR's **HTD Refine** (on by default). [Hidden ranges](#hidden-ranges) cannot join it, and switching HTD Refine off in the window does not change a saved result. |
+| `Hidden ranges need a fixed camera in this version.` | The earlier block's scene is ExMR without **Static Camera**, so Fill hidden ranges cannot join there. |
+
+**Transition.** Between the bars of a linked row a hatched piece shows the
+transition's length and method, for example `1.0 s Smooth join` (only the
+length when the piece is narrow). The later block starts after it on the
+timeline; blocks without links follow each other with no gap. At levels 1 and
+2 the playhead over a transition shows the earlier block's last frame. Click
+the piece to change it in the **Transition** dialog:
+
+- **Method**: **Smooth join** (interpolation, up to 1.0 s, that is 30 frames)
+  or **Automatic (Experimental)** (generated motion, up to 9.6 s, 290 frames),
+  the methods of [Hidden ranges](#hidden-ranges). For Automatic the dialog
+  says `Experimental: the generated motion is plausible, not what the person
+  did.` Automatic needs Kimodo to be set up, as in Hidden ranges.
+- **Length** in seconds, at least one frame (0.04 s in the dialog's two
+  decimals). **OK** with a length the method cannot fill keeps the dialog open
+  with the reason, for example `Smooth join is limited to 30 frames; this
+  range has 60.` After OK the status bar says, for example, `Transition set to
+  2.5 s Automatic (Experimental).`
+
+The method belongs to the link; a new link gets **Smooth join**. The length
+belongs to the pair of blocks, 1.0 s for a new pair: every link between the
+same two blocks has the same transition length. The length is the gap the join
+puts between the two takes: the joined animation is the earlier person's last
+take, then that many frames, then the later person's whole take, wherever the
+two takes sit inside their blocks. Where a take does not reach the edge of its
+block, the picture between the blocks is schematic; the piece's tooltip says
+so.
+
+**Join.** Click **Join** above the sequence timeline to join every linked row
+that is not joined yet, or choose **Join** in a linked bar's menu to join that
+row. It asks first: `Join copies the linked takes into the scene of the first
+block and joins them there. In that block the joined animation becomes the
+person's take in use; the later blocks are not changed. Unlink puts the first
+block back. No file is deleted. Join now?` Then, for each row, one job after
+another on the window's job queue:
+
+1. It opens the first block and checks the whole row before anything changes:
+   the reasons above, the transition against its method, the checks of
+   [A take from another video](#a-take-from-another-video) (for example 30 fps
+   takes, and **FootMR** or **HandFlow** when the result in use needs them),
+   the limits of [Hidden ranges](#hidden-ranges) for the first block's scene
+   (GVHMR, or ExMR with **Static Camera**, without **HTD Refine**) and, for
+   Automatic, its setup. A refusal stops the run with `Join stopped:` and the
+   reason, and nothing is changed.
+2. It imports the take in use of each later person, in order, into the scene
+   of the first block as a further take of the first person of the row (the
+   receiving person), the transition's length after the take before it. The
+   window exports each copy as after any import.
+3. It gives each new gap its link's method and runs **Fill hidden ranges** for
+   the receiving person, which writes one joined take.
+
+The status bar shows the step, such as `Joining Anna: importing 1 of 2.` or
+`Joining Anna: filling the transitions.` (a job's own progress can replace it;
+the Console keeps the line), and at the end `Joined Anna across 2 blocks.
+Double-click the row to open it.` A joined row is drawn as one piece: the
+transition is solid, one outline runs from its first bar to its last, and the
+first bar's name is followed by `joined`.
+
+Join changes only the first block's scene. In that scene the joined animation
+becomes the receiving person's take in use, as after **Fill hidden ranges**:
+the take selector, the People row, export of all takes, the shared floor and
+**Apply Correction** of that scene use it. The person's own takes stay in the
+list and on disk. The later blocks are not changed at all. Each copy is
+recorded in the sequence file as soon as its import ends.
+
+**Join again.** Join does not rebuild a row that is joined: `Every linked row
+is already joined.`, or `Ben is already joined.` from a bar's menu. A row reads
+`join out of date` (the outline dashed) when its transition's length or method
+changed after the join, when the later person's take in use is no longer the
+joined one or was reconstructed again, when the joined take in the first block
+is no longer current (see [Hidden ranges](#hidden-ranges)), and after a Join
+that stopped once a copy was made. **Join** then builds the row again: it first
+takes the row's earlier copies out of the take list, then imports and fills
+again. Importing the same range again writes over the earlier copy (the same
+folder ending in `_import_v1`), and the fill writes over the earlier joined
+take, as when you import or fill again yourself; nothing else is overwritten. A
+choice made in **Hidden ranges** for a transition's gap (such as the
+**Variation** of Automatic) is kept while its method is the link's method. To
+build a joined row again anyway, change its transition, or unlink and link it
+again.
+
+**Opening and exporting.** Double-click any bar of a joined row, or choose
+**Open joined animation** in its menu: the first block opens at level 3 with
+the receiving person active on the joined take (` · filled` in the take
+selector). The joined animation lives in the scene of the first block. It
+plays over the first video and, where that video has ended, its last frame,
+with no tracking box; the 3D view shows the person in the first block's world,
+with that person's body shape and that scene's camera and floor. **Export
+joined animation...** opens it the same way and then the window's own **File >
+Export...**; the file names end with `_filled`, as for any joined take. There
+is no continuous playback of a linked person at the sequence level, with the
+video switching under the person. **Auto-advance** plays block after block,
+each with its own video and takes.
+
+**Taking a join back.** **Unlink**, linking the bar to another person, and
+**Cut**, **Delete**, moving or resizing a block that the row touches all take a
+joined row apart: the copies and the joined take built on them are taken out
+of the receiving person's take list in the first block's `people.json`, so the
+first block shows its own takes again. The whole row is taken apart, also when
+only one of its links goes. When the row has copies, these actions ask first:
+`This row is joined. Taking it apart puts the first block back to its own
+takes; no file is deleted. Continue?` If the receiving person had joined their
+own takes with **Fill hidden ranges** before the Join, that joined take is put
+back; when it is no longer current the status bar says `Fill hidden ranges
+again for Anna in the first block to rejoin their own takes.` **Find person**
+run again in a block of the row takes the join back without asking; a people
+list made again in the first block is left as it is. If the take list cannot
+be saved, the status bar says `Cannot take the join back:` with the reason, and
+the next change tries again.
+
+No file is ever deleted: the copies and the joined takes stay on disk in the
+person's `takes` folder.
+
+**While Join runs** the sequence is busy as during a job: no other block opens
+and nothing can be edited or linked. **Cancel Job** stops the run, also between
+its jobs; closing the window stops it too. A failed job stops it with `Join
+stopped:` and the job's message. The copies imported so far stay recorded: the
+row then reads `join out of date`, and the next **Join** or **Unlink** takes
+them out first.
+
+Limits of this version:
+
+- Only neighbouring blocks: a person cannot continue a person two or more
+  blocks earlier.
+- The later person must have one take in use in their block; a person with
+  several separate takes there cannot be linked yet.
+- A take with generated frames cannot be continued.
+- No FlowHMR, and both blocks need results of the selected model; Join needs
+  the first block's scene to support [Hidden ranges](#hidden-ranges) and 30
+  fps takes.
+- Long blocks are not split into parts automatically.
+- The joined animation exists in the scene of the first block only; the later
+  blocks keep their own takes. **Automatic (Experimental)** transitions are
+  still experimental: the generated motion is plausible, not what the person
+  did.
 
 ### Reconstruct a long range in parts
 

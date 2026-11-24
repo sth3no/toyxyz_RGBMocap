@@ -181,8 +181,8 @@
     },
     {
       "path": "docs/AGENT_GUIDE.md",
-      "bytes": 138876,
-      "sha256": "6d4ed1e8d86d1bf297b0331a3589e04cd6091f62b3cd3c4975f00d4730d5e35c"
+      "bytes": 144167,
+      "sha256": "02d6061e7ee983f621d1a30b33ceb3c825f7e71e10826a228550a99b5b98a9a9"
     },
     {
       "path": "docs/BUILD.md",
@@ -236,13 +236,13 @@
     },
     {
       "path": "docs/USER_GUIDE.md",
-      "bytes": 148298,
-      "sha256": "f514d492117c5367f478789cd609320f66f196ddab1cf015c1be2175477974dc"
+      "bytes": 162012,
+      "sha256": "63ffbb188425b38d68eb051fda1c1dcd68f52fb77fb0ce06fd0acb550c2d6108"
     },
     {
       "path": "docs/VALIDATION.md",
-      "bytes": 261739,
-      "sha256": "4ec758271bb8fc9570ee700216c11242b60027a304e9a2bc465648207a613709"
+      "bytes": 278589,
+      "sha256": "257ddad09594e208e2b0b5ad0d74e1ac8fd471d07ba8e3c78f0feeba85e12a8f"
     },
     {
       "path": "docs/images/exmr-interaction-contact.png",
@@ -1791,13 +1791,13 @@
     },
     {
       "path": "mocap/hidden_ranges.py",
-      "bytes": 8153,
-      "sha256": "d71cc230f1ebaeb0e1347c10a3e79f22256b158b6cfcfb7fb949776b75638418"
+      "bytes": 8163,
+      "sha256": "a3519cb8bf2431748fdd636d7db1d1022d7f0a16677b60b5a8984dab7255facb"
     },
     {
       "path": "mocap/hidden_ranges_state.py",
-      "bytes": 13771,
-      "sha256": "a368fea4f51401dd9d9d919a9d5142dfe8ab66b1c4cfdaba7e70207fe9bef8e0"
+      "bytes": 13811,
+      "sha256": "1188d792dd878b18d40e57fa3dc732fa0537fde5ab4b0ccbd049a2b4d396cd9b"
     },
     {
       "path": "mocap/hidden_ranges_ui.py",
@@ -2171,13 +2171,13 @@
     },
     {
       "path": "mocap/people_store.py",
-      "bytes": 9702,
-      "sha256": "d83984344fbbb2240a795e17e5cc8513bc324a1448b6114351c1711c4cfc78b7"
+      "bytes": 9733,
+      "sha256": "bee7ceb46536761318001bad79acc5e537bc917e7ac355fa0619043f938d8d45"
     },
     {
       "path": "mocap/people_ui.py",
-      "bytes": 64753,
-      "sha256": "031bf959f54f5b859663c74acd898d2334d95ffd38302e326361af2452e82ce4"
+      "bytes": 65351,
+      "sha256": "6c1ccd0d57e7edf6c74269014be072e2c9ff128a0a008de44e675ac64a181e76"
     },
     {
       "path": "mocap/person_merge.py",
@@ -2546,23 +2546,33 @@
     },
     {
       "path": "mocap/sequence.py",
-      "bytes": 7023,
-      "sha256": "6b12412f6386a8ec548b995a9068d517645fbfb1cbdd4c6ca2d779f6b3e9f117"
+      "bytes": 15316,
+      "sha256": "1bed6fee7f95c8ad0bb258eb472dafef59560a9be93dae3d0fd928aafa3b80a9"
+    },
+    {
+      "path": "mocap/sequence_join.py",
+      "bytes": 18935,
+      "sha256": "3291012113f0bde25d650f97f19df8c3dc5a6fc3660ca1b84f7611d5c70f3d33"
+    },
+    {
+      "path": "mocap/sequence_links.py",
+      "bytes": 10334,
+      "sha256": "1a1e3ade95459e014e8ec0721b2afae19be8b1802be4980f0097c3018dfc7b60"
     },
     {
       "path": "mocap/sequence_state.py",
-      "bytes": 5252,
-      "sha256": "a989faaa52187f945a3f555af1040ea282d019493ebaacec2a1a4d72e3b33431"
+      "bytes": 5747,
+      "sha256": "3dc0e80bf16dcd967f180b6db8c19121878267a8029fb93fb9a04ce7d27ca42d"
     },
     {
       "path": "mocap/sequence_ui.py",
-      "bytes": 38649,
-      "sha256": "5cd8cafc4d2ac861f8439a8da0439c373ea1367579e4d193a4926ae1032ae025"
+      "bytes": 59509,
+      "sha256": "9c1c195a0c80c580fc34445e1fa77a3b6cc815281dad9ded157970116768048e"
     },
     {
       "path": "mocap/sequence_view.py",
-      "bytes": 22986,
-      "sha256": "317ac13392b50aa42a13d10bfe97e60bbca9e9c49a5401ad420735ac97267ed5"
+      "bytes": 34498,
+      "sha256": "3b19337eea1f2aa20a518adc5ffc95547bf1639be9f232fc549adbcfe654286b"
     },
     {
       "path": "mocap/sidebar_scroll.py",
@@ -2651,8 +2661,8 @@
     },
     {
       "path": "mocap/take_import_check.py",
-      "bytes": 7336,
-      "sha256": "7b48bcef993cf88e88209725fd680da4022475c175977c4ccf8a7a9345fc3454"
+      "bytes": 7346,
+      "sha256": "45eb3b998c9469de1c693af996692e284cd951c72a6b019a251d4d7f75344426"
     },
     {
       "path": "mocap/take_import_ui.py",
@@ -2661,8 +2671,8 @@
     },
     {
       "path": "mocap/take_join.py",
-      "bytes": 45405,
-      "sha256": "185c30bf5ff0e4bc26971296003fa97f8a83325447aecc3486be4ec479caa185"
+      "bytes": 45408,
+      "sha256": "42ac8ec49c0c3217eccfb14e2a20cb4303358ffbb9c4bf007b96ed4cda5e8486"
     },
     {
       "path": "mocap/take_join_runtime.py",
@@ -3171,23 +3181,23 @@
     },
     {
       "path": "tests/test_sequence.py",
-      "bytes": 5764,
-      "sha256": "9f124b5c9b06815dae219e6816af545d3faa64a71289215d48c54c310e58a067"
+      "bytes": 19962,
+      "sha256": "8cfdd312474a1a17aefeca169d374e4eddbfda8f9b6fb185e699a51b0fd65aea"
     },
     {
       "path": "tests/test_sequence_state.py",
-      "bytes": 10875,
-      "sha256": "a59a27798cfc9072ec96f187d08b06c0c10cb2f5f0982d89382425c1acf07178"
+      "bytes": 12922,
+      "sha256": "b2cfd359006c1c13475d8d862978fd329fd9e856b9aeb0ed2a0edf3b75ee5409"
     },
     {
       "path": "tests/test_sequence_view.py",
-      "bytes": 12190,
-      "sha256": "725a2c01ab6efe68fc9446eb870eed74ce012b96685562ca869c2f929591a367"
+      "bytes": 22567,
+      "sha256": "c376595f3dcac58ea835f185af50f0e23dc21b447637c57d7d7933747996bab4"
     },
     {
       "path": "tests/test_sequence_window.py",
-      "bytes": 44806,
-      "sha256": "36f087abec77a4bf12a4d3fe73153b1304dd66795a6b5f923b7e1e3bd39126c2"
+      "bytes": 69770,
+      "sha256": "7a874cb7c6e23009f327c9e1ce927cefb8d8cfe820db96253902117faf9bc822"
     },
     {
       "path": "tests/test_setup_kimodo.py",
@@ -3206,8 +3216,8 @@
     },
     {
       "path": "tests/test_take_import.py",
-      "bytes": 30183,
-      "sha256": "eb650b8f1ea7a9ec4a5660fc6625669fb13d283410f44a9db339879df2f7b7ab"
+      "bytes": 30669,
+      "sha256": "72b50b39e8e6c950eb3e0bff5c3621029535c782ce31e7072d0d630762c98c66"
     },
     {
       "path": "tests/test_take_import_window.py",

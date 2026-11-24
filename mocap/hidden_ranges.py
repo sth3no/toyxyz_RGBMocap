@@ -111,8 +111,9 @@ def method_issue(method,gap,choice=None,people=None,ident=None):
         except (ValueError,TypeError):return ask
         donor=next((x for x in people or [] if isinstance(x,dict) and x.get('id')==p['person']),None)
         if donor is None or p['person']==ident:return ask
-        takes=donor.get('takes');name=donor.get('name') or f"Person {p['person']}"
-        if donor_take(takes if isinstance(takes,list) else [],gap,p['offset']) is None:
+        from .people_store import seam_takes
+        takes=seam_takes(donor);name=donor.get('name') or f"Person {p['person']}"
+        if donor_take(takes,gap,p['offset']) is None:
             spans=donor_offsets(takes,gap)
             if not spans:return f'{name} has no captured take long enough to cover this range.'
             return f'{name} has no captured motion covering this range with this offset.'+offset_hint(spans)

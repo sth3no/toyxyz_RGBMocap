@@ -188,6 +188,15 @@ class ImportWriteTest(Scene,unittest.TestCase):
         record=torch.load(T/'hmr4d_results.pt',weights_only=False);self.assertEqual(record['source_model'],self.MODEL)
         np.testing.assert_allclose(record['net_outputs']['static_conf_logits'][0].numpy(),self.src['logits'],atol=1e-5)
         self.assertEqual(torch.load(T/'camera.pt',weights_only=False)['K'].shape,(3,3))
+    def test_import_ignores_a_superseded_last_take(self):
+        state = ps.load_people(self.root)
+        state['people'][0]['takes'].append(dict(project='p1/takes/superseded', first=25, end=120,
+                                               parts_superseded=True))
+        ps.save_people(self.root, state)
+        code, events = self.bring()
+        self.assertEqual(code, 0, (events, self.stderr.getvalue()))
+        self.assertTrue((self.root/IMPORTED/'project.json').is_file())
+
     def test_placement_on_disk_continues_the_receiver(self):
         self.assertEqual(self.bring()[0],0)
         G,C,last,lc=self.world(IMPORTED),self.world(IMPORTED,key='smpl_params_incam'),self.world(TAKE),self.world(TAKE,key='smpl_params_incam')

@@ -185,7 +185,7 @@ def join_kinds(fill):
 
 def seam_takes(person):
     """Exclude unfinished parents replaced by smaller reconstruction parts."""
-    return [take for take in person.get('takes', []) if not take.get('parts_superseded')]
+    return [take for take in (person.get('takes') or []) if isinstance(take, dict) and not take.get('parts_superseded')]
 
 
 def active_takes(root, person, kind=None):

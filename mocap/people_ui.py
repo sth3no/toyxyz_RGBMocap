@@ -656,19 +656,27 @@ class PeopleWorkspace:
         person=next((p for p in self.people_state['people'] if p['id']==ident),None)
         if person is None:return
         from . import take_import_ui
-        from .take_import_check import gap_frames,refusal
+        from .take_import_check import gap_frames
         choice=take_import_ui.ask(self,person)
         if choice is None:return
-        source,seconds=choice;frames=gap_frames(seconds)
+        source,seconds=choice;self.start_take_import(ident,source,gap_frames(seconds))
+
+    def start_take_import(self,ident,source,frames):
+        """Import Take for person `ident` from the take folder `source`, `frames` after their last take; its refusal goes to the
+        status bar. Whether the job started (the dialog and the sequence's Join both start it here)."""
+        person=next((p for p in self.people_state['people'] if p['id']==ident),None) if self.people_state is not None else None
+        if self.busy or self.contact_saving or person is None:return False
+        from .take_import_check import refusal
         reason=refusal(self.people_root,person,source,frames,self.active_result)
         if reason:
-            self.status.setText(reason);return
+            self.status.setText(reason);return False
         self._people_batch=True;self._people_inference_jobs=[];self._people_post_jobs=[]
         # The view stays on the open take of this person; the take list and Hidden ranges show the import.
         self._people_return_id=ident;self._people_return_project=self.project if ident==self.active_person_id else None
         self._import_result=self.active_result;self._hidden_refresh=True
         self.start_jobs([('take_import',['--project',str(self.people_root),'--person-id',str(ident),'--source',str(source),
                                          '--gap',str(frames),'--result',self.active_result])])
+        return self.busy
 
     def log_filled_exports(self,files):
         if not self.people_state:return

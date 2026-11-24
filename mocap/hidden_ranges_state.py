@@ -82,13 +82,14 @@ def gap_rows(gaps, choices, fps, people=None, ident=None, auto_issue=None, text_
 
 def _sources(gaps, choices, people, ident):
     """{project: (take, donor name or None)} of the takes the worker would read; Automatic's runtime is not checked here."""
+    from .people_store import seam_takes
     choices = choices if isinstance(choices, dict) else {};people = _people(people);out = {}
     for g in gaps:
         method, person, _, offset, _, _, issue = _shown(choices.get(gap_key(g)), g, people, ident)
         if method == 'none' or issue:continue
         for t in (g['before'], g['after']):out[t['project']] = (t, None)
         donor = next((p for p in people if p.get('id') == person), None) if method == 'copy' else None
-        take = donor_take(donor.get('takes'), g, offset) if donor else None
+        take = donor_take(seam_takes(donor), g, offset) if donor else None
         if take is not None:out.setdefault(take['project'], (take, str(donor.get('name') or f'Person {person}')))
     return out
 
