@@ -19,6 +19,24 @@ folders; no model, job or GPU work ran.
   into the window's real handler, refusal while busy and during Reconstruct in
   parts, model switch, projects as blocks, sequence files, a changed Timeline
   panel refused). Whole `tests` folder: 1075 run, 1054 passed, 17 skipped, 4 failed: `test_setup_kimodo.RunTest` (2), `test_take_import.CommandTest` and `test_take_join.CommandTest`, each because the child `python.exe` they start died at start with exit status 0xC0000142 (the PC was short of resources; other sessions were running). Those three classes re-run alone right after: 6 passed.
+- **Final fix wave** (same conditions): `test_sequence_window` 50, now also on
+  named projects built as `video.prepare` leaves them (a project.json with
+  `workspace_version`, one clip per model carrying `workspace_root`): a model
+  switch in an opened project keeps the window's own model folder and the
+  block remembers it; Open Video, a `prepared` ExMR clip, then GVHMR stays in
+  the project with its title; a project the window loads by itself is adopted
+  when it is the block's video and range and is left alone by later edits
+  otherwise; a video loaded another way is added to a sequence of two or more
+  blocks or with a file; the last block cannot be deleted; New Sequence keeps
+  the loaded video as its block; New and Open refused while busy; a block with
+  an out-of-date people list opens its clip; reopening the video as leaving
+  PEAR or MAMMA does (simulated by the window's own restore flags, PEAR and
+  MAMMA were not started) changes nothing; a changed Timeline panel leaves the
+  window without the sequence. `test_sequence_state` 13 (GVHMR clips and takes
+  judged by the result their own project.json selects, else by the files),
+  `test_sequence_view` 16 (insets at UI scale 200 %). Run together with
+  `test_sequence`, `test_tutorial_window` and `test_parts_window`: 176 passed.
+  The whole folder was not run in this wave.
 - **Pictures looked at** (records, not in the package): the real window
   rendered offscreen at 1440×880 with two blocks, a 10-second clip of a test
   video with synthetic results (Anna with two finished takes and a gap, Ben

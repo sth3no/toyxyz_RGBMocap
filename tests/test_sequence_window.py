@@ -15,6 +15,8 @@ from test_parts_window import scene, write_result
 APP = QApplication.instance() or QApplication([])
 FFMPEG = paths.ROOT/'tools/bin/ffmpeg.exe'
 OTHER = 'The sequence works with GVHMR, ExMR and FlowHMR.'
+BUSY = 'A job is running. This block can be opened when it is done.'
+LAST = 'A sequence needs at least one block.'
 
 
 def application():
@@ -359,10 +361,9 @@ class SequenceWindowTest(unittest.TestCase):
         c.delete();self.assertTrue((folder/'project.json').is_file())
         self.assertEqual([b.id for b in c.sequence.blocks], [second.id]);self.assertEqual(c.current, second.id)
         self.ready(self.v2);self.assertIsNone(w.project)
-        c.view.removed.emit(second.id)   # the Delete key
-        self.assertEqual(c.sequence.blocks, []);self.assertIsNone(c.current)
-        self.assertEqual(Path(w.video_path), self.v2);self.assertTrue(w.info)   # the window keeps what it shows
-        self.assertFalse(c.delete_button.isEnabled())
+        c.view.removed.emit(second.id)   # the Delete key on the last block
+        self.assertEqual([b.id for b in c.sequence.blocks], [second.id]);self.assertEqual(c.current, second.id)
+        self.assertEqual(w.status.text(), LAST);self.assertEqual(Path(w.video_path), self.v2)
 
     def test_busy_refuses_everything(self):
         first, second = self.two();c, w = self.c, self.w;before = c.sequence.to_dict()
@@ -443,7 +444,7 @@ class SequenceWindowTest(unittest.TestCase):
     def test_sequence_files(self):
         self.two();c, w = self.c, self.w;path, saved = c.sequence.path, c.sequence.to_dict()
         self.assertEqual(json.loads(path.read_text(encoding='utf-8')), saved)
-        c.new();self.assertEqual(c.sequence.blocks, [])
+        c.new();self.assertEqual([(b.video, b.start, b.end) for b in c.sequence.blocks], [(str(self.v1), 0., 3.)])   # the loaded video
         self.assertTrue(c.open(path));self.assertEqual(c.sequence.to_dict(), saved);self.assertEqual(c.sequence.path, path)
         self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertFalse(c.at_clip_level())
         for name, text in (('corrupt.json', '{'), ('newer.json', json.dumps(dict(saved, version=2)))):
@@ -456,16 +457,134 @@ class SequenceWindowTest(unittest.TestCase):
         with mock.patch('mocap.sequence_ui.QFileDialog.getOpenFileName', return_value=(str(path), '')) as dialog:c.choose_sequence()
         self.assertEqual(Path(dialog.call_args[0][2]), self.base/'projects/sequences');self.assertEqual(c.sequence.to_dict(), saved)
 
-    def test_a_video_loaded_by_another_path_starts_a_new_sequence(self):
-        self.two();c, w = self.c, self.w
-        w.load_video(self.v2);self.ready(self.v2)   # as a drop on the window or the guide's sample video
-        self.assertEqual(len(c.sequence.blocks), 1);self.assertEqual(c.sequence.blocks[0].video, str(self.v2))
-        self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertTrue(c.at_clip_level())
+    def test_a_video_loaded_by_another_path_is_added_to_a_sequence(self):
+        first, second = self.two();c, w = self.c, self.w;path = c.sequence.path;self.assertFalse(c.at_clip_level())
+        w.load_video(self.v1);self.ready(self.v1)   # as a drop on the window or the guide's sample video
+        self.assertEqual([b.video for b in c.sequence.blocks], [str(self.v1), str(self.v2), str(self.v1)])
+        self.assertEqual(c.sequence.blocks[:2], [first, second]);self.assertEqual(c.current, c.sequence.blocks[2].id)
+        self.assertFalse(c.at_clip_level())   # the timeline stays where it is
+        self.assertEqual(c.sequence.path, path);self.assertEqual(json.loads(path.read_text(encoding='utf-8')), c.sequence.to_dict())
 
-    def test_the_same_video_loaded_by_another_path_starts_a_new_sequence(self):
+    def test_a_video_loaded_by_another_path_is_added_to_a_saved_one_block_sequence(self):
+        first, second = self.two();c, w = self.c, self.w;c.delete(second.id);self.assertEqual(len(c.sequence.blocks), 1)
+        w.load_video(self.v2);self.ready(self.v2)
+        self.assertEqual([b.video for b in c.sequence.blocks], [str(self.v1), str(self.v2)]);self.assertEqual(c.current, c.sequence.blocks[1].id)
+
+    def test_a_video_loaded_by_another_path_starts_a_new_one_block_sequence(self):
+        self.open_first();c, w = self.c, self.w;old = c.sequence.blocks[0]
+        w.load_video(self.v2);self.ready(self.v2)
+        self.assertEqual([b.video for b in c.sequence.blocks], [str(self.v2)]);self.assertNotEqual(c.sequence.blocks[0], old)
+        self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertTrue(c.at_clip_level());self.assertIsNone(c.sequence.path)
+
+    def test_the_same_video_loaded_by_another_path_is_added_to_a_sequence(self):
         self.open_first();c, w = self.c, self.w;w.slider.setValue(30);c.cut();self.assertEqual(len(c.sequence.blocks), 2)
         w.load_video(self.v1);self.ready(self.v1)   # the loaded block's own video, dropped on the window
-        self.assertEqual(self.ranges(), [(0., 3.)]);self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertEqual(self.range(), (0., 3.))
+        self.assertEqual(self.ranges(), [(0., 1.), (1., 3.), (0., 3.)]);self.assertEqual(c.current, c.sequence.blocks[2].id)
+        self.assertEqual(self.range(), (0., 3.))
+
+    def reopen(self, flag):
+        """The window opens its video again and keeps its own media info, as leaving PEAR (pear_ui.pear_leave) or MAMMA
+        (mamma_ui.mamma_mode_changed) does."""
+        w = self.w;info = w.info
+        w._pear_media_restore = dict(info=w.info, value=w.slider.value());setattr(w, flag, True)
+        w.video_view.open(Path(w.video_path))
+        self.assertTrue(pump(lambda:not getattr(w, flag), 10), flag);APP.processEvents();self.assertIs(w.info, info)
+
+    def test_a_video_the_window_reopens_keeps_the_sequence(self):
+        c, w = self.c, self.w;self.open_first();w.slider.set_clip(15, 60);pump(lambda:False, .5)
+        for flag in ('_pear_restoring_media', '_mamma_primary_opening'):
+            before = c.sequence.to_dict();self.reopen(flag)
+            self.assertEqual(c.sequence.to_dict(), before, flag);self.assertEqual(self.ranges(), [(.5, 2.)])
+        c.add_video(self.v2);APP.processEvents();before = c.sequence.to_dict()
+        self.reopen('_pear_restoring_media');self.assertEqual(c.sequence.to_dict(), before)   # not added either
+
+    # The window's own model and project switches win
+
+    def workspace(self, name, models, start=.5, end=2.5):
+        """A named project as mocap/video.py prepare leaves it: its project.json with workspace_version and the source
+        (mocap/project_workspace.py create), one finished clip per model at <root>/<model> whose project.json carries
+        workspace_root and the project's source, each set active for its model."""
+        from mocap import project_workspace
+        root = project_workspace.create(self.base/'projects'/name, None, dict(path=str(self.v1), duration=3., fps=30., frames=90), models[0])
+        source = project_workspace.read(root)['source']
+        for model in models:
+            folder = self.tracked(name, model, start, end);state = json.loads((folder/'project.json').read_text(encoding='utf-8'))
+            (folder/'project.json').write_text(json.dumps(dict(state, workspace_root='..', source=source)), encoding='utf-8')
+            project_workspace.set_active(root, model, folder)
+        project_workspace.set_active(root, models[0], root/models[0])
+        return root.resolve()
+
+    def pick(self, model):
+        self.w.model_choice.setCurrentIndex(self.w.model_choice.findData(model));pump(lambda:False, .3)
+
+    def test_a_model_switch_in_a_project_opens_the_windows_model_folder(self):
+        c, w = self.c, self.w;self.pick('exmr');root = self.workspace('one', ('exmr', 'gvhmr'))
+        with mock.patch('mocap.gui.QFileDialog.getOpenFileName', lambda *a, **k:(str(root/'project.json'), '')):w.choose_project()
+        self.assertEqual(Path(w.project).resolve(), root/'exmr', w.status.text());block = c.sequence.blocks[0]
+        with mock.patch.object(w, 'load_video') as video:self.pick('gvhmr')
+        self.assertEqual(video.call_count, 0);self.assertEqual(Path(w.project).resolve(), root/'gvhmr');self.assertEqual(Path(w.workspace_root), root)
+        self.assertEqual(block.folders, {'exmr':str(root/'exmr'), 'gvhmr':str(root/'gvhmr')});self.assertEqual(c.current, block.id)
+        self.assertEqual(c.view.states[block.id].kind, 'tracked')   # GVHMR's own initial result
+        with mock.patch.object(w, 'load_video') as video:self.pick('exmr')
+        self.assertEqual(video.call_count, 0);self.assertEqual(Path(w.project).resolve(), root/'exmr');self.assertEqual(len(c.sequence.blocks), 1)
+
+    def test_a_model_switch_without_saved_motion_stays_in_the_project(self):
+        """Open Video, Reconstruct with ExMR, then GVHMR: the window stays in the project, so the next Reconstruct uses it."""
+        c, w = self.c, self.w;self.pick('exmr');self.open_first();root = self.workspace('one', ('exmr',), 0., 3.)
+        clip = root/'exmr';self.prepared(clip, json.loads((clip/'project.json').read_text(encoding='utf-8')))
+        self.assertEqual(Path(w.workspace_root), root);title = w.windowTitle();block = c.sequence.blocks[0]
+        with mock.patch.object(w, 'load_video') as video, mock.patch.object(w, 'load_project') as project:
+            self.pick('gvhmr');c.move(block.id, 0)
+        self.assertEqual((video.call_count, project.call_count), (0, 0))
+        self.assertEqual(Path(w.workspace_root), root);self.assertIsNone(w.project);self.assertEqual(w.windowTitle(), title)
+        self.assertEqual(block.folders, {'exmr':str(clip)})
+        self.pick('exmr');self.assertEqual(Path(w.project).resolve(), clip)
+
+    def test_a_project_the_window_loads_by_itself(self):
+        """As Save Project As loads its copy: a clip of the loaded block's video and range is adopted; another one is left
+        alone, also by later edits, until a block is loaded."""
+        first, second = self.two();c, w = self.c, self.w;model = w.model_choice.currentData()
+        copy = self.workspace('copy', (model,), 0., 3.)
+        self.assertTrue(w.load_project(copy/model))
+        self.assertTrue(pump(lambda:first.folders.get(model) == str(copy/model), 5), first.folders)
+        other = self.workspace('other', (model,), 1., 2.);self.assertTrue(w.load_project(other/model));pump(lambda:False, .5)
+        self.assertEqual(first.folders, {model:str(copy/model)});self.assertEqual(self.ranges(), [(0., 3.), (0., 3.)])
+        with mock.patch.object(w, 'load_video') as video, mock.patch.object(w, 'load_project') as project:
+            c.move(second.id, 0);c.move(second.id, 1)
+        self.assertEqual((video.call_count, project.call_count), (0, 0));self.assertEqual(Path(w.project).resolve(), other/model)
+        c.view.selected.emit(second.id);self.ready(self.v2);self.assertIsNone(w.project)   # the user's own click loads again
+
+    def test_the_last_block_cannot_be_deleted(self):
+        self.open_first();c, w = self.c, self.w;block = c.sequence.blocks[0];c.back()
+        c.delete();self.assertEqual(w.status.text(), LAST)
+        c.view.removed.emit(block.id);self.assertEqual(c.sequence.blocks, [block]);self.assertEqual(c.current, block.id)
+
+    def test_new_sequence_keeps_the_loaded_video_as_its_block(self):
+        first, second = self.two();c, w = self.c, self.w;c.view.selected.emit(second.id);self.ready(self.v2)
+        c.new()
+        self.assertEqual([(b.video, b.start, b.end) for b in c.sequence.blocks], [(str(self.v2), 0., 3.)])
+        self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertTrue(c.at_clip_level());self.assertIsNone(c.sequence.path)
+
+    def test_new_sequence_without_a_video_is_empty(self):
+        c = self.c;c.new()
+        self.assertEqual(c.sequence.blocks, []);self.assertFalse(c.at_clip_level());self.assertTrue(c.add_button.isEnabled())
+        block = c.add_video(self.v1);self.ready(self.v1);self.assertEqual(c.current, block.id)
+
+    def test_new_and_open_are_refused_while_busy(self):
+        self.two();c, w = self.c, self.w;path, before = c.sequence.path, c.sequence.to_dict();self.busy()
+        c.new();self.assertEqual(c.sequence.to_dict(), before);self.assertEqual(w.status.text(), BUSY)
+        w.status.setText('');self.assertFalse(c.open(path));self.assertEqual(w.status.text(), BUSY);self.assertEqual(c.sequence.path, path)
+
+    def test_a_block_with_an_out_of_date_people_list_opens_its_folder(self):
+        self.open_first();c, w = self.c, self.w;root, _ = self.found('one', 0., 3.)
+        people = json.loads((root/'people.json').read_text(encoding='utf-8'));people['input'] = [0, 0]
+        (root/'people.json').write_text(json.dumps(people), encoding='utf-8')
+        block = c.sequence.blocks[0];block.folders[w.model_choice.currentData()] = str(root);c.refresh()
+        self.assertEqual(c.view.states[block.id].label, 'people list out of date')
+        with mock.patch.object(w, 'load_video') as video:self.assertTrue(c.load(block.id))
+        self.assertEqual(video.call_count, 0);self.assertTrue(Path(w.project).resolve().is_relative_to(root.resolve()))
+        self.assertEqual(w.status.text(), 'Cannot open project: Person detection is out of date. Run Find person again.')   # as File > Open Project
+        self.assertEqual(c.current, block.id);self.assertEqual(c.view.states[block.id].kind, 'found')
 
     def test_a_click_on_a_block_that_cannot_load_tries_once(self):
         first, second = self.two();c = self.c;self.v2.unlink();c.refresh()
@@ -476,18 +595,22 @@ class SequenceWindowTest(unittest.TestCase):
 
 
 class BuildTest(unittest.TestCase):
-    def test_a_changed_timeline_panel_is_refused(self):
-        """build takes the action bar by its place above the slider; another layout is a clear error, not a wrong widget."""
-        from PySide6.QtWidgets import QVBoxLayout, QWidget
+    def test_a_changed_timeline_panel_leaves_the_window_without_the_sequence(self):
+        """build takes the action bar by its place above the slider; another layout is reported, the app starts without the
+        sequence and the window's three hooks do nothing."""
+        from PySide6.QtWidgets import QLabel, QTextEdit, QVBoxLayout, QWidget
         from mocap import sequence_ui
+        text = 'The Timeline panel changed; the sequence is not available.'
         for order in (('header', 'slider'), ('header', 'actions', 'other', 'slider'), ('header', 'actions')):
-            w = QWidget();self.addCleanup(w.deleteLater)
-            w.timeline_panel, w.slider = QWidget(w), QWidget()
+            w = QWidget();self.addCleanup(w.deleteLater);menu = QMenu();self.addCleanup(menu.deleteLater)
+            w.timeline_panel, w.slider, w.log, w.status = QWidget(w), QWidget(), QTextEdit(w), QLabel(w)
             layout = QVBoxLayout(w.timeline_panel)
             for name in order:layout.addWidget(w.slider if name == 'slider' else QWidget())
-            with self.assertRaises(RuntimeError) as raised:sequence_ui.build(w, QMenu())
-            self.assertEqual(str(raised.exception), 'The Timeline panel changed; the sequence cannot be added.')
-            self.assertEqual(layout.count(), len(order))   # nothing was taken out of the panel
+            sequence_ui.build(w, menu)
+            self.assertEqual(w.log.toPlainText(), text);self.assertEqual(w.status.text(), text)
+            self.assertEqual(layout.count(), len(order));self.assertEqual(menu.actions(), [])   # nothing taken out or added
+            self.assertIsNone(w.sequence_ui.opened_video(Path('a.mp4')));self.assertIsNone(w.sequence_ui.opened_project(Path('a')))
+            self.assertIsNone(w.sequence_ui.prepared(Path('a'), {}))
 
 
 if __name__ == '__main__':unittest.main()

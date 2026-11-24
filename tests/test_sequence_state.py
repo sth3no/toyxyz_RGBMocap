@@ -84,7 +84,7 @@ class StateTest(unittest.TestCase):
     def test_stale_people_list_is_reported(self):
         self.people();(self.root/'input.mp4').write_bytes(b'another video')
         state=self.read()
-        self.assertEqual((state.kind,state.reason,state.people,state.label),('found',OUT_OF_DATE,[],'0 people'))
+        self.assertEqual((state.kind,state.reason,state.people,state.label),('found',OUT_OF_DATE,[],'people list out of date'))
     def test_single_person_without_people_list(self):
         self.root.mkdir();(self.root/'input.mp4').write_bytes(b'video')
         (self.root/'project.json').write_text(json.dumps(dict(self.manifest,pipeline=dict(model='exmr',result='initial'))),encoding='utf-8')
@@ -93,7 +93,7 @@ class StateTest(unittest.TestCase):
         write_result(self.root,'initial',b'result')
         state=self.read()
         self.assertEqual((state.kind,state.reason,state.label,state.frames),('tracked','','tracked',300))
-        self.assertEqual([(p.name,p.checked,[(t.first,t.end,t.ready,t.joined) for t in p.takes]) for p in state.people],[('Person',True,[(0,300,True,False)])])
+        self.assertEqual([(p.name,p.checked,[(t.first,t.end,t.ready,t.joined) for t in p.takes]) for p in state.people],[('Person 1',True,[(0,300,True,False)])])
         self.video.unlink();self.assertEqual(self.read().kind,'tracked')   # a missing video does not matter when the folder is good
     def test_unreadable_manifest_never_raises(self):
         self.people();(self.root/'project.json').write_bytes(b'{')
@@ -103,8 +103,32 @@ class StateTest(unittest.TestCase):
         self.assertEqual(self.read().reason,f'The saved results are missing: {self.root}')
         (self.root/'project.json').write_text(json.dumps(self.manifest),encoding='utf-8');(self.root/'people.json').write_bytes(b'[1]')
         self.assertEqual((self.read().kind,self.read().reason),('found','Invalid person list'))
-    def test_kind_for(self):
-        self.assertEqual([sequence_state.kind_for(m) for m in ('gvhmr','exmr','flowhmr')],['handflow_footmr_refined','initial','initial'])
+    def gvhmr(self,result=None):
+        """A one-person GVHMR clip folder with a finished initial result; `result` is what its project.json selects."""
+        self.root.mkdir();(self.root/'input.mp4').write_bytes(b'video')
+        pipeline=dict(model='gvhmr',**({} if result is None else dict(result=result)))
+        (self.root/'project.json').write_text(json.dumps(dict(self.manifest,pipeline=pipeline)),encoding='utf-8')
+        write_result(self.root,'initial',b'result')
+        return sequence_state.read(Block('b1',str(self.video),0.,10.,10.,{'gvhmr':str(self.root)}),'gvhmr')
+    def test_gvhmr_without_refinement_is_judged_by_its_own_result(self):
+        """GVHMR with HTD Refine, FootMR and HandFlow off: its project.json selects the initial result."""
+        self.assertEqual(self.gvhmr('initial').kind,'tracked')
+    def test_gvhmr_corrected_selection_is_judged_by_its_base(self):
+        self.assertEqual(self.gvhmr('corrected_initial').kind,'tracked')
+    def test_gvhmr_without_a_selection_falls_back_to_the_files(self):
+        """No pipeline.result: the window opens the refined result when its files exist, else the initial one."""
+        self.assertEqual(self.gvhmr().kind,'tracked')
+        (self.root/'refined_joints.npz').write_bytes(b'x')
+        self.assertEqual(sequence_state.read(Block('b1',str(self.video),0.,10.,10.,{'gvhmr':str(self.root)}),'gvhmr').kind,'untracked')
+    def test_gvhmr_refined_selection_without_its_result_is_untracked(self):
+        self.assertEqual(self.gvhmr('handflow_footmr_refined').kind,'untracked')
+    def test_takes_are_judged_by_their_own_result(self):
+        self.people();d=self.take(1,0,300);self.take(2,0,100,ready=False)
+        state=json.loads((d/'project.json').read_text(encoding='utf-8'));state['pipeline']['result']='refined'
+        (d/'project.json').write_text(json.dumps(state),encoding='utf-8')
+        self.assertEqual([[t.ready for t in p.takes] for p in self.read().people],[[False],[False]])   # its refined result is not there
+        state['pipeline']['result']='corrected_initial';(d/'project.json').write_text(json.dumps(state),encoding='utf-8')
+        self.assertEqual([[t.ready for t in p.takes] for p in self.read().people],[[True],[False]])
 
 
 if __name__=='__main__':unittest.main()

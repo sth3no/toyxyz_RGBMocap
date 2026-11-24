@@ -1011,9 +1011,9 @@ an estimate and can leave residual sliding or penetration.
 | **Timeline From / To / Set** | Type the trimmed range in minutes and seconds of the loaded clip (12:34.5, 1:02:03 or 754.5). Enter or **Set** trims to it, moves the playhead to its start and fits the timeline to it. An invalid time is explained in the status bar and changes nothing. Unavailable while a job runs, like trimming. |
 | **← Sequence** | First button of the timeline's action bar. Shows the [sequence](#sequence-several-videos-on-one-timeline) timeline around the loaded block. Turning the wheel out while the whole clip is shown does the same, also for a single video. GVHMR, ExMR and FlowHMR only. |
 | **Add Video... / File > Add Video to Sequence...** | Add a video at the end of the sequence, as a new block covering the whole video. The button is in the bar above the sequence timeline. |
-| **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. Both are unavailable while a job runs. |
+| **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. The last block cannot be deleted. Both are unavailable while a job runs. |
 | **File > Add Project to Sequence...** | Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results. |
-| **File > Open Sequence... / New Sequence** | Open a saved sequence: it is shown whole and its first block is loaded / start an empty sequence; the loaded video or project stays open. A sequence of two or more blocks saves itself under `projects/sequences`. |
+| **File > Open Sequence... / New Sequence** | Open a saved sequence: it is shown whole and its first block is loaded / start a new sequence with the loaded video as its one block, or an empty one when no video is loaded; the loaded video or project stays open. A sequence of two or more blocks saves itself under `projects/sequences`. |
 
 ExMR/FlowHMR/GVHMR process checked people independently; MAMMA and PromptHMR
 reconstruct people together from their respective inputs. Results are shown in a shared scene.
@@ -1035,7 +1035,9 @@ timeline works as before.
 **Starting a sequence.** **File > Open Video...** starts a new sequence with
 that video as its one block and shows the timeline of that video. A video
 opened any other way (dropped on the window, the guide's sample video, the
-command line) also starts a new one-block sequence. **File > Open Project...**
+command line) is added at the end as the loaded block when the sequence has two
+or more blocks or has a file; the timeline stays where it is. Otherwise it
+starts a new one-block sequence. **File > Open Project...**
 starts a sequence with the project's clip as its one block, with its results.
 **Add Video...** above the sequence timeline, or **File > Add Video to
 Sequence...**, adds a video at the end as a block that covers the whole video.
@@ -1086,7 +1088,8 @@ the playhead there too. Play and the frame buttons act on the loaded block only.
   piece becomes the loaded block. Each piece must be at least 4 frames long.
 - **Delete**, or the Delete key while the sequence timeline has focus, removes
   the selected block from the sequence. The next block (or the previous one)
-  is loaded. The video and the results stay on disk.
+  is loaded. The video and the results stay on disk. The last block cannot be
+  deleted: `A sequence needs at least one block.`
 - Drag the edge of a block to change its range within its video. Drag the
   middle of a block to move it to another place. A press that hardly moves is
   a click. Blocks have an order only; there are no gaps between them.
@@ -1105,16 +1108,22 @@ Deleting a block does not ask; its files stay on disk.
 **Results of a block.** When **Find person** or **Reconstruct 3D** prepares a
 clip from the loaded block, the block takes that clip's range and remembers its
 folder for that model. A block remembers one folder per model. Its state and
-its people rows are those of the selected model. After a model switch the
-loaded block opens again for the new model: its saved clip of that model, or
-its video with the block's range.
+its people rows are those of the selected model. After a model switch in a
+project the window switches the project to the new model, as without a
+sequence. When the project's clip for that model is of the block's video and
+range, the block remembers it. Otherwise the window keeps the project open and
+the block opens again only when you load it. The same holds when the window
+opens a project by itself, such as the copy after **File > Save Project As...**.
+Without a project, the loaded block opens again for the new model: its saved
+clip of that model, or its video with the block's range.
 
 | Block reads | Meaning |
 | --- | --- |
 | `not tracked` (dashed outline) | No results for the selected model, or its saved results are gone or belong to another range; the tooltip says which. |
 | `1 person`, `3 people` | **Find person** ran, but no checked person has a finished take yet, or nobody is checked. |
+| `people list out of date` | The clip's people list no longer matches its video. The block still opens its clip; run **Find person** again. |
 | `partly tracked` | Some takes of checked people are finished, but not every checked person is tracked. |
-| `tracked` | Every checked person has at least one take, and all their takes are finished. A clip reconstructed without **Find person** counts as one person, tracked once its motion is finished. |
+| `tracked` | Every checked person has at least one take, and all their takes are finished. A take is finished when the result its own clip selects is ready, so a GVHMR take made without HTD Refine, FootMR or HandFlow counts too. A clip reconstructed without **Find person** counts as one person, tracked once its motion is finished. |
 | `video missing` (orange dashed outline) | The video file is gone and the block has no results to open. |
 | `working` (with a stripe) | A job runs on this block. |
 
@@ -1133,8 +1142,10 @@ one video. A sequence of two or more blocks saves itself on every change, as
 keeps saving to that file, also when only one block is left. **File > Open
 Sequence...** opens a saved sequence, shows it whole and loads its first block.
 A file that is not a sequence, or one saved by a newer version, is refused with
-the reason, and the current sequence stays. **File > New Sequence** starts an
-empty sequence; the loaded video or project stays open. A sequence file only
+the reason, and the current sequence stays. **File > New Sequence** starts a
+new sequence with the loaded video as its one block (the whole video) and shows
+its timeline; with no video loaded the sequence is empty and **Add Video...**
+starts it. The loaded video or project stays open. A sequence file only
 lists the blocks; saving it changes no project.
 
 When a chapter of the in-window guide starts, the timeline goes to level 3.
