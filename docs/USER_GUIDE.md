@@ -877,7 +877,8 @@ line and Console report the result.
 | **Resource Mode** | Automatic uses the fast path when GPU memory is sufficient and selects supported Low Memory paths when needed. Low Memory uses CPU loading/offloading and existing bounded image processing; it can be slower and use more RAM. The selection and reason appear in Console and the CMD window. |
 | **Resource Safety** | Default on, directly below Resource Mode. On retains low-RAM/Windows headroom stopping and the PyTorch VRAM allocation limit. Off bypasses those limits; Automatic batching, Low Memory selection and actual allocation-error recovery remain. Saved locally, independently of projects. See [details](PERFORMANCE.md#resource-safety). |
 | **Prepare Preview** | Rebuild mesh/skeleton previews from existing motion without running the AI model again. Useful for older projects. |
-| **Cancel Job** | Stop queued processing; completed results are kept. |
+| **Reconstruct in parts...** | Below **Reconstruct 3D**. Reconstruct a long trimmed range one part after another for the people found by **Find person**, with GVHMR, ExMR or FlowHMR; join the parts afterwards with **Fill hidden ranges**. See [Reconstruct a long range in parts](#reconstruct-a-long-range-in-parts). |
+| **Cancel Job** | Stop queued processing; completed results are kept. During **Reconstruct in parts...** it stops the whole run. |
 
 The mouse wheel scrolls the right settings panel even above a closed selection
 list or number field, without changing its value. Click/type, use keyboard arrows
@@ -980,7 +981,7 @@ an estimate and can leave residual sliding or penetration.
 | **People → ?** | Open instructions for people selection, names, colors and takes. The list footer shows only current status or warnings. |
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. Right-click also offers **Continue as** and **Separate again** when the tracker found one human as two people; see [One person found as two](#one-person-found-as-two). |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
-| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic (Experimental)** (generated motion, optional, can take a description). **Fill hidden ranges** writes one joined take. |
+| **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic (Experimental)** (generated motion, optional, can take a description). Where two parts of **Reconstruct in parts...** share frames, the row says **Parts overlap: blended** and has no method. **Fill hidden ranges** writes one joined take. |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -998,6 +999,73 @@ People share correction mode/floor; timings and pelvis offsets remain per person
 Apply Correction updates all available takes, including hidden ones. Checked
 takes with missing base motion are listed in Console and can be reconstructed separately.
 Relative depth and contacts between people are estimates; collision avoidance is not provided.
+
+### Reconstruct a long range in parts
+
+A long range can be reconstructed one part after another, so each job holds
+only one part. This works with GVHMR, ExMR and FlowHMR, which reconstruct the
+people found by **Find person**.
+
+1. Run **Find person** on the whole range and check the people to
+   reconstruct. All parts use this one scene and its people.
+2. Trim the range (drag the edges of the video track, or type **From** and
+   **To**) and click **Reconstruct in parts...** below **Reconstruct 3D**.
+3. Choose **Part length** (60 s by default) and **Overlap** (2 s by default,
+   shorter than half a part). Neighbouring parts share the overlap; the last
+   part also takes a remainder shorter than a third of a part. With ExMR,
+   **Delete temporary frames after each part** (on by default) deletes the
+   pictures that ExMR writes of every frame (the `exmr_frames` folder of each
+   take of the part) once the part is done; they are written again if that part
+   is reconstructed again. Nothing else is deleted. The line below the fields
+   says how many parts there will be and about how much disk space those
+   pictures take at a time (deleted) or in total (kept). It is an estimate: about
+   188 KB per 1920×1080 frame, measured in one project, scaled by the picture
+   size; real pictures can be larger or smaller.
+4. Click **Reconstruct**. Before each part the status bar says, for example,
+   `Part 3 of 31: frames 3481–5280.`, and the part runs like **Reconstruct 3D**
+   on that trim. **Cancel Job** stops the whole run.
+5. At the end the status bar says `All 31 parts are reconstructed. Choose Fill
+   hidden ranges in the People panel to join them.` The run does not join by
+   itself. Select the person: **Hidden ranges** lists each place where two
+   parts share frames as `Parts overlap: blended` (see [Takes that share
+   frames](#takes-that-share-frames)). Click **Fill hidden ranges** to write one
+   joined take, then export it as usual.
+
+In each part only the checked people who are visible in it are reconstructed;
+the check boxes change while the run goes on and are put back at the end. A
+person who leaves the picture during a part has no take there, which leaves an
+ordinary hidden range that you can fill or leave empty. A part in which no
+checked person is visible is skipped; the Console names who was not visible.
+
+If a part fails or is cancelled, the run stops and the finished parts are kept:
+`Part 2 of 31 stopped: <the reason> Finished parts are kept; Reconstruct in
+parts skips them next time.` Run **Reconstruct in parts...** again with the
+same part length and overlap: a part whose takes all have their result ready is
+skipped, and the run goes on with the next one. After a run the window shows a
+take; the dialog then offers the range, the part length and the overlap of the
+last run. To split another range, the whole scene must be shown again, as after
+**Find person**.
+
+It is refused, with the reason in the status bar, while a job runs (`Wait for
+the current job to finish.`), before **Find person** (`Run Find person on the
+whole range first. All parts must share one scene and its people.`) and when
+nobody is checked. MAMMA, PromptHMR and GEM-X reconstruct their people
+together and do not show the button.
+
+Limits of this version:
+
+- A seam is a blend of two reconstructions over the overlap; the motion is not
+  reconstructed again across it. Where the two parts disagree, the blend shows
+  a short change of pose or position.
+- A person who leaves the picture in a part leaves a gap there.
+- Every part starts its models again, so many short parts take longer in all
+  than a few long ones.
+- The memory a part needs depends on the part length, as for a trim of that
+  length. No part length is known to fit every PC.
+- Joining needs what **Fill hidden ranges** needs: GVHMR, or ExMR with
+  **Static Camera**, and no **HTD Refine**. FlowHMR parts are reconstructed but
+  cannot be joined.
+- How a very long joined take behaves in preview and export was not measured.
 
 ### Hidden ranges
 
@@ -1189,6 +1257,33 @@ Limits of this version:
   though its description was read before. Remove model files with **Model
   Manager**: the app keeps hard links of model files in other places, so
   deleting a file by hand may free no disk space.
+
+#### Takes that share frames
+
+Neighbouring parts of [Reconstruct a long range in
+parts](#reconstruct-a-long-range-in-parts) share frames. **Hidden ranges**
+lists those frames as a row such as `Frames 1741–1800 (2.0 s)` with the note
+`Parts overlap: blended`. There is no method to choose: **Fill hidden ranges**
+joins the parts, together with any hidden range of the same person that has a
+method, into one joined take. Takes of other trims that share frames have no
+such row and are not joined, as before.
+
+Each take has its own world, so the later part is turned about the vertical
+axis and moved along the floor to fit the earlier one, by the average of what
+the fixed camera says on every shared frame (at a hidden range it is one frame
+on each side). Over the shared frames the motion then fades from the earlier
+part's to the later part's: joint rotations turn smoothly from one to the
+other, and positions, camera-space motion and contact estimates are mixed in
+the same proportion. Frames outside the shared range are the parts' own
+frames, moved as a whole. Both parts captured the shared frames, so the
+timeline does not mark them as filled and the export line does not count them;
+a shared frame counts as seen when either part saw the person.
+
+Two parts that meet without a shared frame cannot be joined; their row says
+`These takes meet without a shared frame, so they cannot be joined. Reconstruct
+one of them with an overlap.` A part whose every frame would be blended with
+the parts on both sides is not joined either (`This overlap would blend every
+frame of a take, so it is not joined.`).
 
 #### A take from another video
 

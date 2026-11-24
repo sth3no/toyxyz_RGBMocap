@@ -766,6 +766,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.readiness.setText(text)
         for button in (self.models_button, self.analyze_button, self.run_button):
             button.setEnabled(not self.busy)
+        self.parts_button.setEnabled(not self.busy and self.parts_runner is None)
         self.cancel_button.setEnabled(self.busy)
         self.check_system_action.setEnabled(not self.busy)
         self.model_choice.setEnabled(not self.busy and not self.contact_saving)
@@ -807,6 +808,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.flowhmr_background.setEnabled(not self.busy)
         self.exmr_background.setEnabled(not self.busy)
         self.analyze_button.setVisible(tool.key=='gvhmr')
+        from .parts_runner import MODELS as PARTS_MODELS
+        self.parts_button.setVisible(tool.key in PARTS_MODELS)
         self.sync_correction_floor_preview()
         self.sync_mamma_controls()
         self.sync_prompthmr_controls()

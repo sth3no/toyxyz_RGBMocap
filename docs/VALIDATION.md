@@ -1,5 +1,64 @@
 # Source package validation
 
+## Reconstruct a long range in parts (2026-11-24)
+
+**Reconstruct in parts...** under Reconstruct 3D reconstructs a trimmed range
+part after part; **Fill hidden ranges** joins neighbouring parts over the
+frames they share.
+
+- Joining, with synthetic parts cut from one known camera-space motion, each
+  part in its own world, no models (`tests/test_overlap_join.py`, 25): the
+  smoothstep weights; the alignment over shared frames equals the one-frame
+  seam transform for one frame, averages the heading across +-180 degrees and
+  fits the horizontal offset; rows before the overlap are the first part's
+  exactly, rows after it are the known motion in the first part's world to
+  1e-9, the whole joined motion including the blended frames to 1e-9, a
+  perturbed second part fades in by per-joint slerp (within 1e-4 of linear)
+  with linear logits; blended frames have mask 0 and count as seen; a part
+  with half a degree of heading noise alternating around 180 degrees is placed
+  within 2 cm; three parts; an overlap and a Smooth join gap in one chain;
+  malformed overlaps refused; `hidden_ranges.seams` keeps the records of
+  `gaps()` and adds overlap and touch records; only seams marked as parts
+  chain or are listed. On disk (220-frame ffmpeg test video, fake SMPL-X):
+  two parts become one current joined take with `overlaps` in `fill.json`, a
+  refill writes nothing, an unmarked or changed overlap makes the join out of
+  date, an overlap plus a gap in one joined take, touching or unmarked
+  overlapping takes are refused with nothing written. The existing join tests
+  ran unchanged, including the one that keeps overlapping takes of other trims
+  apart.
+- Rows (`tests/test_overlap_panel.py`, 5): `Parts overlap: blended` without a
+  method list, the touch and the whole-take notes, Fill enabled by an overlap
+  alone, the panel widget offscreen.
+- Planning and deleting (`tests/test_parts.py`, 13, 2 skipped): parts and the
+  remainder rule, invalid sizes, visible runs as the person job makes them,
+  finished parts, seam marks, the storage line from 188 KB per 1080p frame;
+  `delete_frames` on a temporary folder removes only `exmr_frames/*.jpg` and
+  its `receipt.json`. The two tests with symbolic links (a link out of the
+  folder, a frame folder that is a link) were skipped: Windows refused to
+  create the links without Developer Mode.
+- The real `MainWindow` offscreen (`tests/test_parts_window.py`, 13) with
+  `run_full` replaced by a stand-in that records the trim and the checked
+  people and leaves the window busy, and the test playing the end of each
+  batch (takes written, the window showing the last take, as
+  `finish_people_jobs` does): parts in order with the right trims and source
+  seconds, a person not visible in a part unchecked for it and named in the
+  Console, the user's checks and settings back, the seams marked and listed in
+  Hidden ranges; finished parts skipped; a failure and Cancel Job stop the run
+  with finished parts kept and a later run continuing there; frames deleted
+  or kept by the checkbox; refusals while busy, without Find person, without
+  checked people, for an overlap of half a part and for MAMMA, PromptHMR,
+  GEM-X and PEAR; the button under Reconstruct 3D in a 1100×700 window; the
+  dialog's line follows its fields.
+- The whole `tests` folder in one process before the second commit: 864 tests
+  passed, 17 skipped, none failed.
+- The 1100×700 window, its pinned actions, the dialog (frames deleted and kept)
+  and the Hidden ranges rows were drawn offscreen in the dark and light themes
+  and looked at.
+- Not run: the real Reconstruct 3D path inside a run (the person jobs, the
+  ExMR, GVHMR or FlowHMR workers), a real long video, real models, a GPU,
+  joining real parts, preview or export of a long joined take, the controls on
+  a real screen.
+
 ## Take from another video (2026-11-24)
 
 **Import take from another project...** in the People list adds a finished

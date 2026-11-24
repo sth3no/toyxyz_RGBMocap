@@ -273,7 +273,7 @@ class PearWorkspace(PearMultiWorkspace):
         self.status.setText("PEAR experimental preview · Tracking and pose estimates may be unstable.")
         self.pear_header.show();self.model_pages.setCurrentWidget(self.pear_page);self.model_pages.show()
         self.people_tracker.hide()
-        for widget in (self.people_panel,self.find_person_button,self.correction_group,self.compute_mode.parentWidget(),self.run_button,self.mesh_button,self.cancel_button,self.htd_refine,self.refine_description,self.footmr_refine,self.handflow_refine,self.footmr_description,self.refine_preview_note,self.analyze_button):widget.hide()
+        for widget in (self.people_panel,self.find_person_button,self.correction_group,self.compute_mode.parentWidget(),self.run_button,self.parts_button,self.mesh_button,self.cancel_button,self.htd_refine,self.refine_description,self.footmr_refine,self.handflow_refine,self.footmr_description,self.refine_preview_note,self.analyze_button):widget.hide()
         self.models_group.setTitle('PEAR Models');self.readiness.setText(f'PEAR: {len(KEYS)-len(missing_models)}/{len(KEYS)} models ready')
         set_appearance_style(self.readiness, 'color:#ffb45c; font-weight:600;' if missing_models else '')
         self.readiness.setToolTip(message+('\nMissing models:\n'+'\n'.join(model.name for model in missing_models) if missing_models else ''))
