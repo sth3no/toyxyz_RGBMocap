@@ -155,6 +155,8 @@ class PeopleWorkspace:
         self._people_return_id = None
         self._people_return_project=None
         self._join_result=None
+        self._join_defer=False  # Fill all hidden ranges corrects the joined takes once, with the whole scene
+        self._joined_projects=[]  # joined takes written in this session
         self._import_result=None
         self._hidden_refresh=False
         self.scene_hidden={}  # unfilled hidden ranges per person; the 3D view shows a checked person inside one as a ghost
@@ -279,6 +281,8 @@ class PeopleWorkspace:
         self.scene_hidden=unfilled(self.people_root,self.people_state['people'],self.active_result,self.model_choice.currentData()) if self.people_state else {}
         self.motion_view.scene_hidden=self.scene_hidden
         if self.scene_data is not None:self.scene_data.hidden=self.scene_hidden
+        from . import fill_all_ui
+        fill_all_ui.refresh(self)
         self.motion_view.scene_colors={p['id']:p['color'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.scene_names={p['id']:p['name'] for p in self.people_state['people']} if self.people_state else {}
         self.motion_view.actor_name=self._single_actor['name'] if self._single_actor else 'Person 1'
@@ -345,6 +349,8 @@ class PeopleWorkspace:
         self.hidden_ranges.fill_requested.connect(self.fill_hidden_ranges)
         self.hidden_ranges.setup_requested.connect(self.hidden_ranges_setup)
         column.addWidget(self.hidden_ranges)
+        from . import fill_all_ui
+        fill_all_ui.build(self,column)
         self.people_note = QLabel('')
         self.people_note.setObjectName('muted');self.people_note.setWordWrap(True)
         self.people_note.hide()
@@ -407,6 +413,8 @@ class PeopleWorkspace:
         self.find_person_button.setEnabled(enabled and self.video_readable)
         self.people_list.setEnabled(enabled)
         self.person_takes.setEnabled(enabled);self.hidden_ranges.setEnabled(enabled)
+        from . import fill_all_ui
+        fill_all_ui.refresh(self)
 
     def reset_people(self):
         self.clear_people_scene()
@@ -638,13 +646,16 @@ class PeopleWorkspace:
         self._hidden_refresh=True
         self.request_people_scene(force=True);self.update_readiness()
 
-    def fill_hidden_ranges(self):
-        person=self.current_person()
-        if self.busy or self.contact_saving or self.people_state is None or person is None:return
+    def fill_hidden_ranges(self,ident=None,defer=False):
+        """The Fill hidden ranges button fills the selected person. Fill all hidden ranges names each person in turn and,
+        with `defer`, leaves the correction of the joined takes to one Apply Correction for the scene."""
+        if self.people_state is None:return
+        person=self.current_person() if ident is None else next((p for p in self.people_state['people'] if p['id']==ident),None)
+        if self.busy or self.contact_saving or person is None:return
         self._people_batch=True;self._people_inference_jobs=[];self._people_post_jobs=[]
-        # Stay on the current take unless the worker records a joined take.
-        self._people_return_id=person['id'];self._people_return_project=self.project
-        self._join_result=self.active_result;self._hidden_refresh=True
+        # Stay on the current take unless the worker records a joined take of the selected person.
+        self._people_return_id=person['id'] if ident is None else self.active_person_id;self._people_return_project=self.project
+        self._join_result=self.active_result;self._join_defer=bool(defer);self._hidden_refresh=True
         self.start_jobs([('take_join',['--project',str(self.people_root),'--person-id',str(person['id']),'--result',self.active_result])])
 
     def import_choice(self,ident):
@@ -717,7 +728,8 @@ class PeopleWorkspace:
             self.load_project(path, keep_current_options=True)
             self.motion_view.auto_fit=False
             if self.info:
-                self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))))
+                # Loading shows the first frame while the timeline keeps its value, so an unchanged value is shown too.
+                self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))));self.seek(self.slider.value())
         else:
             self.populate_person_takes();self.apply_person_color()
         self.update_readiness()
@@ -822,7 +834,7 @@ class PeopleWorkspace:
         loaded=self.load_project(path,keep_current_options=True)
         if loaded is not False:
             self.motion_view.auto_fit=False
-            if self.info:self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))))
+            if self.info:self.slider.setValue(max(0,min(self.slider.maximum(),round((source_time-self.source_offset)*self.info['fps']))));self.seek(self.slider.value())
         return loaded
 
     def set_person_name(self,ident,name):
@@ -1004,9 +1016,12 @@ class PeopleWorkspace:
             # The joined folder is known only now; the kind is the one the fill was started with.
             kind=self._join_result
             stages=('correct','export') if kind.startswith('corrected_') else ('export',)
-            self.jobs.extend((stage,['--project',path,'--result',kind]) for path in event['projects'] for stage in stages)
+            if not (self._join_defer and kind.startswith('corrected_')):
+                self.jobs.extend((stage,['--project',path,'--result',kind]) for path in event['projects'] for stage in stages)
             self.people_state=load_people(self.people_root)
-            if event['projects']:self._people_return_project=Path(event['projects'][0])
+            self._joined_projects.extend(event['projects'])
+            # The view follows the joined take of the person it shows, not one of another person (Fill all hidden ranges).
+            if event['projects'] and event.get('person_id',self._people_return_id)==self._people_return_id:self._people_return_project=Path(event['projects'][0])
             return True
         if event['type']=='take_imported' and self._import_result:
             # The imported take needs its preview before Fill hidden ranges can use it.

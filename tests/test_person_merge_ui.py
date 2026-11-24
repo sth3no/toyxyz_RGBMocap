@@ -19,14 +19,15 @@ class PersonMergeUiTest(unittest.TestCase):
         self.tm,self.ps,self.W,self.PeopleList=tm,ps,PeopleWorkspace,PeopleList
         self.app=QApplication.instance() or QApplication([])
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=tm.build(self.tmp.name)
-        self.loaded=[];self.requested=[];self.kept=[]
+        self.loaded=[];self.requested=[];self.kept=[];self.sought=[]
     def host(self,project=None,model='gvhmr',busy=False):
         status=SimpleNamespace(value='');status.setText=lambda t:setattr(status,'value',t);status.text=lambda:status.value
         slider=SimpleNamespace(position=0,maximum=lambda:299);slider.value=lambda:slider.position;slider.setValue=lambda v:setattr(slider,'position',v)
         host=SimpleNamespace(busy=busy,contact_saving=False,people_root=self.root,people_state=self.ps.load_people(self.root),
             model_choice=SimpleNamespace(currentData=lambda:model),info=None,project=project,active_result='gvhmr',status=status,log=[],
             load_project=lambda path,keep_current_options=False:self.kept.append(keep_current_options) or self.loaded.append(path),_hidden_refresh=False,source_offset=0,slider=slider,motion_view=SimpleNamespace(auto_fit=True),
-            request_people_scene=lambda force=False:self.requested.append(force),update_readiness=lambda:self.requested.append('ready'))
+            request_people_scene=lambda force=False:self.requested.append(force),update_readiness=lambda:self.requested.append('ready'),
+            seek=lambda index:self.sought.append(index))
         for name in('_merge_people','_resync_people','_show_people','_scene_fps'):   # the helpers the handlers call on the window
             setattr(host,name,lambda *args,name=name:getattr(self.W,name)(host,*args))
         return host
@@ -185,6 +186,7 @@ class PersonMergeUiTest(unittest.TestCase):
         h.load_project=load
         self.W.continue_person_as(h,3,1)
         self.assertEqual(self.loaded,[cover]);self.assertEqual(h.slider.position,5);self.assertFalse(h.motion_view.auto_fit)
+        self.assertEqual(self.sought,[5])   # the video and the 3D view show that frame, also when the timeline never left it
     def test_help_mentions_continue_as(self):
         from mocap.people_ui import PEOPLE_HELP
         self.assertIn('Right-click a row to rename it, or to join it with another person (Continue as) and undo that (Separate again).',PEOPLE_HELP)
