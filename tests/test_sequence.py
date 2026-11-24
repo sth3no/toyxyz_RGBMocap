@@ -63,7 +63,7 @@ class SequenceTests(unittest.TestCase):
         a = s.add('a.mp4', 60.0); self.assertTrue(s.plain())
         s.cut(a.id, 20.0); self.assertFalse(s.plain())
         t = Sequence(); t.add('a.mp4', 60.0); t.add('b.mp4', 60.0); self.assertFalse(t.plain())
-        u = Sequence(); u.add('a.mp4', 60.0, 1.0, 60.0); self.assertFalse(u.plain())
+        u = Sequence(); u.add('a.mp4', 60.0, 1.0, 60.0); self.assertTrue(u.plain())   # one block, whatever its range
 
     def test_save_and_load_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:

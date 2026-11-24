@@ -124,7 +124,7 @@ class Sequence:
         return self.starts()[self.index(id)] + max(block.start, min(source_seconds, block.end)) - block.start
 
     def plain(self) -> bool:
-        return len(self.blocks) == 1 and self.blocks[0].start == 0 and self.blocks[0].end == self.blocks[0].length
+        return len(self.blocks) == 1   # one block, as today's single video or project, whatever its range
 
     def to_dict(self) -> dict:
         return {'version': VERSION, 'blocks': [{'id': b.id, 'video': b.video, 'start': b.start, 'end': b.end,

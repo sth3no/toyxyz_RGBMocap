@@ -280,7 +280,28 @@ class SequenceWindowTest(unittest.TestCase):
         self.open_first();c, w = self.c, self.w;self.assertTrue(c.at_clip_level())
         w.slider.set_clip(15, 60)
         self.assertEqual(self.ranges(), [self.range()]);self.assertEqual(self.range(), (.5, 2.))
-        self.assertTrue(c.sequence.path.is_file())   # the block changed: the sequence has its file
+        pump(lambda:False, .5)   # the trim has settled
+        self.assertIsNone(c.sequence.path);self.assertFalse((self.base/'projects/sequences').exists())   # one block needs no file
+
+    def test_a_saved_sequence_keeps_saving_with_one_block(self):
+        first, second = self.two();c = self.c;path = c.sequence.path
+        c.delete(second.id);self.assertEqual(len(c.sequence.blocks), 1)
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8')), c.sequence.to_dict())
+
+    def test_a_dragged_trim_saves_once_it_settles(self):
+        self.two();c, w = self.c, self.w;c.load(c.sequence.blocks[0].id)
+        with mock.patch.object(c, '_save') as save:
+            for end in (60, 61, 62):w.slider.set_clip(15, end)
+            self.assertEqual(self.ranges()[0], (.5, round(62/30, 3)));self.assertEqual(save.call_count, 0)
+            self.assertTrue(pump(lambda:save.call_count, 5))
+            pump(lambda:False, .5);self.assertEqual(save.call_count, 1)
+        self.assertEqual((c.view.sequence.blocks[0].start, c.view.states.keys()), (.5, {b.id for b in c.sequence.blocks}))
+
+    def test_trim_with_results_of_another_model_changes_nothing(self):
+        self.open_first();c, w = self.c, self.w;block = c.sequence.blocks[0];block.folders['flowhmr'] = str(self.base/'other')
+        if w.model_choice.currentData() == 'flowhmr':block.folders = {'exmr':str(self.base/'other')}
+        before = c.sequence.to_dict();w.slider.set_clip(15, 60);pump(lambda:False, .5)
+        self.assertEqual(self.range(), (.5, 2.));self.assertEqual(c.sequence.to_dict(), before)
 
     def test_trim_in_a_tracked_block_changes_nothing(self):
         self.open_first();c, w = self.c, self.w;block = self.loaded(self.folder('one', self.manifest()))
@@ -301,7 +322,7 @@ class SequenceWindowTest(unittest.TestCase):
         self.assertEqual((block.start, block.end), (.5, 2.5));self.assertEqual(Path(block.folders[model]), root.resolve())
         self.assertEqual(c.view.states[block.id].kind, 'found');self.assertEqual(c.view.states[block.id].label, '1 person')
         self.assertTrue(Path(w.project).resolve().is_relative_to(root.resolve()))
-        self.assertEqual(json.loads(c.sequence.path.read_text(encoding='utf-8')), c.sequence.to_dict())
+        self.assertIsNone(c.sequence.path)   # one block: no file (ruling of fix round 1)
 
     def test_prepared_again_with_another_range_follows(self):
         self.open_first();c, w = self.c, self.w;model = w.model_choice.currentData()
@@ -310,6 +331,28 @@ class SequenceWindowTest(unittest.TestCase):
         block = c.sequence.block(c.current)
         self.assertEqual((block.start, block.end), (1., 3.));self.assertEqual(block.folders, {model:str(second.resolve())})
         self.assertNotEqual(c.view.states[block.id].kind, 'untracked');self.assertTrue((first/'people.json').is_file())
+
+    def test_prepared_from_another_video_is_not_remembered(self):
+        self.open_first();c = self.c;root, manifest = self.found('one', .5, 2.5)
+        other = dict(manifest, source=dict(path=str(self.v2), fps=30.))
+        (root/'project.json').write_text(json.dumps(other), encoding='utf-8');self.prepared(root, other)
+        self.assertEqual(c.sequence.blocks[0].folders, {});self.assertEqual(self.ranges(), [(0., 3.)])
+
+    def test_prepared_remembers_for_the_clip_model(self):
+        self.open_first();c, w = self.c, self.w;start = w.model_choice.currentData();other = 'gvhmr' if start == 'exmr' else 'exmr'
+        manifest = self.manifest(.5, 2.5, other, exmr_options=dict(static_camera=True, smoothing='none'));root = self.folder('one', manifest)
+        with mock.patch.object(w, 'load_project', return_value=True):self.prepared(root, manifest)   # the combo still says the start model
+        self.assertEqual(c.sequence.blocks[0].folders, {other:str(root.resolve())})
+
+    def test_a_sequence_error_never_fails_the_job(self):
+        self.open_first();c, w = self.c, self.w;root, manifest = self.found('one', .5, 2.5)
+        with mock.patch.object(c.sequence, 'remember', side_effect=RuntimeError('broken')):self.prepared(root, manifest)
+        self.assertFalse(w.failed);self.assertIn('RuntimeError: broken', w.log.toPlainText())
+        self.assertEqual(w.status.text(), 'The sequence could not be updated: broken. See the Console.')
+        with mock.patch.object(c, '_project', side_effect=RuntimeError('project')):c.opened_project(root)
+        self.assertEqual(w.status.text(), 'The sequence could not be updated: project. See the Console.')
+        with mock.patch('mocap.sequence_ui.video_length', side_effect=RuntimeError('video')):c.opened_video(self.v2)
+        self.assertEqual(w.status.text(), 'The sequence could not be updated: video. See the Console.')
 
     def test_delete_keeps_files(self):
         first, second = self.two();c, w = self.c, self.w;folder = self.folder('one', self.manifest());self.loaded(folder)
@@ -335,6 +378,15 @@ class SequenceWindowTest(unittest.TestCase):
         done()
         self.assertTrue(c.view.editable);self.assertIsNone(c.view.busy)
         for button in (c.add_button, c.cut_button, c.delete_button):self.assertTrue(button.isEnabled(), button.text())
+
+    def test_reconstruct_in_parts_counts_as_busy(self):
+        first, second = self.two();c, w = self.c, self.w
+        w.parts_runner = object();self.addCleanup(lambda:(setattr(w, 'parts_runner', None), w.update_readiness()))
+        w.update_readiness()   # as parts_runner.start does, also between its parts when w.busy is False
+        self.assertFalse(w.busy);self.assertFalse(c.view.editable);self.assertEqual(c.view.busy, first.id);self.assertFalse(c.cut_button.isEnabled())
+        self.assertFalse(c.load(second.id));self.assertEqual(w.status.text(), 'A job is running. The block opens when it is done.')
+        w.parts_runner = None;w.update_readiness()   # as its stop does
+        self.assertTrue(c.view.editable);self.assertIsNone(c.view.busy);self.assertTrue(c.cut_button.isEnabled())
 
     def test_missing_video_and_missing_folder_do_not_crash(self):
         first, second = self.two();c, w = self.c, self.w;model = w.model_choice.currentData()
@@ -409,6 +461,11 @@ class SequenceWindowTest(unittest.TestCase):
         w.load_video(self.v2);self.ready(self.v2)   # as a drop on the window or the guide's sample video
         self.assertEqual(len(c.sequence.blocks), 1);self.assertEqual(c.sequence.blocks[0].video, str(self.v2))
         self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertTrue(c.at_clip_level())
+
+    def test_the_same_video_loaded_by_another_path_starts_a_new_sequence(self):
+        self.open_first();c, w = self.c, self.w;w.slider.setValue(30);c.cut();self.assertEqual(len(c.sequence.blocks), 2)
+        w.load_video(self.v1);self.ready(self.v1)   # the loaded block's own video, dropped on the window
+        self.assertEqual(self.ranges(), [(0., 3.)]);self.assertEqual(c.current, c.sequence.blocks[0].id);self.assertEqual(self.range(), (0., 3.))
 
     def test_a_click_on_a_block_that_cannot_load_tries_once(self):
         first, second = self.two();c = self.c;self.v2.unlink();c.refresh()
