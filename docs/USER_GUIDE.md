@@ -1312,13 +1312,13 @@ because the open video ends before them, and they have no tracking box.
 
 The import is refused, with the reason in the status bar, when the take is not
 30 fps (`Only 30 fps takes can be imported; the chosen take has 25 fps.`), was
-made with FlowHMR, MAMMA, PromptHMR or GEM-X, or is not finished; when the scene
+made with another model than the open scene, or is not finished; when the scene
 is not GVHMR or ExMR with **Static Camera**, or **HTD Refine** is on; when the
 person has no finished last take; when the result in use needs **FootMR** or
 **HandFlow** and the take lacks it; and when the gap is outside 1 to 290 frames.
-A GVHMR take has no finger motion: imported into an ExMR scene it is imported,
-the Console says `The imported take has no finger motion, so a take joined
-with it has none either.`, and a joined take with it has no finger motion.
+A GVHMR scene takes only GVHMR takes and an ExMR scene only ExMR takes, because
+the two models put the floor at different heights and an imported take keeps
+its own height.
 
 Running **Find person** again makes a new person list, so the imported take is
 no longer listed; its files stay on disk in the person's `takes` folder (a

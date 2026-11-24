@@ -5,12 +5,11 @@ from pathlib import Path
 from .hidden_ranges import AUTO_MAX_FRAMES
 
 FPS = 30
-SOURCE_MODELS = ('gvhmr', 'exmr')
 UNSUPPORTED = 'Takes cannot be imported for HTD Refine results in this version; switch HTD Refine off.'
 SCENE_MODEL = 'Takes can be imported only into GVHMR and ExMR scenes.'
 STATIC = 'Takes can be imported only into a scene with a fixed camera; turn on Static camera in the ExMR settings.'
-SMPLH = 'FlowHMR takes use the SMPL-H body model and cannot be imported into this SMPL-X scene.'
-SOURCE_MODEL = 'Only GVHMR and ExMR takes can be imported.'
+LABELS = {'gvhmr': 'GVHMR', 'exmr': 'ExMR'}
+MODEL = 'Only {0} takes can be imported into this {0} scene, because other models put the floor at another height.'
 RATE = 'Only 30 fps takes can be imported; the chosen take has {} fps.'
 NOT_FINISHED = 'The chosen take has no finished result; reconstruct it in its own project first.'
 SAME = 'The chosen take is already in this scene; choose a take from another project.'
@@ -19,7 +18,6 @@ LAST = "{}'s last take is not finished; reconstruct it first, because the import
 FOOTMR = 'The chosen take has no FootMR result; reconstruct it with FootMR on, or switch FootMR off here.'
 FINGERS = 'The chosen take has no finger result; reconstruct it with HandFlow on, or switch HandFlow off here.'
 GAP = f'The gap must be 1 to {AUTO_MAX_FRAMES} frames (up to {AUTO_MAX_FRAMES/FPS:.1f} s at {FPS} fps).'
-NO_FINGERS = 'The imported take has no finger motion, so a take joined with it has none either.'
 
 
 def gap_frames(seconds, fps=FPS):
@@ -66,7 +64,7 @@ def refusal(root, person, source, frames, result):
     root, source = Path(root).resolve(), Path(source).resolve()
     scene = _manifest(root) or {}
     model = _model(scene)
-    if model not in SOURCE_MODELS:return SCENE_MODEL
+    if model not in LABELS:return SCENE_MODEL
     if model == 'exmr':
         from .exmr_options import saved
         try:static = saved(root)['static_camera']
@@ -78,9 +76,8 @@ def refusal(root, person, source, frames, result):
     if source.is_relative_to(root):return SAME
     state = _manifest(source)
     if state is None:return NOT_FINISHED
-    other = _model(state)
-    if other == 'flowhmr':return SMPLH
-    if other not in SOURCE_MODELS:return SOURCE_MODEL
+    # ExMR stands its world on the floor; GVHMR starts the pelvis at height 0: a take keeps its own height, so only one model fits.
+    if _model(state) != model:return MODEL.format(LABELS[model])
     if not finished(source):return NOT_FINISHED
     if state.get('fps') != FPS or scene.get('fps', FPS) != FPS:return RATE.format(_rate(state.get('fps')))
     for kind in needed:

@@ -157,7 +157,7 @@ class ImportWriteTest(Scene,unittest.TestCase):
         from mocap import hidden_ranges
         from mocap.motion_tools import result_is_current
         code,events=self.bring();self.assertEqual(code,0,(events,self.stderr.getvalue()))
-        self.assertEqual([e['type'] for e in events if e['type']!='info'],['progress','take_imported','complete'])
+        self.assertEqual([e['type'] for e in events],['progress','take_imported','complete'])
         T=self.root/IMPORTED
         self.assertEqual(next(e for e in events if e['type']=='take_imported'),dict(type='take_imported',project=str(self.root),person_id=1,projects=[str(T)]))
         person=ps.load_people(self.root)['people'][0]
@@ -214,8 +214,9 @@ class ImportWriteTest(Scene,unittest.TestCase):
         before=self.snapshot();src=self.other/SOURCE;m=json.loads((src/'project.json').read_text(encoding='utf-8'))
         def manifest(**change):(src/'project.json').write_text(json.dumps(dict(m,**change)),encoding='utf-8')
         stale=lambda name,key:(src/name).write_text(json.dumps({key:[0,0]}),encoding='utf-8')
-        cases=[(lambda:manifest(fps=25),{},check.RATE.format(25)),(lambda:manifest(pipeline=dict(model='flowhmr')),{},check.SMPLH),
-               (lambda:manifest(pipeline=dict(model='gemx')),{},check.SOURCE_MODEL),(lambda:None,dict(gap=0),check.GAP),(lambda:None,dict(gap=291),check.GAP),
+        other=check.MODEL.format(check.LABELS[self.MODEL])
+        cases=[(lambda:manifest(fps=25),{},check.RATE.format(25)),(lambda:manifest(pipeline=dict(model='flowhmr')),{},other),
+               (lambda:manifest(pipeline=dict(model='gemx')),{},other),(lambda:None,dict(gap=0),check.GAP),(lambda:None,dict(gap=291),check.GAP),
                (lambda:None,dict(result='refined'),check.UNSUPPORTED),(lambda:None,dict(source=self.root/TAKE),check.SAME),
                (lambda:stale('initial_sources.json','hmr4d_results.pt'),{},check.NOT_FINISHED),
                (lambda:stale('footmr_initial_sources.json','footmr_initial.pt'),dict(result='footmr_initial'),check.FOOTMR),
@@ -231,7 +232,7 @@ class ImportWriteTest(Scene,unittest.TestCase):
         (self.root/TAKE/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8');before=self.snapshot()
         self.assertEqual(self.bring(),(1,[dict(type='failed',stage='take_import',message=check.RECEIVER.format('Anna'))]));self.assertEqual(self.snapshot(),before)
     def test_refusals_are_one_sentence(self):
-        for name in('UNSUPPORTED','SCENE_MODEL','STATIC','SMPLH','SOURCE_MODEL','RATE','NOT_FINISHED','SAME','RECEIVER','LAST','FOOTMR','FINGERS','GAP','NO_FINGERS'):
+        for name in('UNSUPPORTED','SCENE_MODEL','STATIC','MODEL','RATE','NOT_FINISHED','SAME','RECEIVER','LAST','FOOTMR','FINGERS','GAP'):
             text=getattr(check,name);self.assertTrue(text.endswith('.'),name);self.assertNotIn('. ',text,name)
     def test_a_second_import_continues_after_the_first(self):
         self.assertEqual(self.bring()[0],0);self.assertEqual(self.bring(gap=10)[0],0)
@@ -248,14 +249,18 @@ class ImportWriteTest(Scene,unittest.TestCase):
 class ExmrImportWriteTest(ImportWriteTest):MODEL='exmr'
 
 
-class GvhmrIntoExmrTest(ImportWriteTest):
-    """A GVHMR take has no fingers; imported into an ExMR scene it is imported, and the Console says the fingers are missing."""
+@unittest.skipUnless(importlib.util.find_spec('torch') and FFMPEG.is_file(),'needs torch and the bundled ffmpeg')
+class GvhmrIntoExmrTest(Scene,unittest.TestCase):
+    """ExMR stands its world on the floor (lowest vertex at y = 0) and GVHMR starts its pelvis at y = 0, so a take of the other model is refused."""
     MODEL='exmr';SOURCE_MODEL='gvhmr'
-    def test_fingers_are_said_to_be_missing(self):
-        code,events=self.bring();self.assertEqual(code,0,events)
-        self.assertIn(dict(type='info',stage='take_import',message=check.NO_FINGERS),events)
-        self.assertNotIn('left_hand_pose',self.world(IMPORTED))
-        self.assertEqual(self.join(dict(method='smooth'))[0],0);self.assertNotIn('left_hand_pose',self.world(JOINED))
+    setUp=ImportWriteTest.setUp;snapshot=ImportWriteTest.snapshot;run_job=ImportWriteTest.run_job;bring=ImportWriteTest.bring
+    def test_a_take_of_another_model_is_refused(self):
+        before=self.snapshot();message=check.MODEL.format(check.LABELS[self.MODEL])
+        self.assertEqual(self.bring(),(1,[dict(type='failed',stage='take_import',message=message)]));self.assertEqual(self.snapshot(),before)
+        self.assertEqual(check.refusal(self.root,self.person,self.other/SOURCE,30,'initial'),message)
+
+
+class ExmrIntoGvhmrTest(GvhmrIntoExmrTest):MODEL='gvhmr';SOURCE_MODEL='exmr'
 
 
 class CommandTest(unittest.TestCase):

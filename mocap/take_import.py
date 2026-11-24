@@ -94,9 +94,6 @@ def _source_person(source):
     return None
 
 
-HANDS = ('left_hand_pose', 'right_hand_pose')
-
-
 def run(root, ident, source, gap, result):
     """Writes the imported take after the person's last take and records it in people.json; returns its folder."""
     import torch
@@ -159,7 +156,6 @@ def run(root, ident, source, gap, result):
     if recorded is None:raise RuntimeError('Person no longer exists; the imported take was not recorded. Run Find person again.')
     recorded['takes'] = [t for t in recorded.get('takes', []) if t['project'] != relative]+[dict(project=relative, first=first, end=end)]
     save_people(root, people)
-    if any(k in mine['initial'] for k in HANDS) and not any(k in src['initial'] for k in HANDS):emit('info', stage=STAGE, message=check.NO_FINGERS)
     return target
 
 
