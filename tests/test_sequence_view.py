@@ -103,6 +103,10 @@ class SequenceViewTest(ViewCase):
         self.assertGreater(scrubbed[-1][0], scrubbed[0][0])
         self.assertEqual(self.signals['selected'], [])
 
+    def test_a_scrub_paints_without_a_drag(self):
+        self.view._press = dict(mode='scrub', x=300)
+        self.view._paint_drag(None, self.view._layout())   # a scrub has no 'dragged'; it returned before the painter
+
     def test_double_click_opens(self):
         self.view.frame_all()
         QTest.mouseDClick(self.view, Qt.LeftButton, Qt.NoModifier, self.view.block_rect(self.b1.id).center())
@@ -234,6 +238,136 @@ class SequenceViewTest(ViewCase):
                 self.view.show_block(sequence.blocks[3].id);self.assertFalse(self.view.grab().isNull())
             self.view.show_sequence(Sequence(), {});self.assertFalse(self.view.grab().isNull())
             self.assertEqual(self.view.level(), 1)
+        finally:
+            apply_appearance(APP, 'dark', 100)
+
+
+class LinkViewTest(unittest.TestCase):
+    """Two blocks: a with people 1 and 2, b with people 3 and 1; rows from sequence_links.rows."""
+
+    def setUp(self):
+        application()
+        from mocap.sequence_view import SequenceView
+        self.sequence = Sequence()
+        self.a = self.sequence.add('C:/videos/zongler.mp4', 10.)
+        self.b = self.sequence.add('C:/videos/tanec.mp4', 10.)
+        self.states = {self.a.id: state('tracked', [person(1, (0, 300)), person(2, (0, 300))]),
+                       self.b.id: state('tracked', [person(3, (0, 300)), person(1, (0, 300))])}
+        self.view = SequenceView()
+        self.view.resize(1000, 200)
+        self.show()
+        self.view.show();APP.processEvents()
+        self.addCleanup(self.view.deleteLater)
+        self.signals = {name: [] for name in ('selected', 'moved', 'resized', 'linked', 'unlinked', 'transition_clicked', 'menu_requested')}
+        for name, seen in self.signals.items():
+            getattr(self.view, name).connect(lambda *args, seen=seen: seen.append(args))
+
+    def show(self, row_states=None):
+        from mocap.sequence_links import rows
+        self.view.show_sequence(self.sequence, self.states, rows(self.sequence, self.states), row_states or {})
+        self.view.view_start, self.view.view_span = 0., .95 * self.sequence.total();self.view.update()
+
+    def link(self, source, target):
+        self.sequence.link(source, target);self.show()
+
+    def test_gap_and_piece_are_drawn(self):
+        self.link((self.a.id, 2), (self.b.id, 3))
+        self.assertEqual(self.sequence.gap(self.b.id), 1.)
+        one, two = self.view.block_rect(self.a.id), self.view.block_rect(self.b.id)
+        self.assertGreater(two.left(), one.right())
+        piece = self.view.transition_rect((self.b.id, 3))
+        self.assertFalse(piece.isEmpty())
+        self.assertTrue(one.right() < piece.center().x() < two.left(), (one, piece, two))
+        self.assertEqual(piece.top(), self.view.person_rect(self.a.id, 2).top())
+        self.assertEqual(piece.top(), self.view.person_rect(self.b.id, 3).top())
+        self.assertTrue(self.view.transition_rect((self.b.id, 1)).isEmpty())
+
+    def test_rows_come_from_links(self):
+        self.assertNotEqual(self.view.person_rect(self.b.id, 1).top(), self.view.person_rect(self.a.id, 1).top())
+        self.link((self.a.id, 1), (self.b.id, 1))
+        self.assertEqual(self.view.person_rect(self.b.id, 1).top(), self.view.person_rect(self.a.id, 1).top())
+        self.assertEqual(self.view.person_rect(self.b.id, 3).top(), self.view.person_rect(self.a.id, 2).top())
+        self.view.show_sequence(self.sequence, self.states)   # without rows: the person index, as stage 1
+        self.assertEqual(self.view.person_rect(self.b.id, 3).top(), self.view.person_rect(self.a.id, 1).top())
+
+    def test_drag_bar_onto_row_links(self):
+        start = self.view.person_rect(self.b.id, 3).center()
+        drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 2).center().y()))
+        self.assertEqual(self.signals['linked'], [((self.a.id, 2), (self.b.id, 3))])
+        self.assertEqual((self.signals['unlinked'], self.signals['selected']), ([], []))
+
+    def test_drag_linked_bar_away_unlinks(self):
+        self.link((self.a.id, 2), (self.b.id, 3))
+        start = self.view.person_rect(self.b.id, 3).center()
+        drag(self.view, start, start + QPoint(0, self.view.TRACK_HEIGHT))   # row 2: no person of a
+        self.assertEqual(self.signals['unlinked'], [((self.b.id, 3),)])
+        drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 2).center().y()))   # its own source
+        self.assertEqual((self.signals['linked'], len(self.signals['unlinked'])), ([], 1))
+        drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 1).center().y()))
+        self.assertEqual(self.signals['linked'], [((self.a.id, 1), (self.b.id, 3))])
+
+    def test_vertical_drag_never_moves_a_block(self):
+        start = self.view.person_rect(self.b.id, 3).center()
+        drag(self.view, start, start + QPoint(-300, 2 * self.view.TRACK_HEIGHT))   # an empty row, not linked: nothing
+        drag(self.view, start, QPoint(start.x() - 300, self.view.block_rect(self.a.id).center().y()))   # the Video row
+        drag(self.view, self.view.person_rect(self.a.id, 1).center(), self.view.person_rect(self.b.id, 1).center())
+        self.assertEqual((self.signals['moved'], self.signals['resized']), ([], []))
+        self.assertEqual((self.signals['linked'], self.signals['unlinked']), ([], []))   # a's people have no block before them
+
+    def test_click_on_piece(self):
+        self.link((self.a.id, 2), (self.b.id, 3))
+        QTest.mouseClick(self.view, Qt.LeftButton, Qt.NoModifier, self.view.transition_rect((self.b.id, 3)).center())
+        self.assertEqual(self.signals['transition_clicked'], [((self.b.id, 3),)])
+        self.assertEqual(self.signals['selected'], [])
+
+    def test_right_click_requests_menu(self):
+        at = self.view.person_rect(self.b.id, 3).center()
+        QTest.mouseClick(self.view, Qt.RightButton, Qt.NoModifier, at)
+        self.assertEqual(self.signals['menu_requested'], [(self.b.id, 3, self.view.mapToGlobal(at))])
+        QTest.mouseClick(self.view, Qt.RightButton, Qt.NoModifier, self.view.block_rect(self.b.id).center())
+        self.assertEqual(len(self.signals['menu_requested']), 1)
+
+    def test_string_person_ids_pass_as_they_are(self):
+        self.states[self.b.id] = state('tracked', [person('x', (0, 300))]);self.show()
+        start = self.view.person_rect(self.b.id, 'x').center()
+        drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 2).center().y()))
+        self.assertEqual(self.signals['linked'], [((self.a.id, 2), (self.b.id, 'x'))])
+
+    def test_not_editable(self):
+        self.link((self.a.id, 2), (self.b.id, 3))
+        self.view.editable = False
+        start = self.view.person_rect(self.b.id, 3).center()
+        drag(self.view, start, start + QPoint(0, self.view.TRACK_HEIGHT))
+        drag(self.view, start, QPoint(start.x(), self.view.person_rect(self.a.id, 1).center().y()))
+        QTest.mouseClick(self.view, Qt.LeftButton, Qt.NoModifier, self.view.transition_rect((self.b.id, 3)).center())
+        QTest.mouseClick(self.view, Qt.RightButton, Qt.NoModifier, start)
+        for name in ('linked', 'unlinked', 'transition_clicked', 'menu_requested', 'moved', 'resized'):
+            self.assertEqual(self.signals[name], [], name)
+
+    def test_tooltip_texts(self):
+        from mocap.sequence_view import piece_text, piece_tip
+        self.assertEqual(piece_text(1., 'smooth'), '1.0 s Smooth join')
+        self.assertEqual(piece_text(3., 'auto'), '3.0 s Automatic')
+        self.assertEqual(piece_tip(3., 'auto', 'Person 2', 'Person 3'),
+                         "3.0 s Automatic (Experimental)\nGenerated transition between the end of Person 2's last take and the start of "
+                         "Person 3's take. Click to change it.")
+
+    def test_paints_row_states(self):
+        from mocap.theme import apply_appearance
+        self.link((self.a.id, 2), (self.b.id, 3));self.link((self.a.id, 1), (self.b.id, 1))
+        self.sequence.set_method((self.b.id, 1), 'auto')
+        try:
+            for theme in ('dark', 'light'):
+                apply_appearance(APP, theme, 100)
+                for row_state in ('linked', 'joined', 'out of date'):
+                    self.show({(self.b.id, 3): row_state, (self.b.id, 1): 'joined'})
+                    self.assertFalse(self.view.grab().isNull())
+                start = self.view.person_rect(self.b.id, 3).center()   # with a link drag in progress
+                QTest.mousePress(self.view, Qt.LeftButton, Qt.NoModifier, start)
+                QTest.mouseMove(self.view, start + QPoint(5, self.view.TRACK_HEIGHT))
+                self.assertFalse(self.view.grab().isNull())
+                QTest.mouseRelease(self.view, Qt.LeftButton, Qt.NoModifier, start)
+                self.view.frame_all();self.assertFalse(self.view.grab().isNull())
         finally:
             apply_appearance(APP, 'dark', 100)
 
