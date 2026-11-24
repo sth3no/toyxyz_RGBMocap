@@ -1292,7 +1292,9 @@ scene, for example 30 seconds of one long video followed by 30 seconds of
 another. Right-click the person in **People** and choose **Import take from
 another project...** (it is disabled while a job runs). In the dialog click
 **Choose Project...** and choose the other project's folder (it starts in the
-projects folder); **Take** then lists that project's finished takes with the
+projects folder; another trimmed range of the same video, in the model folder's
+`clips`, counts as another project and is listed with the model folder);
+**Take** then lists that project's finished takes with the
 person, the frames, the model and the length in seconds. A take whose hidden
 ranges were filled in its own project is not listed; a take joined from parts
 that share frames is marked `joined`. **Gap** is the time

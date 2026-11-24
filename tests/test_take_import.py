@@ -244,6 +244,18 @@ class ImportWriteTest(Scene,unittest.TestCase):
         self.assertIn('Dancer · frames 1–90 · ',listed[0]['label']);self.assertTrue(listed[0]['label'].endswith(' · 3.0 s'))
         (self.other/SOURCE/'initial_sources.json').write_text(json.dumps({'hmr4d_results.pt':[0,0]}),encoding='utf-8')
         self.assertEqual(check.sources(self.other.parent),[]);self.assertEqual(check.sources(self.root/'p1'),[])
+    def clip(self,model_folder):
+        """Another trimmed range of the same video: a scene of its own in the model folder's clips."""
+        import shutil
+        clip=model_folder/'clips/000000_000300';shutil.copytree(self.other,clip,ignore=shutil.ignore_patterns('clips'));return clip
+    def test_a_take_of_another_range_of_the_same_video_is_not_in_this_scene(self):
+        clip=self.clip(self.root)
+        self.assertIsNone(check.refusal(self.root,self.person,clip/SOURCE,30,'initial'))
+        self.assertEqual(check.refusal(self.root,self.person,self.root/TAKE,30,'initial'),check.SAME)
+        code,events=self.bring(source=clip/SOURCE);self.assertEqual(code,0,(events,self.stderr.getvalue()))
+    def test_choosing_a_model_folder_lists_its_clips(self):
+        clip=self.clip(self.other)
+        self.assertEqual([x['project'] for x in check.sources(self.other)],[self.other/SOURCE,clip/SOURCE])
     def fill(self,gaps,**extra):
         """A joined take of the other project, as take_join records it: its fill.json lists the filled hidden ranges."""
         import shutil

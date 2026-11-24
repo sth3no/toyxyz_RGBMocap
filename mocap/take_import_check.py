@@ -69,7 +69,7 @@ def last_take(person):
 
 def refusal(root, person, source, frames, result):
     """The first reason the take in folder `source` cannot be imported for `person` of scene `root`, or None."""
-    from .people_store import safe_child
+    from .people_store import root_for, safe_child
     root, source = Path(root).resolve(), Path(source).resolve()
     scene = _manifest(root) or {}
     model = _model(scene)
@@ -82,7 +82,9 @@ def refusal(root, person, source, frames, result):
     needed = kinds(result)
     if needed is None:return UNSUPPORTED
     name = str(person.get('name') or f"Person {person.get('id')}")
-    if source.is_relative_to(root):return SAME
+    try:same = root_for(source) == root  # another trim of the same video is a scene of its own under `root`
+    except (OSError, ValueError, TypeError):same = source == root
+    if same:return SAME
     state = _manifest(source)
     if state is None:return NOT_FINISHED
     # ExMR stands its world on the floor; GVHMR starts the pelvis at height 0: a take keeps its own height, so only one model fits.
@@ -107,7 +109,7 @@ def _rate(value):
 def scene_roots(folder):
     """Scenes with people inside a chosen project folder: the folder itself, a model folder of a workspace, or one of its clips."""
     folder = Path(folder)
-    found = [*folder.glob('people.json'), *folder.glob('*/people.json'), *folder.glob('*/clips/*/people.json')]
+    found = [*folder.glob('people.json'), *folder.glob('clips/*/people.json'), *folder.glob('*/people.json'), *folder.glob('*/clips/*/people.json')]
     return list(dict.fromkeys(p.parent.resolve() for p in found if p.is_file()))
 
 
