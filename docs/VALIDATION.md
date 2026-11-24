@@ -1,5 +1,50 @@
 # Source package validation
 
+## Real runs of typed range, parts, take import and the memory note (2026-11-24)
+
+One PC (RTX 5060 Ti 16 GB, 31 GiB RAM, Windows 11), the real `MainWindow`
+driven offscreen with real ExMR models (Static Camera, Resource Safety on,
+Motion Correction on), projects in a scratch workspace. Other programs were
+closed first; 18.7 GiB of RAM was free. The test videos were one 8.29-second
+clip (464×832, one juggler, fixed camera) repeated end to end to 3 and to 30
+minutes, so the person jumps slightly every 8.29 s. Nothing here was seen on a
+real screen.
+
+- **Typed range on a 30-minute video.** Open Video returned after 0.09 s with
+  0.17 GiB in use. Typing From `20:00` and To `20:10` set the trim to exactly
+  that range; the working clip was 300 frames at 30 fps. Preparing the clip
+  took about 11 s at 20:00 and at 29:00, about 4 s more than at 0:10. Find
+  person took 42 s and Reconstruct 3D 134 s. Peaks: 11.6 GiB of RAM for the
+  app with its workers, 7.0 GiB of video memory used on the GPU.
+- **Reconstruct in parts.** 40 seconds of the 3-minute video in three parts of
+  14 s with a 2 s overlap: 139, 140 and 149 s per part, each peaking at 11.3
+  to 12.1 GiB of RAM and 7.0 GiB of video memory. After each part its 421, 421
+  and 481 temporary frame files were deleted and nothing else. Each next part
+  started by itself with the right trim and the right person checked; the
+  trim, view and check came back at the end. **Fill hidden ranges** listed two
+  "Parts overlap: blended" rows and wrote one take of frames 0–1200 in 22 s;
+  correction and export ran on it. Across the two part seams the pelvis moved
+  at most 1.9 and 3.6 mm between frames (99 % of all frame steps are below
+  5.1 mm) and the heading at most 1.0°. A second run skipped all three parts
+  in under a second. **Cancel Job** during part 2 kept part 1; the next run
+  skipped part 1 and redid part 2.
+- **A take from another video.** The 10-second take of the 30-minute video was
+  imported into the 3-minute video's scene after a 1.0 s gap in 12 s and
+  stood at the receiver's last position and heading. **Smooth join** wrote the
+  joined take in about 27 s (seam at most 3.6 mm and 0.2°). **Automatic
+  (Experimental)** wrote it in 48 s with 2.1 GiB of video memory in use (seam
+  at most 3.6 mm and 0.5°).
+- **Low-memory note.** No real low-memory stop happened. With the memory
+  reading replaced by one that reports 3 % free, the window took its normal
+  stop path: the full text with the note was in the status bar and its
+  tooltip, and the Console opened.
+- **Not run:** a 1080p or 60-minute source; more than one person; FlowHMR or
+  GVHMR; parts longer than 14 s (memory by part length is not measured);
+  preview and export of a joined take longer than 40 s; a refusal of the
+  import in the real window; how a generated or blended transition looks, on
+  any screen. The seam numbers say that the joined motion has no jump at the
+  seams, not that it is correct.
+
 ## Reconstruct a long range in parts (2026-11-24)
 
 **Reconstruct in parts...** under Reconstruct 3D reconstructs a trimmed range
