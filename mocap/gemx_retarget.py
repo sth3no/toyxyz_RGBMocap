@@ -18,7 +18,7 @@ def finger_mapping(kind, bones, semantic):
             for segment, part in enumerate(('Proximal', 'Intermediate', 'Distal'), 1):
                 if kind == 'mixamo':
                     target = suffix.get(f'{side}Hand{finger}{segment}')
-                elif kind == 'vrm':
+                elif kind in {'vrm', 'humanoid'}:
                     digit = 'Little' if finger == 'Pinky' else finger
                     target = semantic.get(side.lower() + digit + part)
                 else:

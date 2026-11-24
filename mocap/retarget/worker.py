@@ -58,6 +58,9 @@ def main(args):
             report(f'Take {i+1}/{len(job["takes"])}: preparing selected source')
             for name in [f'{kind}-rest.blend',f'{kind}-rig.json',f'{kind}-canonical.npz',f'{kind}-contact-geometry.npz','import.json']:
                 shutil.copy2(asset/name,folder/name)
+            skeleton = asset / f'{kind}-skeleton.npz'
+            if skeleton.is_file():
+                shutil.copy2(skeleton, folder / skeleton.name)
             project=Path(take['project'])
             if gemx_result.is_project(project):
                 from mocap.motion_tools import result_is_current
@@ -77,11 +80,30 @@ def main(args):
                 invoke('bake_soma',folder,kind,project,folder_source)
             else:
                 from .pipeline import run
+                from ..motion_tools import base_result
+                from ..self_contact_store import state_path
+
+                contact_state = state_path(project, base_result(job['result']))
+                contact_stamp = stamp([contact_state]) if contact_state.is_file() else {}
                 receipt=prepare(project,job['result'],folder)
+                receipt['source_stats'].update(contact_stamp)
                 report(f'Take {i+1}/{len(job["takes"])}: solving contact retargeting')
                 diagnostic=run(folder,kind)
                 report(f'Take {i+1}/{len(job["takes"])}: baking body bones')
                 invoke('bake',folder,kind)
+                if contact_stamp:
+                    from .character_contact import run as solve_contacts
+                    contacts = solve_contacts(folder, kind, project, job['result'],
+                                              lambda _, **event: report(event['message']) if 'message' in event else None)
+                    if contacts is not None:
+                        diagnostic['self_contact'] = dict(changed=len(contacts['changed']),
+                                                          warning=contacts.get('warning', ''))
+                        atomic_json(folder / 'self-contact.json', json.loads(json.dumps(contacts, default=float)))
+                        if contacts['changed']:
+                            report('Baking self-contacts on the target character')
+                            invoke('bake', folder, kind)
+                elif contact_state.is_file():
+                    raise RuntimeError('Self-contacts changed during retargeting. Retarget again.')
             if stamp(map(Path,receipt['source_stats']))!=receipt['source_stats']:
                 raise RuntimeError('Source changed during retargeting. Apply your changes and retarget again.')
             atomic_json(folder/'receipt.json',dict(receipt,diagnostic=diagnostic))

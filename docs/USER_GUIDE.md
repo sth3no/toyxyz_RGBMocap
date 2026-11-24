@@ -13,10 +13,33 @@ video by default and optional moving-camera tracking through a separate
 Interaction Prompt option. It performs its own tracking and does not generate
 animated fingers. Standard correction, retargeting and FBX controls apply.
 
+## Desktop automation and review
+
+The [MCP toolkit](MCP.md) can run jobs and operate the RGB MoCap window.
+
+In the sequence view, select a block and use **Review Range...** to choose the
+part to play and the saved result to display. Source times are in seconds.
+Playback on the clip view uses the usual trim. Turn on **Auto-advance** in
+the sequence view to play subsequent blocks.
+
+The **Stream** tab offers [VMC output](STREAM_VMC.md) for one prepared actor
+or the transient PEAR preview. Set the destination and click **Start VMC Output**.
+
+For a Generic FBX exported by the native writer, import the animation in Unreal
+with the matching skeleton. The tested path is Legacy FBX in Unreal 5.8.4.
+For the stock UE skeletons, use [UE5 Mannequin FBX](#ue5-mannequin-fbx).
+
 ## Character retargeting
 
 Transfer a reconstructed person's motion to a character without running AI
 inference again. Supported targets are **Mixamo FBX**, **VRM** and **PMX** humanoids. Mixamo FBX can be binary or ASCII, including older FBX 6.1 files.
+
+For other FBX rigs, put `<name>.humanoid.json` beside the FBX file, or provide
+the FBX's Unity `.fbx.meta` file with a configured Humanoid avatar. The JSON
+uses version 1 and a `bones` object from semantic names such as `hips`,
+`leftUpperLeg` and `leftIndexProximal` to the character's bone names.
+Optional upper chest, neck and shoulders may be omitted. At least two spine
+bones and the usual legs, toes, arms, hands and head are required.
 
 1. Prepare the source person's motion and apply any contact edits.
 2. Choose **File > Import Character...** and select the character file. It appears

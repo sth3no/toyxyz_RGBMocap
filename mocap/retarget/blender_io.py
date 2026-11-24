@@ -44,9 +44,17 @@ def import_character(filename, out):
     bpy.ops.wm.read_factory_settings(use_empty=True)
     addons=Path(__file__).resolve().parents[2]/'third_party/character_import'
     sys.path.insert(0,str(addons))
-    semantic={}
+    semantic = {}
+    mapping_options = {}
+    mapping_source = None
+    if kind == 'mixamo':
+        from .humanoid_map import load_sidecar
+        sidecar = load_sidecar(filename)
+        if sidecar is not None:
+            kind = 'humanoid'
+            semantic, mapping_options, mapping_source = sidecar
     report('Importing '+filename.name)
-    if kind=='mixamo':
+    if kind in {'mixamo', 'humanoid'}:
         bpy.ops.wm.fbx_import(filepath=str(filename))
     elif kind=='vrm':
         addon_utils.enable('io_scene_vrm',default_set=True,persistent=False)
@@ -73,7 +81,7 @@ def import_character(filename, out):
     arms=[o for o in bpy.context.scene.objects if o.type=='ARMATURE']
     if len(arms)!=1:raise ValueError('Import one humanoid armature per character file.')
     arm=arms[0]
-    mapping=body_mapping(kind,arm.data.bones.keys(),semantic)
+    mapping=body_mapping(kind,arm.data.bones.keys(),semantic,mapping_options)
     trajectory_root=body_trajectory_root({b.name:b.parent.name if b.parent else None for b in arm.data.bones},mapping)
     for o in bpy.context.scene.objects:
         o.animation_data_clear()
@@ -93,14 +101,20 @@ def import_character(filename, out):
     bpy.context.view_layer.update()
     rest=np.array([arm.matrix_world@arm.data.bones[n].head_local for n in mapping])@A
     limb=np.array([1,2,4,5,7,8,10,11,16,17,18,19,20,21])
+    if kind == 'humanoid':
+        limb = np.array([j for j in limb if mapping[j] != mapping[PARENTS[j]]])
     if np.any(np.linalg.norm(rest[limb]-rest[PARENTS[limb]],axis=1)<1e-5):
         raise ValueError('The humanoid rig has zero-length body segments.')
     meshes=[o for o in bpy.context.scene.objects if o.type=='MESH']
     count=sum(len(o.data.vertices) for o in meshes)
     if not 0<count<=1_000_000:raise ValueError('Character preview supports 1 to 1,000,000 vertices.')
     rig=dict(kind=kind,armature=arm.name,semantic=semantic,trajectory_root=trajectory_root,bones=[dict(name=b.name,parent=b.parent.name if b.parent else None) for b in arm.data.bones],meshes=[dict(name=o.name,vertices=len(o.data.vertices)) for o in meshes])
+    if kind == 'humanoid':
+        rig.update(mapping_source=mapping_source, mapping_options=mapping_options)
     Path(io_path(out/f'{kind}-rig.json')).write_text(json.dumps(rig,ensure_ascii=False),encoding='utf8')
     np.savez(io_path(out/f'{kind}-canonical.npz'),rest=rest,names=mapping,parents=PARENTS)
+    np.savez(io_path(out/f'{kind}-skeleton.npz'), names=np.array([bone.name for bone in arm.data.bones]),
+             heads=np.array([arm.matrix_world @ bone.head_local for bone in arm.data.bones]) @ A)
     from .blender_geometry import register
     report('Registering soles, palms and humanoid proportions')
     register(out,kind,rig,arm,mapping,rest)
@@ -204,7 +218,7 @@ def main(args):
     if mode=='import':import_character(Path(rest[0]),out)
     elif mode=='textures':
         kind=json.loads(Path(io_path(out/'import.json')).read_text(encoding='utf8'))['kind']
-        if kind not in {'mixamo','vrm','pmx'}:raise ValueError('Unsupported character kind')
+        if kind not in {'mixamo','humanoid','vrm','pmx'}:raise ValueError('Unsupported character kind')
         bpy.ops.wm.open_mainfile(filepath=io_path(out/f'{kind}-rest.blend'),load_ui=False)
         from .blender_textures import extract
         extract(out)
@@ -252,7 +266,7 @@ def main(args):
         temp=target.with_name('.'+target.stem+'-'+uuid.uuid4().hex+'.partial.fbx')
         try:
             allowed = set(info['keyed_bones']) | body_dependencies(kind, arm)
-            with body_only_sampler(arm, allowed), preserve_fbx_specular_tint(kind == 'mixamo' and include_mesh):
+            with body_only_sampler(arm, allowed), preserve_fbx_specular_tint(kind in {'mixamo', 'humanoid'} and include_mesh):
                 # Explicit terminal markers keep Blender's Ignore Leaf Bones
                 # option from removing real terminal finger bones.
                 bpy.ops.export_scene.fbx(filepath=io_path(temp),use_selection=True,object_types=types,add_leaf_bones=True,

@@ -23,7 +23,10 @@ def body_trajectory_root(parents, mapped):
         raise ValueError('The mapped humanoid body must share one hierarchy root.')
     return next(iter(roots))
 
-def body_mapping(kind,bones,semantic):
+def body_mapping(kind,bones,semantic,options=None):
+    if kind == 'humanoid':
+        from .humanoid_map import body_mapping as humanoid
+        return humanoid(VRM, bones, semantic, (options or {}).get('missing_spine', 'low'))
     names=set(bones)
     if kind=='mixamo':
         suffix={}
@@ -31,7 +34,9 @@ def body_mapping(kind,bones,semantic):
             suffix.setdefault(name.split(':')[-1],[]).append(name)
         mapping=[suffix.get(n,[]) for n in NAMES]
         missing=[n for n,v in zip(NAMES,mapping) if len(v)!=1]
-        if missing:raise ValueError('Expected a Mixamo humanoid rig. Missing or ambiguous bones: '+', '.join(missing))
+        if missing:
+            raise ValueError('Expected a Mixamo humanoid rig or an FBX with a humanoid sidecar. Missing or ambiguous bones: '
+                             + ', '.join(missing))
         return [v[0] for v in mapping]
     mapping=[semantic.get(n) for n in VRM] if kind=='vrm' else PMX
     missing=[NAMES[i] for i,n in enumerate(mapping) if n not in names]

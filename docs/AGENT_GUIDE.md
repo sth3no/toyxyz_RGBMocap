@@ -1,6 +1,20 @@
 # RGB MoCap: agent operating and development guide
 
-This guide is for agents helping users operate or modify RGB MoCap. It describes the Git/CMD version. User requests and newer verified behavior take precedence over historical benchmarks. The English GUI is the supported user interface; do not assume a general command-line inference or retargeting API exists. Avoid asking for the user's videos or model weights if the existing local project is sufficient.
+The local [MCP toolkit](MCP.md) derives headless tools from `mocap.cli.parser`.
+`tools/rgbmocap_mcp.py` owns the stdio protocol and CLI jobs.
+`mocap/mcp_desktop.py` handles desktop operations in the Qt thread of a
+managed window, behind the existing application lock.
+
+This guide is for agents helping users operate or modify RGB MoCap. It describes the Git/CMD version. User requests and newer verified behavior take precedence over historical benchmarks. The Windows distribution offers the English desktop interface and a command line for automation. Avoid asking for the user's videos or model weights if the existing local project is sufficient.
+
+See the [command-line guide](CLI.md) for offline models, export formats,
+project and model management, face capture, retargeting, preview rendering,
+streaming, PEAR sampling and batch jobs. The CLI uses the same installed
+runtimes and installation lock as the desktop. Keep worker arguments, event
+order and saved state in sync in `mocap/workflow_jobs.py` and
+`mocap/offline_jobs.py`. The latter builds requests for GEM-X, MAMMA and
+PromptHMR. Keep Qt viewport rendering in the preview helper. Do not introduce
+GUI dependencies into model workers or change their numerical defaults.
 
 ## Start and update
 
@@ -607,6 +621,12 @@ behavior. Validate the bind and keyed/fractional poses after reimport, including
 the Blender compatibility pass.
 
 ### UE5 Mannequin FBX export implementation
+
+The native Generic FBX writer pairs its footer identifier with a binary
+`FileId` and `CreationTime`. Preserve the object type definitions and each
+model's default node attribute so Autodesk's importer can identify animation
+and its skeleton. The [Legacy importer check](VALIDATION.md#native-fbx-import-in-unreal-584-2026-11-24)
+uses the Generic path.
 
 The `ue5_mannequin` FBX profile selects `ue5_target` (`manny` or `quinn`)
 and `ue5_in_place`. The default-off `ue5_include_mesh` sends the chosen

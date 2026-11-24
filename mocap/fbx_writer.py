@@ -4,6 +4,7 @@ No SDK, Blender runtime, third-party implementation or body data is embedded.
 Node defaults carry the registered rest pose; PreRotation carries its axes.
 Only Hips has animated translation. End markers preserve terminal lengths.
 """
+from collections import Counter
 import struct
 import warnings
 import zlib
@@ -13,6 +14,10 @@ from .export_options import FBX_A_POSE_DEGREES
 from .source_bvh import continuous_angles
 
 TICKS = 46186158000
+
+
+FILE_ID = bytes.fromhex('28b32aebb624ccc2bfc8b02aa92bfcf1')
+CREATION_TIME = '1970-01-01 10:00:00:000'
 
 
 def node(name, *props, children=()):
@@ -30,6 +35,8 @@ def properties(*items):
 
 
 def _property(value):
+    if isinstance(value, bytes):
+        return b'R' + struct.pack('<I', len(value)) + value
     if isinstance(value, str):
         raw=value.encode('utf-8'); return b'S'+struct.pack('<I',len(raw))+raw
     if isinstance(value, (bool, np.bool_)):
@@ -141,7 +148,10 @@ def write(path, names, parents, rest, rest_frames, display, tip_local, frames, f
     ids=np.arange(1000,1000+expected_bones);objects=[];connections=[]
     link=lambda a,b,p=None:connections.append(node('C','OO' if p is None else 'OP',int(a),int(b),*(() if p is None else (p,))))
     # Empty parent is an FBX armature container, not an extra animated bone.
-    objects.append(node('Model',900,rig_name+'\0\1Model','Null',children=[node('Version',232),properties()]))
+    default_attribute = prop('DefaultAttributeIndex', 'int', 0)
+    objects.append(node('Model',900,rig_name+'\0\1Model','Null',children=[node('Version',232),properties(default_attribute)]))
+    objects.append(node('NodeAttribute',901,rig_name+'\0\1NodeAttribute','Null',children=[node('TypeFlags','Null')]))
+    link(901,900)
     link(900,0)
     local_rest=[]
     for j,p in enumerate(parents):
@@ -157,7 +167,7 @@ def write(path, names, parents, rest, rest_frames, display, tip_local, frames, f
             prop('Lcl Scaling','Lcl Scaling',1.,1.,1.,flags='A'),
             prop('PreRotation','Vector3D',*map(float,_euler(R))),
             prop('RotationActive','bool',True),prop('RotationOrder','enum',0),
-            prop('InheritType','enum',1))]
+            prop('InheritType','enum',1),default_attribute)]
         objects.append(node('Model',int(ids[j]),names[j]+'\0\1Model','LimbNode',children=children))
         objects.append(node('NodeAttribute',2000+j,names[j]+'\0\1NodeAttribute','LimbNode',children=[node('TypeFlags','Skeleton')]))
         link(2000+j,ids[j]);link(ids[j],900 if p<0 else ids[p])
@@ -165,7 +175,8 @@ def write(path, names, parents, rest, rest_frames, display, tip_local, frames, f
         if j in parents:continue
         marker=3000+j
         objects.append(node('Model',marker,names[j]+'_end\0\1Model','LimbNode',children=[
-            node('Version',232),properties(prop('Lcl Translation','Lcl Translation',*map(float,tip_local[j]),flags='A'))]))
+            node('Version',232),properties(prop('Lcl Translation','Lcl Translation',*map(float,tip_local[j]),flags='A'),
+                                          default_attribute)]))
         objects.append(node('NodeAttribute',4000+j,names[j]+'_end\0\1NodeAttribute','LimbNode',children=[node('TypeFlags','Skeleton')]))
         link(4000+j,marker);link(marker,ids[j])
     # Store an explicit bind-pose table in addition to the node defaults.
@@ -186,14 +197,23 @@ def write(path, names, parents, rest, rest_frames, display, tip_local, frames, f
         prop('UnitScaleFactor','double',100.),prop('OriginalUnitScaleFactor','double',100.),
         prop('TimeMode','enum',14),prop('CustomFrameRate','double',float(fps)),
         prop('TimeSpanStart','KTime',0),prop('TimeSpanStop','KTime',stop))
+    # Autodesk's importer discovers animation through the declared object types.
+    animated_properties = len(names) + 1  # One rotation per bone and root translation.
+    counts = Counter(item[0] for item in objects)
+    counts.update({'GlobalSettings': 1, 'AnimationCurveNode': animated_properties,
+                   'AnimationCurve': 3 * animated_properties})
     # Stream nodes/curves individually so serialized animation never accumulates.
     with open(path,'xb') as out:
         out.write(b'Kaydara FBX Binary  \0\x1a\0'+struct.pack('<I',7400))
         _element(out,node('FBXHeaderExtension',children=[node('FBXHeaderVersion',1003),node('FBXVersion',7400),node('Creator','RGB MoCap')]))
+        # Keep these records paired with the fixed compatibility identifier in the footer.
+        _element(out,node('FileId',FILE_ID))
+        _element(out,node('CreationTime',CREATION_TIME))
         _element(out,node('GlobalSettings',children=[node('Version',1000),settings]))
         _element(out,node('Documents',children=[node('Count',1),node('Document',800,'Scene','Scene',children=[properties(),node('RootNode',0)])]))
         _element(out,node('References'))
-        _element(out,node('Definitions',children=[node('Version',100),node('Count',len(objects))]))
+        _element(out,node('Definitions',children=[node('Version',100),node('Count',sum(counts.values())),
+            *(node('ObjectType',kind,children=[node('Count',count)]) for kind,count in counts.items())]))
         start=out.tell();out.write(b'\0'*13+b'Objects')
         for item in objects:_element(out,item)
         nextid=10000

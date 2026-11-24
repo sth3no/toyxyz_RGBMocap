@@ -7,7 +7,9 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QLabel, QMessageBox, QPushButton, QSizePolicy,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from . import paths, people_store, sequence_state
 from .clip_range import format_time
@@ -70,6 +72,7 @@ class Controller(QObject):
         self._trimming = False   # the controller sets the trim itself
         self._clicked = None     # a click's block, so its following scrub does not try the load again
         self._opening = None     # the video File > Open Video is opening, so its metadata does not start a sequence again
+        self._advance_to = None
         self._settle = QTimer(self);self._settle.setSingleShot(True);self._settle.setInterval(250)
         self._settle.timeout.connect(self._changed)   # a dragged trim is shown and saved once it rests
         self._build()
@@ -98,6 +101,7 @@ class Controller(QObject):
     def _reset(self, sequence):
         self._settle.stop()
         self.sequence, self.current, self._pending = sequence, None, None
+        self._advance_to = None
 
     def _guarded(self, change, *args):
         """Run a change the window itself calls for; an error in it never decides the window's job or load."""
@@ -124,6 +128,11 @@ class Controller(QObject):
         self.delete_button.clicked.connect(lambda:self.delete())
         self.frame_button.clicked.connect(lambda:self.view.frame_all())
         for button in (self.add_button, self.cut_button, self.delete_button, self.frame_button):row.addWidget(button)
+        self.review_button = QPushButton('Review Range...')
+        self.review_button.clicked.connect(self.edit_review)
+        self.auto_advance = QCheckBox('Auto-advance')
+        row.addWidget(self.review_button)
+        row.addWidget(self.auto_advance)
         self.summary = QLabel('');self.summary.setMinimumWidth(0);self.summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         row.addWidget(self.summary, 1)
@@ -202,9 +211,10 @@ class Controller(QObject):
         return True
 
     def _save(self):
-        """After every change; a sequence of one block needs no file until it has one (then it keeps saving)."""
+        """Keep review settings even for a single block."""
         sequence = self.sequence
-        if sequence.path is None and len(sequence.blocks) <= 1:return
+        if sequence.path is None and len(sequence.blocks) <= 1 and not any(b.review for b in sequence.blocks):
+            return
         try:sequence.save(free_name() if sequence.path is None else None)
         except OSError as error:self.w.status.setText(f'Cannot save the sequence: {error}')
 
@@ -439,7 +449,9 @@ class Controller(QObject):
         pending, self._pending = self._pending, None
         whole = w.project is None and not w._workspace_video_reference   # not a project's clip
         self._video_info = w.info if whole else None
-        if not whole or not w.info:return
+        if not whole or not w.info:
+            self.resume_review()
+            return
         if pending is None:
             opening, self._opening = self._opening, None
             if self._foreign(opening):self._guarded(self._one_video, Path(w.video_path))
@@ -448,6 +460,7 @@ class Controller(QObject):
         if block_id in self._ids() and same_file(w.video_path, self.sequence.block(block_id).video):
             self._trim(self.sequence.block(block_id), seconds)
             self.refresh()
+            self.resume_review()
 
     def _foreign(self, opening):
         """The window opened a video by another way than this controller or Open Video (a drop, the guide's sample video,
@@ -458,6 +471,7 @@ class Controller(QObject):
 
     def _video_failed(self, _message):
         self._pending = self._opening = None   # the window reported it; the next load opens the video again
+        self._advance_to = None
 
     def _trim(self, block, seconds):
         w, fps = self.w, self.w.info['fps']
@@ -473,6 +487,103 @@ class Controller(QObject):
         w = self.w
         if seconds is None or not w.info:return
         w.slider.setValue(max(w.slider.minimum(), min(w.slider.maximum(), round((seconds - w.source_offset) * w.info['fps']))))
+
+    def edit_review(self):
+        from .motion_tools import RESULTS
+
+        if self.busy() or self.current not in self._ids():
+            return
+        block = self.sequence.block(self.current)
+        review = block.review or {'start': block.start, 'end': block.end, 'result': None}
+        dialog = QDialog(self.w)
+        dialog.setWindowTitle('Review range')
+        form = QFormLayout(dialog)
+        first, end = QDoubleSpinBox(), QDoubleSpinBox()
+        for widget, key in ((first, 'start'), (end, 'end')):
+            widget.setDecimals(4)
+            widget.setRange(block.start, block.end)
+            widget.setSuffix(' s')
+            widget.setSingleStep(1. / (self.w.info or {}).get('fps', 30))
+            widget.setValue(review[key])
+        choices = QComboBox()
+        choices.addItem('Current result', None)
+        for kind in RESULTS:
+            choices.addItem(kind.replace('_', ' ').capitalize(), kind)
+        choices.setCurrentIndex(choices.findData(review['result']))
+        form.addRow('From (source)', first)
+        form.addRow('To (source)', end)
+        form.addRow('Saved result', choices)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Reset)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        buttons.button(QDialogButtonBox.Reset).clicked.connect(lambda: dialog.done(2))
+        form.addRow(buttons)
+        answer = dialog.exec()
+        if answer == QDialog.Rejected:
+            return
+        value = None if answer == 2 else {'start': first.value(), 'end': end.value(), 'result': choices.currentData()}
+        try:
+            self.sequence.set_review(block.id, value)
+        except ValueError as error:
+            self.w.status.setText(str(error))
+            return
+        self._changed()
+        self.w.stop_playback()
+
+    def review_bounds(self):
+        w = self.w
+        left, right = w.slider.clip_in, w.slider.clip_out
+        if self.at_clip_level() or not self.supported() or self.current not in self._ids() or not w.info:
+            return left, right
+        review = self.sequence.block(self.current).review
+        if review is not None:
+            fps = w.info['fps']
+            first = max(left, round((review['start'] - w.source_offset) * fps))
+            end = min(right, round((review['end'] - w.source_offset) * fps))
+            if first < end:
+                return first, end
+        return left, right
+
+    def review_result(self):
+        from .motion_tools import result_is_current
+
+        w = self.w
+        if self.at_clip_level() or not self.supported() or self.current not in self._ids():
+            return True
+        review = self.sequence.block(self.current).review
+        requested = review['result'] if review else None
+        if requested is None:
+            return True
+        if w.project is None or not result_is_current(w.project, requested):
+            w.status.setText('The saved review result is unavailable for this block.')
+            return False
+        if requested != w.active_result:
+            w.set_active_result(requested)
+        return True
+
+    def advance_review(self):
+        if self.at_clip_level() or not self.auto_advance.isChecked() or self.busy() or self.current not in self._ids():
+            return False
+        index = self.sequence.index(self.current) + 1
+        if index >= len(self.sequence.blocks):
+            self.w.stop_playback()
+            return True
+        self.w.stop_playback()
+        block = self.sequence.blocks[index]
+        seconds = block.review['start'] if block.review else block.start
+        self._advance_to = block.id
+        if self.load(block.id, seconds):
+            self.resume_review()
+        else:
+            self._advance_to = None
+        return True
+
+    def resume_review(self):
+        if (self._advance_to is not None and self.current == self._advance_to and self._pending is None
+                and self.w.video_readable):
+            self._advance_to = None
+            if not self.at_clip_level():
+                self.w.toggle_play()
 
     # The playhead
 
@@ -514,6 +625,8 @@ class Controller(QObject):
         supported, busy, loaded = self.supported(), self.busy(), self.current in self._ids()
         self.view.editable = not busy
         self.view.set_busy(self.current if busy and loaded else None)
+        self.review_button.setEnabled(supported and not busy and loaded)
+        self.auto_advance.setEnabled(supported and not busy and count > 1)
         for key, button, enabled in (('back', self.back_button, True), ('add', self.add_button, not busy), ('frame', self.frame_button, True),
                                      ('cut', self.cut_button, not busy and loaded), ('delete', self.delete_button, not busy and loaded)):
             button.setEnabled(supported and enabled);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))

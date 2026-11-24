@@ -1,5 +1,157 @@
 # Source package validation
 
+## Native FBX import in Unreal 5.8.4 (2026-11-24)
+
+Unreal accepted 30-frame synthetic skeleton animations with two and 52 bones
+through the Legacy FBX importer after adding the binary file metadata,
+object definitions and node attributes to the native writer. Both created an
+AnimSequence lasting 29/30 seconds with a matching synthetic skeletal mesh.
+The previous native file was rejected as corrupted. Blender 4.5 loaded the
+synthetic motion. These checks used scratch projects and the null renderer.
+The binary metadata change originated in
+[AskTinNguyen's FBX fix](https://github.com/AskTinNguyen/toyxyz_RGBMocap/commit/d830420).
+
+## Fork feature integration (2026-11-24)
+
+- A synthetic 10,800-frame CPU encoder retained all output frames. Each
+  attention call used at most 256 queries and 375 keys. Focused CPU checks
+  also exercised SimpleVO matching, cleanup, rotary tables, HTD's gradient
+  boundary and bounded retarget geometry.
+- Blender 4.5 imported a synthetic FBX with 19 custom-named bones, three
+  optional semantic slots and a version 1 mapping. After a 40-frame bake,
+  the target-skin contact pass applied one hand-to-head interval. Blender
+  baked the adjusted result and retained all 40 frames. A separate 21-bone
+  import checked finger names supplied by the sidecar.
+  [Humanoid mapping](https://github.com/MrSuamps/toyxyz_RGBMocap/commit/6826ed4),
+  [target-skin solver](https://github.com/MrSuamps/toyxyz_RGBMocap/commit/644e173)
+- A managed stdio MCP process listed 40 tools in a scratch installation.
+  A CLI model check returned through the job tool. The desktop session
+  exposed controls, returned a PNG and shut down with an offscreen Qt window.
+- The offscreen sequence played a selected range and advanced between two
+  short synthetic clips. Both clips retained their full processing trim.
+  With a synthetic prepared 52-bone rig, the Stream page sent 52 VMC bone
+  messages to a localhost receiver and released the sender on target change.
+  [Review range behavior](https://github.com/AskTinNguyen/toyxyz_RGBMocap/commit/cb7e240)
+- The regression suite ran 1,151 tests in four isolated groups, with
+  1,133 passing and 18 skipped. The ExMR runtime separately passed all
+  12 SimpleVO and rotary-table checks. The HTD overlay passed its three
+  CPU checks, including the actual optimizer in a fresh process.
+
+These checks use synthetic motion and a loopback VMC receiver. GPU inference,
+physical PEAR capture and AV or animation playback in an external VMC client
+were outside this integration check.
+
+## CLI camera rotation refinement
+
+- Ran animated Blender exports with refinement on and off for 72-frame
+  moving-camera FlowHMR and ExMR takes. FlowHMR accepted five of twelve
+  samples. ExMR rejected all twelve samples and kept the saved camera.
+  Comparing every exported frame in Blender 4.5 showed changed FlowHMR
+  camera rotation, camera-center differences below 2e-7 m, and identical
+  body transforms. The ExMR camera and body transforms matched exactly.
+- Both six-frame FlowHMR preview MP4s rendered with the camera visible.
+  The refined preview waited for the CPU worker and reported the same
+  five accepted samples. A fresh static-camera reconstruction saved
+  the preference, its Blender export skipped refinement, and saving the
+  preference off retained the original camera file hash.
+- Reproduced the Windows progress-file sharing error by holding the file
+  open during replacement. The worker emitted the update on stdout and
+  resumed writing progress files when the reader released the file.
+
+## Windows CLI multi-video integration matrix (2026-11-24)
+
+- Tested 48–72 frame excerpts of dance, exercise, a short video, a
+  two-person clip and a synchronized two-camera pair on an RTX 5090.
+  The CLI used normal result publication and export entry points.
+- ExMR ran fixed and moving camera with different smoothing and contact
+  settings. FlowHMR ran fixed camera and 5-frame moving camera sampling
+  with HaMeR and Low Memory. CLI argument choices now match the FlowHMR
+  worker. Invalid cadence and the unsupported GVHMR moving camera option
+  were rejected with exit code 2 before creating a project.
+- GEM-X published both raw and corrected SOMA motion. PromptHMR ran a
+  two-person interaction in fixed camera and a single person in moving
+  camera with DROID. Both manual MAMMA calibration and automatic VGGT
+  camera and GeoCalib gravity estimation ran on the same camera pair.
+- GVHMR accepted explicit fixed camera and ran with the three refinements
+  disabled and enabled. ExMR was re-corrected on a project copy using a
+  different preset and a manual floor, then exported to BVH.
+- Blender 4.5 opened 12 FBXs, two BVHs and four Blender files. Sampled
+  finite bone transforms and confirmed changing poses, including a skinned
+  Quinn, the two-person PromptHMR bundle and a two-camera MAMMA scene.
+  The standalone Blender receiver streamed each offline model and baked
+  seven actors in total. Reopening each baked scene preserved its actions.
+- Unreal Engine 5.8.4 received 52 body bones and 52 facial curves from the
+  new ExMR reconstruction. The neutral face frame and CSV export also
+  succeeded. Windows regression tests recorded 81 passes and one skip.
+- PEAR tracked seven consecutive samples both with and without smoothing,
+  and reported four samples from a synchronized pair. The normal Camera
+  Align workers created a calibration from the pair. The CLI loaded it
+  and fused both views for all four requested frames.
+
+## Windows multi-model CLI and integration
+
+- Ran offline GPU reconstruction for FlowHMR, GVHMR, PromptHMR, GEM-X and
+  MAMMA with the installed workers. FlowHMR completed static and moving
+  camera runs, including HaMeR. GVHMR completed the base run and a run with
+  HTD, FootMR and HandFlow enabled. PromptHMR used fixed camera. GEM-X
+  used native SOMA output. MAMMA used two synchronized videos and a saved
+  camera calibration. The automatic MAMMA alignment test could not run
+  with the linked runtimes in the isolated checkout.
+- Confirmed SAM 3.1 tracking of two people for all 48 frames and RIFE
+  interpolation of a 24 fps clip to 30 fps. A version 1
+  batch planned and ran contact correction followed by BVH export. Also
+  verified manual contact edits and reset, a project copy, Generic and
+  Mannequin FBX export, a Blender bundle, a combined PromptHMR bundle,
+  a native MAMMA Blender scene, Live Link reference FBX, and retargeting
+  to both FBX and VMD. Rendered preview MP4 with the real Qt/OpenGL viewport,
+  including a project reconstructed with MAMMA.
+- Tracked faces for all 48 test frames, set and reset the neutral frame,
+  and exported Live Link Face CSV. A Blender protocol client received
+  the live rig, poses and a requested bake. An installed Unreal Engine
+  5.8.4 editor with RGB MoCap Connect received 52 body bones and 52 facial
+  curves. This check verified reception in Unreal.
+- Verified PEAR GPU tracking with single and dual video inputs. Dual
+  input delivered samples for consecutive requested frames and reported
+  both views available with no alignment. Windows camera enumeration ran.
+  Camera capture and aligned PEAR fusion were outside these integration
+  checks.
+- In a separate model store, imported a pinned FlowHMR configuration,
+  previewed and confirmed removal, re-imported it, and exercised cached
+  and official downloads. The installed model store was preserved.
+- The Windows regression suite ran 81 tests, with 80 passing and one
+  symbolic-link test skipped on this Windows account.
+
+## ExMR command line and desktop parity
+
+- Windows with the private runtimes, actual GPU inference, and a 48-frame clip
+  using a Unicode filename with spaces. Single-person ExMR completed from the
+  CLI and independently from the desktop. The working video, tracking file,
+  and camera array matched byte for byte and the keypoints were identical.
+  The maximum difference across raw global body pose elements was below
+  9e-7 in this test.
+- The desktop opened the CLI project and re-corrected it. The CLI also
+  re-corrected and exported the desktop project. Dry run preserved the
+  project manifest and a duplicate export request preserved the existing
+  file. Two-person reconstruction exported two independent FBXs with and
+  without motion correction.
+- Blender 4.5 imported all 48 animation frames of the Generic, Manny and
+  Quinn FBX exports. The existing FlowHMR desktop workflow also completed
+  GPU reconstruction and preview preparation in the same checkout.
+
+## Unreal Live Link sender on UE 5.8 (2026-11-23)
+
+- With the previous `BuildSettingsVersion.V6` and 5.7 include order,
+  `Setup_UnrealStream.cmd --engine` against installed UE 5.8.4 stopped before
+  compiling: UnrealBuildTool rejects an editor target that changes
+  `UnreachableCodeWarningLevel`, `ReturnTypeWarningLevel` and
+  `DanglingWarningLevel`, because it shares build products with UnrealEditor.
+- With `Latest` for both settings, setup built the provider and passed its
+  startup verification on installed UE 5.8.4 and on UE 5.7.4, using Visual
+  Studio 2022 (MSVC 14.44) on Windows with an RTX 4080.
+- The RGB MoCap Connect receiver also compiled from source against UE 5.8.4
+  without warnings. Both modules loaded in an existing project's editor and
+  Tools > RGB MoCap Connect opened. End-to-end streaming into that UE 5.8
+  editor was not part of this check.
 ## Memory fit: low RAM keeps running (2026-11-24)
 
 With Resource Safety on, an offline job is no longer stopped for low available

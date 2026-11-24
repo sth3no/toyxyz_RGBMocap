@@ -1,5 +1,6 @@
 import bpy,json,numpy as np
 from .mapping import A
+from .humanoid_map import FINGERS
 from .file_paths import io_path
 def register(OUT,kind,rig,arm,mapping,rest):
  mapped={name:i for i,name in enumerate(mapping)};bone_map={}
@@ -39,6 +40,10 @@ def register(OUT,kind,rig,arm,mapping,rest):
   lookup={value:i for i,value in enumerate(ids)}
   payload.update({f'foot_v{side}':v[ids],f'foot_w{side}':W[ids],f'foot_ids{side}':ids,f'heel{side}':np.array([lookup[i] for i in heel]),f'toe{side}':np.array([lookup[i] for i in fore])})
   wrist=20+side;finger=[b for b in arm.data.bones if b.name.startswith(mapping[wrist]) and b.name!=mapping[wrist]]
+  if kind=='humanoid':
+   prefix=('left','right')[side];semantic=rig['semantic']
+   finger=[arm.data.bones[semantic[name]] for name in FINGERS
+           if name.startswith(prefix) and name in semantic and semantic[name] in arm.data.bones]
   # Registered palm region excludes finger-dominant vertices.
   palm_length=max(.025,float(np.median([np.linalg.norm(np.array(arm.matrix_world@b.head_local)@A-rest[wrist]) for b in finger if np.linalg.norm(np.array(arm.matrix_world@b.head_local)@A-rest[wrist])>.015])) if finger else .055)
   hand_dist=np.linalg.norm(v-rest[wrist],axis=1)

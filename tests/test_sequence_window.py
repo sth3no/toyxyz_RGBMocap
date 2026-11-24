@@ -115,6 +115,26 @@ class SequenceWindowTest(unittest.TestCase):
         self.assertEqual(c.current, c.sequence.blocks[0].id)
         self.assertTrue(c.at_clip_level());self.assertTrue(self.w.slider.isVisible());self.assertFalse(c.view.isVisible())
 
+    def test_review_playback_preserves_trim_and_advances_to_the_next_block(self):
+        first, second = self.two()
+        controller, window = self.c, self.w
+        controller.sequence.set_review(first.id, dict(start=.5, end=1., result=None))
+        controller.sequence.set_review(second.id, dict(start=1.5, end=2., result=None))
+        controller.back()
+        self.assertEqual(controller.review_bounds(), (15, 30))
+        self.assertEqual(self.range(), (0., 3.))
+        controller.auto_advance.setChecked(True)
+        window.slider.setValue(0)
+        window.toggle_play()
+        self.assertEqual(window.slider.value(), 15)
+        self.assertTrue(controller.advance_review())
+        self.ready(self.v2)
+        self.assertEqual(controller.current, second.id)
+        self.assertEqual(controller.review_bounds(), (45, 60))
+        self.assertEqual(self.range(), (0., 3.))
+        self.assertTrue(window.timer.isActive())
+        window.stop_playback()
+
     def test_menu_entry_follows_open_project_and_is_an_open_action(self):
         w = self.w;menu = next(m for m in w.menuBar().findChildren(QMenu) if m.title() == 'File')
         texts = [a.text() for a in menu.actions()]

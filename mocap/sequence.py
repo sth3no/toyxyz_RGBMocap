@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -23,6 +24,7 @@ class Block:
     end: float
     length: float
     folders: dict[str, str] = field(default_factory=dict)
+    review: dict | None = None
 
 
 def _number(value) -> float:
@@ -41,7 +43,25 @@ def _block(item) -> Block:
     start, end, length = _number(item.get('start')), _number(item.get('end')), _number(item.get('length'))
     if start < 0 or end <= start:
         raise ValueError(_BAD)
-    return Block(item['id'], item['video'], start, end, length, dict(folders))
+    review = item.get('review')
+    if review is not None:
+        review = _review(review, start, end)
+    return Block(item['id'], item['video'], start, end, length, dict(folders), review)
+
+
+def _review(item, start, end):
+    from .motion_tools import RESULTS
+
+    if not isinstance(item, dict):
+        raise ValueError('Invalid review settings.')
+    first = _number(item.get('start'))
+    last = _number(item.get('end'))
+    result = item.get('result')
+    if not (math.isfinite(first) and math.isfinite(last) and start - _SAME <= first < last <= end + _SAME):
+        raise ValueError('Choose a nonempty review range inside the block.')
+    if result is not None and (not isinstance(result, str) or result not in RESULTS):
+        raise ValueError('Unknown review result.')
+    return {'start': max(first, start), 'end': min(last, end), 'result': result}
 
 
 class Sequence:
@@ -71,7 +91,7 @@ class Sequence:
         if seconds - block.start < MIN_SECONDS or block.end - seconds < MIN_SECONDS:
             raise ValueError(_SHORT)
         second = Block(uuid.uuid4().hex[:12], block.video, float(seconds), block.end, block.length)
-        block.end = float(seconds); block.folders = {}
+        block.end = float(seconds); block.folders = {}; block.review = None
         self.blocks.insert(i + 1, second)
         return block, second
 
@@ -89,17 +109,23 @@ class Sequence:
             raise ValueError(_SHORT)
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
+            block.review = None
         block.start, block.end = start, end
 
     def remember(self, id, model, folder, start, end) -> None:
         block = self.block(id)
         if abs(start - block.start) > _SAME or abs(end - block.end) > _SAME:
             block.folders = {}
+            block.review = None
         block.start, block.end = float(start), float(end)
         block.folders[model] = str(folder)
 
     def forget(self, id, model) -> None:
         self.block(id).folders.pop(model, None)
+
+    def set_review(self, id, value) -> None:
+        block = self.block(id)
+        block.review = None if value is None else _review(value, block.start, block.end)
 
     def starts(self) -> list[float]:
         out, at = [], 0.0
@@ -128,7 +154,9 @@ class Sequence:
 
     def to_dict(self) -> dict:
         return {'version': VERSION, 'blocks': [{'id': b.id, 'video': b.video, 'start': b.start, 'end': b.end,
-                                                'length': b.length, 'folders': dict(b.folders)} for b in self.blocks]}
+                                                'length': b.length, 'folders': dict(b.folders),
+                                                **({'review': dict(b.review)} if b.review is not None else {})}
+                                               for b in self.blocks]}
 
     @classmethod
     def from_dict(cls, data) -> Sequence:

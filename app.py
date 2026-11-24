@@ -5,12 +5,14 @@ import sys
 from pathlib import Path
 
 
-def main():
+def main(*, mcp_output=None):
     from mocap.portable_startup import configure_portable_environment
     configure_portable_environment()
     from mocap.runtime_limits import configure_preview_cpu
     configure_preview_cpu()
     parser = argparse.ArgumentParser()
+    if mcp_output is not None:
+        parser.add_argument('--mcp-stdio', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument("--video", type=Path)
     parser.add_argument("--project", type=Path)
     parser.add_argument("--smoke-screenshot", type=Path)
@@ -30,7 +32,7 @@ def main():
             pass
     from PySide6.QtWidgets import QApplication
     from PySide6.QtGui import QIcon, QSurfaceFormat
-    from PySide6.QtCore import QTimer
+    from PySide6.QtCore import Qt, QTimer
     from mocap.gui import MainWindow
     from mocap.theme import configure_application, load_appearance
     # QOpenGLWidget's private FBO format does not configure the top-level
@@ -39,6 +41,8 @@ def main():
     surface = QSurfaceFormat.defaultFormat()
     surface.setSwapInterval(0)
     QSurfaceFormat.setDefaultFormat(surface)
+    if mcp_output is not None:
+        QApplication.setAttribute(Qt.AA_DontUseNativeDialogs)
     app = QApplication(sys.argv[:1])
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "rgbmocap-icon.png")))
     configure_application(app, *load_appearance())
@@ -47,6 +51,12 @@ def main():
     if args.project:
         window.load_project(args.project)
     window.show()
+    if mcp_output is not None:
+        import os
+        from mocap.mcp_desktop import DesktopBridge
+        # Raw input can be left blocked when the user closes the desktop.
+        mcp_input = os.fdopen(os.dup(sys.stdin.fileno()), 'rb', buffering=0)
+        bridge = DesktopBridge(window, mcp_input, mcp_output)
     from mocap.tutorial import first_run, smoke_run
     if not smoke_run(args):
         first_run(window, welcome=not (args.video or args.project))
