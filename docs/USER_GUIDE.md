@@ -1022,6 +1022,7 @@ an estimate and can leave residual sliding or penetration.
 | **Rename... / color square** | Right-click a row to rename it; click its square to change display color. The name is also used for FBX filenames and rig names. Right-click also offers **Continue as** and **Separate again** when the tracker found one human as two people; see [One person found as two](#one-person-found-as-two). |
 | **Take selector** | Switch between a person's saved frame ranges. Each row shows whether the chosen motion result is ready or needs work. Long tracking gaps can create separate takes, and reconstructing a different trim can save an overlapping range. Gaps between takes can be joined; see [Hidden ranges](#hidden-ranges). |
 | **Hidden ranges** | List under the take selector. Each gap between two takes of the same person has a method, **Do not fill** (default), **Smooth join** (interpolation), **Copy from person** (another person's motion) or **Automatic (Experimental)** (generated motion, optional, can take a description). Where two parts of **Reconstruct in parts...** share frames, the row says **Parts overlap: blended** and has no method. **Fill hidden ranges** writes one joined take. |
+| **Fill all hidden ranges** | Below **Hidden ranges**, shown while a checked person has a hidden range that is not filled, under a line such as `3 hidden ranges of 2 people are not filled.` Fills the hidden ranges of every checked person in one go, after a question that lists them; see [Hidden ranges](#hidden-ranges). |
 | **Overlays / Bone Overlay** | Show video observations / source export bones. Bone Overlay is drawn above source meshes and imported characters. Display only. |
 | **View direction / Frame All** | Choose a camera direction / fit visible people in the 3D view. Left drag orbits, middle/right drag pans, wheel zooms. |
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
@@ -1301,10 +1302,57 @@ for example `3 people visible, 1 hidden`, and a note names the person and the
 frames, for example `Person 2: hidden in frames 101–120.` (several people at
 once: `Person 2, Person 5: hidden at this frame.`). A ghost is only drawn:
 export, **Apply Correction** and the Blender stream use the takes as before.
+**File > Export Preview...** records the 3D view as it is shown, so its video
+includes ghosts; uncheck a person to leave them out.
 Once the range is filled, the motion of the joined take is shown instead.
 There is no ghost before a person's first take or after the last one, when
 the take before the range has no result for the selected options, and in
 scenes of models without Hidden ranges (FlowHMR, PromptHMR, MAMMA).
+
+**Fill all hidden ranges.** While a checked person has a hidden range that is
+not filled, the People panel shows a line such as `3 hidden ranges of 2 people
+are not filled.` and the button **Fill all hidden ranges**, and the note in the
+3D view ends with `Click Fill all hidden ranges.` One click fills the ranges of
+every checked person, one person after another, with the same job as **Fill
+hidden ranges**. A range that has a method keeps it. A range without a method
+gets **Smooth join** when it has up to 30 frames, and **Automatic
+(Experimental)** when it is longer, has at most 290 frames, the takes have 30
+fps and Automatic fill is set up; the method is recorded in **Hidden ranges**,
+where you can change it. Before anything starts, a question lists every range
+with its method and, under `Not filled:`, each range that stays empty with the
+reason, for example `Ben, frames 91–500: Automatic fill is limited to 290
+frames; this range has 410.` When a range will be generated, it adds
+`Experimental support. Generated motion is plausible, not what the person
+did.` **Cancel** changes nothing. When no range can be filled, the status line
+says why and nothing is asked.
+
+If the fill of one person fails or is refused, the next person is still
+filled, and the last line names who was not, for example `Fill all hidden
+ranges finished: 1 person filled, 1 not. Ben: <reason>` (`The fill did not
+start.` when the job could not be started). The last line is also in the
+Console, because a job the window starts afterwards may replace the status
+line. **Cancel Job** ends the run, also when it cancels a job the window
+started by itself between two people (`Fill all hidden ranges was cancelled
+after 1 person.`, or `Fill all hidden ranges was cancelled. Nobody was
+filled.`); what was filled before stays filled. Opening another scene ends it
+too: `The scene changed, so Fill all hidden ranges stopped.` A method chosen
+by hand that cannot run stops that person: an **Automatic (Experimental)**
+range that is not set up, has a description that cannot be read or belongs to
+takes that do not have 30 fps, or a range whose neighbouring takes are not
+reconstructed and prepared. The person's ranges are then listed under `Not
+filled:` with that reason, because the person's fill would be refused as a
+whole.
+
+With **Enable Correction** on, the joined takes get no correction of their
+own: after the last person **Apply Correction** runs once for all people,
+because every joined take changes the shared floor of the scene, and the
+question says so. If that correction is cancelled, fails or cannot start, the
+last line ends with `Apply Correction was cancelled.`, `Apply Correction did
+not finish: <reason>` or `Apply Correction did not start: <reason>`. A run
+that ends early after a take was joined adds `The joined takes are not
+corrected yet: click Apply Correction.` To keep one range empty while others
+are filled, fill people one by one with **Fill hidden ranges**: **Fill all
+hidden ranges** gives every range without a method one.
 
 **Smooth join** is plain interpolation between the last frame before the gap and
 the first frame after it, with no model. It is available only for gaps of up to

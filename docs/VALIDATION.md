@@ -1,5 +1,12 @@
 # Source package validation
 
+## Combined Windows integration (2026-11-24)
+
+The local integration combines the fork toolkit, current sequence timeline and
+multi-person preview. Sequence tests passed after resolving the playback and
+workspace switching hooks. The combined source ran 1,216 tests in four
+isolated groups, with 1,198 passing and 18 skipped.
+
 ## Native FBX import in Unreal 5.8.4 (2026-11-24)
 
 Unreal accepted 30-frame synthetic skeleton animations with two and 52 bones
@@ -262,6 +269,68 @@ was driven.
   mode; Moving Camera; pressure on a clip longer than 10 s; a page file on a slow
   disk; a job stopped by low allocation headroom; a fitted-length parts run
   with real models; any PC with less RAM or video memory.
+## Hidden people in the 3D view and Fill all hidden ranges (2026-11-24)
+
+One PC (RTX 5060 Ti 16 GB, Windows 11). Everything here ran without a screen;
+the installed app was in use meanwhile, so project folders were copied to a
+scratch folder first and only the copies were opened.
+
+- **Tests.** The whole `tests` folder in one process with the GUI runtime
+  offscreen: 985 tests OK, 17 skipped (914 before this work). New:
+  `test_scene_ghosts` (14), `test_ghost_view` (7), `test_fill_all` (23),
+  `test_fill_all_window` (21, the real `MainWindow` with the job queue stopped
+  before a worker starts), `test_select_time` (2) and four more in
+  `test_scene_notes`.
+- **The ghost through real OpenGL, with no window.**
+  `experiments/multi-person-preview/gl_ghost.py` loads the scene of a copied
+  two-player tennis project (GVHMR) with the app's scene loader and draws
+  frame 111 into an off-screen framebuffer, first with `MeshRenderer` directly
+  and then through `MotionView.draw_people_scene` and `draw_names`. Person 2 is
+  inside the unfilled range 101–120; Person 1 is shown by a joined take. Of the
+  ghost's 2,392 pixels all but one are exactly one blend of the body over the
+  background at 35 % (mean error 0.27 of 255 levels; the one pixel is blended
+  twice, where two surfaces of the body lie in the same place). No pixel
+  outside the ghost changed and the picture stayed opaque. The view drew
+  Person 1, the ghost with the name `Person 2 (hidden)`, and the lines
+  `1 person visible, 1 hidden | Shared camera / world` and `Person 2: hidden in
+  frames 101–120. Click Fill all hidden ranges.` The saved picture was looked
+  at. This check found that `QOpenGLShaderProgram.setUniformValue(name, float)`
+  is ambiguous in PySide6, so the alpha is set with `glUniform1f`.
+- **The real window offscreen on a copied nine-person dance project** (GVHMR,
+  result without correction). Person 6 has three unfilled ranges (frames
+  22–59, 97–114, 172–190). The People panel showed `3 hidden ranges of 1 person
+  are not filled.` with the button. At a time inside 172–190 the view held five
+  people and the ghost of Person 6 at the last frame of the take before the
+  range; at times inside takes it held no ghost. The question listed frames
+  97–114 and 172–190 as Smooth join and left 22–59 with `Automatic fill is not
+  set up. ...` (the worktree the run started from has no Kimodo runtime).
+  Answering yes recorded the two methods in `people.json`, and the app's own
+  queue ran the real `take_join` worker, which wrote the joined take of frames
+  59–353 in 12.6 s. The row then read `1 hidden range of 1 person is not
+  filled.`
+- **Paint cost.** A stand-in scene of five checked people with three unfilled
+  ranges each in the real `MotionView` offscreen (no OpenGL): 2.6 to 2.9 ms per
+  paint with the ranges, 2.5 to 2.9 ms without. Before the folder of the take
+  before a range was resolved once per scene instead of in every lookup, the
+  same paints took 15 to 37 ms; the review of the branch measured that.
+- **The time after another person is selected.** Before the fix the new test
+  showed the timeline at frame 111 with the video and the 3D scene at frame 1
+  after another person or another take was selected, and the same was seen on
+  a copy of a real five-dancer project (timeline at frame 282, 3D scene at
+  time 0).
+
+Not run: nothing was seen on a real screen, and the look of the ghost was
+judged only from the off-screen picture, which has no floor grid behind it.
+The `export` and `correct` stages after a fill could not start (the worktree
+has no runtime folders), so no person was seen drawn after a fill made by the
+button, and the **Apply Correction** that ends a run with **Enable Correction**
+on ran only against the stopped queue of the tests. **Automatic
+(Experimental)** through the button (no GPU run), ExMR scenes, a run over more
+than one person with real workers, GPU paint times with ghosts, and **Export
+Preview** with a ghost in the view were not run. For the real run the time
+stamps of 15 unchanged preview code files in the worktree were set to those of
+the installed copies, so that the project's prepared previews counted as
+current, and were put back afterwards.
 
 ## Real runs of typed range, parts, take import and the memory note (2026-11-24)
 
