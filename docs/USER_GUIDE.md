@@ -1138,14 +1138,31 @@ says why and nothing is asked.
 
 If the fill of one person fails or is refused, the next person is still
 filled, and the last line names who was not, for example `Fill all hidden
-ranges finished: 1 person filled, 1 not. Ben: <reason>`. **Cancel Job** ends
-the run (`Fill all hidden ranges was cancelled after 1 person.`); what was
-filled before stays filled. With **Enable Correction** on, the joined takes get
-no correction of their own: after the last person **Apply Correction** runs
-once for all people, because every joined take changes the shared floor of the
-scene, and the question says so. To keep one range empty while others are
-filled, fill people one by one with **Fill hidden ranges**: **Fill all hidden
-ranges** gives every range without a method one.
+ranges finished: 1 person filled, 1 not. Ben: <reason>` (`The fill did not
+start.` when the job could not be started). The last line is also in the
+Console, because a job the window starts afterwards may replace the status
+line. **Cancel Job** ends the run, also when it cancels a job the window
+started by itself between two people (`Fill all hidden ranges was cancelled
+after 1 person.`, or `Fill all hidden ranges was cancelled. Nobody was
+filled.`); what was filled before stays filled. Opening another scene ends it
+too: `The scene changed, so Fill all hidden ranges stopped.` A method chosen
+by hand that cannot run stops that person: an **Automatic (Experimental)**
+range that is not set up, has a description that cannot be read or belongs to
+takes that do not have 30 fps, or a range whose neighbouring takes are not
+reconstructed and prepared. The person's ranges are then listed under `Not
+filled:` with that reason, because the person's fill would be refused as a
+whole.
+
+With **Enable Correction** on, the joined takes get no correction of their
+own: after the last person **Apply Correction** runs once for all people,
+because every joined take changes the shared floor of the scene, and the
+question says so. If that correction is cancelled, fails or cannot start, the
+last line ends with `Apply Correction was cancelled.`, `Apply Correction did
+not finish: <reason>` or `Apply Correction did not start: <reason>`. A run
+that ends early after a take was joined adds `The joined takes are not
+corrected yet: click Apply Correction.` To keep one range empty while others
+are filled, fill people one by one with **Fill hidden ranges**: **Fill all
+hidden ranges** gives every range without a method one.
 
 **Smooth join** is plain interpolation between the last frame before the gap and
 the first frame after it, with no model. It is available only for gaps of up to

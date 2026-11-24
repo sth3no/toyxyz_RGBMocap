@@ -109,6 +109,9 @@ class FillAllWindow(Window):
     def wait_batches(self,n):self.assertTrue(pump(lambda:len(self.batches)>=n or self.w.fill_all_runner is None),(len(self.batches),self.w.status.text()))
     def people(self):return [(arg(b[0][1],'--person-id'),b[0][0]) for b in self.batches]
     def gap_fill(self):return {p['id']:p.get('gap_fill') for p in ps.load_people(self.root)['people']}
+    def other_job(self):
+        """A job the window starts by itself when a batch has ended (a bone preview), as start_jobs marks it."""
+        w=self.w;w.batch_serial+=1;w.busy,w.cancelled,w.failed=True,False,False
 
 
 @unittest.skipUnless(tp.FFMPEG.is_file(),'needs the bundled ffmpeg')
@@ -152,6 +155,20 @@ class FillAllTest(FillAllWindow):
         self.finish(cancelled=True);self.assertTrue(pump(lambda:w.fill_all_runner is None))
         self.assertEqual(len(self.batches),1)
         self.assertEqual(w.status.text(),'Fill all hidden ranges was cancelled. Nobody was filled.')
+    def test_cancel_job_on_a_job_between_two_people_ends_the_run(self):
+        # After a person's batch the window may start a job of its own (a bone preview); cancelling that one cancels the run.
+        w=self.w;self.start();self.finish()
+        self.other_job();self.assertFalse(pump(lambda:len(self.batches)>1,.6))
+        w.cancelled=True;w.busy=False
+        self.assertTrue(pump(lambda:w.fill_all_runner is None))
+        self.assertEqual(len(self.batches),1)
+        self.assertEqual(w.status.text(),'Fill all hidden ranges was cancelled after 1 person.')
+    def test_a_job_between_two_people_that_ends_by_itself_does_not_end_the_run(self):
+        w=self.w;self.start();self.finish()
+        self.other_job();self.assertFalse(pump(lambda:len(self.batches)>1,.6))
+        w.busy=False;self.wait_batches(2)
+        self.assertEqual(self.people(),[('1','take_join'),('2','take_join')])
+        self.finish();self.assertTrue(pump(lambda:w.fill_all_runner is None))
     def test_another_scene_ends_the_run(self):
         w=self.w;runner=self.start()
         with mock.patch.object(runner,'ours',lambda:False):
@@ -217,6 +234,16 @@ class FillAllCorrectedTest(FillAllWindow):
         self.finish(failed=True,status='Refused too.');self.assertTrue(pump(lambda:w.fill_all_runner is None))
         self.assertEqual(len(self.batches),2)
         self.assertEqual(w.status.text(),'Fill all hidden ranges finished: nobody filled, 2 not. Anna: Refused. Ben: Refused too.')
+    def test_a_cancelled_run_says_that_the_joined_takes_still_need_correction(self):
+        w=self.w;self.start()
+        self.joined(1,'a');w._people_return_project=w.project;self.finish();self.wait_batches(2)
+        self.finish(cancelled=True);self.assertTrue(pump(lambda:w.fill_all_runner is None))
+        self.assertEqual(len(self.batches),2)
+        self.assertEqual(w.status.text(),'Fill all hidden ranges was cancelled after 1 person. The joined takes are not corrected yet: click Apply Correction.')
+    def test_a_cancelled_run_without_a_joined_take_says_nothing_about_correction(self):
+        w=self.w;self.start()
+        self.finish(cancelled=True);self.assertTrue(pump(lambda:w.fill_all_runner is None))
+        self.assertEqual(w.status.text(),'Fill all hidden ranges was cancelled. Nobody was filled.')
     def test_a_cancelled_correction_is_said(self):
         w=self.w;self.start()
         self.joined(2,'b');self.finish();self.wait_batches(2);self.finish();self.wait_batches(3)

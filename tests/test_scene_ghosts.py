@@ -1,6 +1,7 @@
 """Which hidden ranges of a scene are unfilled, and where the 3D view shows a hidden person as a ghost."""
 import json, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -115,6 +116,14 @@ class GhostTest(unittest.TestCase):
         state = people();state[0]['takes'].append(T(1, 90, 130))
         built = scene(self.root, state)
         self.assertEqual(self.at(110, built=built), [])
+
+    def test_looking_for_ghosts_reads_no_folder(self):
+        # The view asks several times in every paint, so the take before a range is resolved once, when the ranges are listed.
+        self.assertEqual(self.hidden[1][0]['path'], ps.safe_child(self.root, S(1, 0, 100)))
+        built = scene(self.root, self.state)
+        with mock.patch.object(Path, 'resolve', side_effect=AssertionError('a folder was read')):
+            found = ghosts.ghosts(built, 110/FPS, {1, 2}, self.hidden)
+        self.assertEqual([(take.ident, index, span) for take, index, span in found], [(1, 99, (100, 120))])
 
     def test_a_scene_without_hidden_ranges_has_no_ghosts(self):
         built = scene(self.root, self.state)

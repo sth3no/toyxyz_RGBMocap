@@ -83,7 +83,7 @@ class Runner(QObject):
         super().__init__(window)
         self.w, self.people, self.kind = window, list(people), kind
         self.root = Path(window.people_root);self.corrected = kind.startswith('corrected_')
-        self.index, self.phase, self.batch, self.correcting = 0, 'next', None, False
+        self.index, self.phase, self.batch, self.correcting, self.waited = 0, 'next', None, False, False
         self.filled, self.failed = 0, []
         self.joined = len(window._joined_projects)  # joined takes written before this run
         self.timer = QTimer(self);self.timer.setInterval(200);self.timer.timeout.connect(self.tick)
@@ -118,15 +118,19 @@ class Runner(QObject):
             failed, cancelled, status = outcome
             if self.correcting:
                 return self.stop(self.result()+(' Apply Correction was cancelled.' if cancelled else f' Apply Correction did not finish: {status}' if failed else ''))
-            if cancelled:return self.stop(fill_all.cancelled_text(self.filled))
+            if cancelled:return self.stop(self.cancelled())
             if failed:self.failed.append((self.people[self.index][1], status))
             else:self.filled += 1
             self.index += 1;self.phase = 'next'
             return
         if self.phase != 'next':return
         if not w.isVisible():return self.close()  # the window was closed: nothing more starts
-        if w.busy or w.contact_saving:return  # another job (a bone preview, a click): wait for it
-        if not self.ours():return self.stop(SCENE_CHANGED)
+        if w.busy or w.contact_saving:  # another job (a bone preview, a click): wait for it
+            self.waited = True;return
+        if self.waited:
+            self.waited = False
+            if w.cancelled:return self.stop(self.cancelled())  # Cancel Job on that job ends the run too
+        if not self.ours():return self.stop(SCENE_CHANGED+self.uncorrected())
         if self.index < len(self.people):
             ident, name = self.people[self.index]
             w.fill_hidden_ranges(ident, defer=self.corrected)
@@ -144,6 +148,12 @@ class Runner(QObject):
         self.stop(self.result())
 
     def result(self):return fill_all.result_text(self.filled, self.failed)
+
+    def uncorrected(self):
+        """What a run that ends early adds when joined takes of a corrected result wait for the correction it would have run."""
+        return ' '+fill_all.UNCORRECTED if self.corrected and len(self.w._joined_projects) > self.joined else ''
+
+    def cancelled(self):return fill_all.cancelled_text(self.filled)+self.uncorrected()
 
     def close(self):
         self.timer.stop();self.phase = 'stopped'

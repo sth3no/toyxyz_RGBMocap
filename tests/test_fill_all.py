@@ -97,6 +97,27 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(rows(person), ([], [(100, 120, NOT_READY), (200, 260, NOT_READY)]))
         self.assertEqual(person.choices, state[0]['gap_fill'])
 
+    def test_a_chosen_automatic_range_that_cannot_run_stops_the_whole_person(self):
+        # The person's fill job would try to generate the range and be refused, so nothing of the person is promised.
+        state = people();state[0]['gap_fill'] = {'200_260': {'method': 'auto', 'seed': 1}}
+        person = plan(state, auto_issue=SETUP).people[0]
+        self.assertEqual(rows(person), ([], [(100, 120, SETUP), (200, 260, SETUP)]))
+        self.assertEqual(person.choices, state[0]['gap_fill'])
+        rate = 'Automatic fill needs 30 fps takes; this scene has 25.'
+        self.assertEqual(rows(plan(state, fps=25).people[0]), ([], [(100, 120, rate), (200, 260, rate)]))
+        self.assertEqual(rows(plan(state).people[0])[0], [(100, 120, 'smooth'), (200, 260, 'auto')])
+
+    def test_a_chosen_description_that_cannot_be_read_stops_the_whole_person(self):
+        text = 'A description needs the Kimodo text adapters.'
+        state = people();state[0]['gap_fill'] = {'200_260': {'method': 'auto', 'seed': 1, 'text': 'A person waves.'}}
+        self.assertEqual(rows(plan(state, text_issue=text).people[0]), ([], [(100, 120, text), (200, 260, text)]))
+
+    def test_a_chosen_method_over_its_limit_is_only_left_out(self):
+        # The fill job itself leaves such a range out, so the person's other ranges are still filled.
+        state = people();state[1]['takes'] = [T(2, 0, 90), T(2, 100, 200), T(2, 600, 700)];state[1]['gap_fill'] = {'200_600': {'method': 'auto', 'seed': 0}}
+        person = plan(state).people[1]
+        self.assertEqual(rows(person), ([(90, 100, 'smooth')], [(200, 600, 'Automatic fill is limited to 290 frames; this range has 400.')]))
+
     def test_totals_count_what_will_be_filled(self):
         self.assertEqual(fa.totals(plan()), (2, 1))
         self.assertEqual(fa.totals(plan(checked=(2,))), (0, 0))
