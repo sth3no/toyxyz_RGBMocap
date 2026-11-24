@@ -92,6 +92,7 @@ class Controller(QObject):
         self._advance_to = None
         self._yielded = False    # the window shows a project or workspace of its own that is not the loaded block
         self.joiner = None       # the Join run (sequence_join.Runner) while it runs
+        self._said = None        # the latest message `_say` wrote
         self._settle = QTimer(self);self._settle.setSingleShot(True);self._settle.setInterval(250)
         self._settle.timeout.connect(self._changed)   # a dragged trim is shown and saved once it rests
         self._build()
@@ -122,6 +123,13 @@ class Controller(QObject):
         self.sequence, self.current, self._pending, self._yielded = sequence, None, None, False
         self._advance_to = None
         sequence.model = self.w.model_choice.currentData()
+
+    def _say(self, text):
+        """A message of the sequence about its links: a Console line, and the status text, written again once the event loop
+        is idle, since the window's own completion or load text often follows in the same turn; never over a newer message
+        of `_say`, nor while a job runs, whose progress owns the status bar."""
+        self.w.log.append(text);self.w.status.setText(text);self._said = said = object()
+        QTimer.singleShot(0, self, lambda:self._said is said and not self.busy() and self.w.status.setText(text))
 
     def _guarded(self, change, *args):
         """Run a change the window itself calls for; an error in it never decides the window's job or load."""
@@ -253,7 +261,7 @@ class Controller(QObject):
         if sequence.path is None and len(sequence.blocks) <= 1 and not any(b.review for b in sequence.blocks):
             return
         try:sequence.save(free_name() if sequence.path is None else None)
-        except OSError as error:self.w.status.setText(f'Cannot save the sequence: {error}')
+        except OSError as error:self._say(f'Cannot save the sequence: {error}')
 
     def _changed(self):
         self._let_go();self.refresh();self._save()
@@ -270,9 +278,9 @@ class Controller(QObject):
         False with the reason in the status bar when a take list cannot be saved."""
         try:roots, lost = sequence_join.take_apart(self.sequence, links)
         except (OSError, ValueError, KeyError, TypeError) as error:
-            self.w.status.setText(f'Cannot take the join back: {error}');return False
+            self._say(f'Cannot take the join back: {error}');return False
         for root in roots:self._reload(root)
-        if lost:self.w.status.setText(' '.join(sequence_join.REJOIN.format(name) for name in dict.fromkeys(lost)))
+        if lost:self._say(' '.join(sequence_join.REJOIN.format(name) for name in dict.fromkeys(lost)))
         return True
 
     def _may_take_apart(self, links):
@@ -295,7 +303,7 @@ class Controller(QObject):
         if w.busy or w.people_root is None or not same_file(w.people_root, root):return
         try:state = people_store.load_people(w.people_root)
         except (OSError, ValueError) as error:
-            w.status.setText(f'Cannot read the people list: {error}');return
+            self._say(f'Cannot read the people list: {error}');return
         if state is None:return
         w.people_state = state;shown = w.project
         listed = any(same_file(people_store.safe_child(w.people_root, t['project']), shown) for p in state['people']
@@ -797,7 +805,7 @@ class Controller(QObject):
         except ValueError as error:
             self.w.status.setText(str(error));return False
         sequence.dropped.extend(link for link in before if not any(link is kept for kept in sequence.links))
-        self.w.status.setText(LINKED.format(self._name(states, target), self._name(states, source)))   # before the change, whose own news wins
+        self._say(LINKED.format(self._name(states, target), self._name(states, source)))   # before the change, whose own news wins
         self._changed()
         return True
 
@@ -808,7 +816,7 @@ class Controller(QObject):
         link = self.sequence.link_into(*tuple(target))
         if link is None or not self._may_take_apart([link]):return False
         states = self._states()
-        self.w.status.setText(UNLINKED.format(self._name(states, link.target), self._name(states, link.source)))
+        self._say(UNLINKED.format(self._name(states, link.target), self._name(states, link.source)))
         self.sequence.unlink(tuple(target));self.sequence.dropped.append(link);self._changed()
         return True
 
@@ -891,7 +899,7 @@ class Controller(QObject):
         except ValueError as error:
             self.w.status.setText(str(error));return False
         self.sequence.set_method(target, method)
-        self.w.status.setText(TRANSITION.format(round(float(seconds), 2), METHOD_LABELS[method]));self._changed()
+        self._say(TRANSITION.format(round(float(seconds), 2), METHOD_LABELS[method]));self._changed()
         return True
 
     def edit_transition(self, target):
@@ -987,7 +995,7 @@ class Controller(QObject):
             sequence.link(source, target, prints=self._prints(states, source, target))
             texts.append(AUTOMATIC.format(self._name(states, target), self._video(target), self._name(states, source), self._video(source)))
         if texts:
-            self._save();self.w.status.setText(' '.join(texts))
+            self._save();self._say(' '.join(texts))
 
     def _changed_video(self, link, states):
         """The video name of the block whose people list no longer holds `link`, the later block first."""

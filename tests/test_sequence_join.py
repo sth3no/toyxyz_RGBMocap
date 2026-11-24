@@ -341,6 +341,17 @@ class JoinTest(unittest.TestCase):
         self.assertEqual(w.project, (self.roots[0]/TAKE.format(1)).resolve())   # the window shows the person's own take again
         self.assertEqual([w.person_takes.itemData(i) for i in range(w.person_takes.count())], [TAKE.format(1)])
 
+    def test_unlink_says_so_after_the_reload(self):   # the reload of the own take writes 'Motion loaded…'; the Unlink text is shown again once the loop is idle, and is in the Console
+        first, second = self.linked();c, w = self.c, self.w;self.join();self.play_all();pump(lambda:False, .2)
+        real = w.activate_person
+        def activate(*args):   # a real take has motion.bvh, so its load ends with this text (gui.load_project)
+            real(*args);w.status.setText('Motion loaded. Play the animation or adjust the video clip range.')
+        loader = mock.patch.object(w.data_loader, 'request');loader.start();self.addCleanup(loader.stop)   # the synthetic take has no bone preview to load
+        with mock.patch.object(c, 'ask', return_value=True), mock.patch.object(w, 'activate_person', activate):self.assertTrue(c.unlink((second.id, 1)))
+        self.assertTrue(w.status.text().startswith('Motion loaded.'), w.status.text())   # the window's own load text came last
+        self.assertTrue(pump(lambda:w.status.text() == 'Ben no longer continues Anna.', 2), w.status.text())
+        self.assertIn('Ben no longer continues Anna.', w.log.toPlainText())
+
     def test_an_edit_takes_the_join_back_after_asking(self):   # Delete of a block of a joined row asks first; No changes nothing, Yes takes the copies out
         first, second = self.linked();c, w = self.c, self.w
         self.join();self.play_all();before = c.sequence.to_dict()

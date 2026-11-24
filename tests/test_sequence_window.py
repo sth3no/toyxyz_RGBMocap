@@ -853,6 +853,23 @@ class SequenceWindowTest(unittest.TestCase):
         self.pick('gemx');w.status.setText('')
         self.assertFalse(c.unlink(target));self.assertEqual(w.status.text(), OTHER);self.assertEqual(len(c.sequence.links), 1)
 
+    def test_the_automatic_link_outlasts_the_jobs_completion_text(self):   # a job ends: the link is made in the refresh, the window then writes its completion text
+        self.pick('exmr');first, second = self.two();c, w = self.c, self.w;done = self.busy()
+        self.clip(first, ANNA, ((1, 0, 90),), 'first');self.clip(second, BEN, ((1, 0, 90),), 'second');c.refresh()
+        text = 'Ben in two.mp4 now continues Anna from one.mp4. Drag the bar to change it.'
+        done();w.status.setText('Complete. Total time: 1m 30s. Play the result or open the project folder.')   # gui.next_job after finish_people_jobs
+        self.assertEqual(len(c.sequence.links), 1)
+        self.assertTrue(pump(lambda:w.status.text() == text, 2), w.status.text());self.assertIn(text, w.log.toPlainText())
+        w.status.setText('Open another block.');pump(lambda:False, .2);self.assertEqual(w.status.text(), 'Open another block.')   # set again once only
+
+    def test_a_link_message_never_covers_a_newer_one_or_a_running_job(self):
+        first, second = self.linkable(TWO, ((1, 0, 90), (2, 0, 90)));c, w = self.c, self.w;target = (second.id, 2)
+        self.assertTrue(c.link((first.id, 1), target));self.assertTrue(c.unlink(target));w.status.setText('Motion loaded.')
+        self.assertTrue(pump(lambda:w.status.text() == 'Cleo no longer continues Anna.', 2), w.status.text())   # the newer message, not the link's
+        log = w.log.toPlainText();self.assertIn('Cleo now continues Anna.', log);self.assertIn('Cleo no longer continues Anna.', log)
+        self.assertTrue(c.link((first.id, 1), target));done = self.busy();w.status.setText('Reconstructing...')
+        pump(lambda:False, .2);self.assertEqual(w.status.text(), 'Reconstructing...');done()   # a running job's progress owns the status bar
+
     def test_review_and_auto_advance_still_work(self):    # the other session's window test still passes with a linked row present
         first, second = self.linkable();controller, window = self.c, self.w
         self.assertEqual(len(controller.sequence.links), 1)
