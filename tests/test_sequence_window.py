@@ -169,6 +169,17 @@ class SequenceWindowTest(unittest.TestCase):
         self.assertTrue(self.w.status.text().startswith('Cannot add the video:'), self.w.status.text())
         self.assertEqual(len(c.sequence.blocks), 1);self.assertTrue(c.at_clip_level())
 
+    def test_a_video_that_fails_to_open_can_be_tried_again(self):
+        self.open_first();c, w = self.c, self.w
+        bad = self.base/'broken.mp4';bad.write_text('not a video', encoding='utf-8')
+        block = c.sequence.add(bad, 3.);c.refresh()
+        self.assertTrue(c.load(block.id))
+        self.assertTrue(pump(lambda:w.status.text().startswith('Video preview:'), 10), w.status.text())   # the window's decode_error
+        self.assertIsNone(c._pending)
+        with mock.patch.object(w, 'load_video') as load:
+            c.load(block.id)
+        self.assertEqual(load.call_count, 1)
+
     def test_other_model_keeps_today(self):
         self.two();c, w = self.c, self.w
         w.model_choice.setCurrentIndex(w.model_choice.findData('gemx'));APP.processEvents()

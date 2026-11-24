@@ -52,6 +52,7 @@ class Controller(QObject):
         w.open_actions.append(action)
         # After the window's own slots, so the clip is set up when these run.
         w.video_view.metadata_ready.connect(self._video_ready)
+        w.video_view.decode_error.connect(self._video_failed)
         w.slider.valueChanged.connect(self._playhead)
         w.slider.trim_enabled_changed.connect(lambda _:self.refresh())
         w.model_choice.currentIndexChanged.connect(lambda _:self.refresh())
@@ -174,11 +175,8 @@ class Controller(QObject):
         if not Path(block.video).is_file():
             w.status.setText(f'Cannot open the block: {state.reason or "the video file is missing."}');return False
         if folder:w.status.setText(state.reason)   # why its saved results do not open
-        if w.project is None and same_file(w.video_path, block.video) and (w.info or self._pending):
-            if w.info and self._pending is None:
-                self._loaded(block_id);self._trim(block, seconds)
-            else:
-                self._pending = block_id, seconds;self._loaded(block_id)   # the same video is still opening
+        if w.project is None and w.info and self._pending is None and same_file(w.video_path, block.video):
+            self._loaded(block_id);self._trim(block, seconds)
             return True
         self._pending = block_id, seconds;self._loaded(block_id)
         w.load_video(Path(block.video))
@@ -189,11 +187,15 @@ class Controller(QObject):
 
     def _video_ready(self, _info):
         w = self.w
-        if self._pending is None or w.project is not None or not w.info:return
-        block_id, seconds = self._pending;self._pending = None
+        pending, self._pending = self._pending, None
+        if pending is None or w.project is not None or not w.info:return
+        block_id, seconds = pending
         if block_id in self._ids() and same_file(w.video_path, self.sequence.block(block_id).video):
             self._trim(self.sequence.block(block_id), seconds)
             self.refresh()
+
+    def _video_failed(self, _message):
+        self._pending = None   # the window reported it; the next load opens the video again
 
     def _trim(self, block, seconds):
         w, fps = self.w, self.w.info['fps']
