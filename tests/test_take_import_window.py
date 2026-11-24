@@ -49,6 +49,7 @@ class DialogTest(Scene,unittest.TestCase):
         self.assertEqual([takes.itemText(i) for i in range(takes.count())],['Dancer · frames 1–90 · GVHMR · 3.0 s'])
         self.assertTrue(ok.isEnabled());gap.setValue(2.5);self.assertEqual(d.choice(),(self.other/SOURCE,2.5))
         self.assertEqual((gap.minimum(),gap.maximum()),(0.1,9.6))
+        self.assertEqual(d.hint.text(),'Smooth join fills a gap of up to 1.0 s, Automatic (Experimental) up to 9.6 s. Automatic motion is plausible, not what the person did.')
         d.set_folder(self.root/'p1');self.assertEqual(takes.count(),0);self.assertFalse(ok.isEnabled())
         self.assertTrue(d.empty.isVisibleTo(d));self.assertEqual(d.empty.text(),'This folder has no finished take. Choose the folder of another project.')
 

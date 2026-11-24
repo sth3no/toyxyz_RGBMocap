@@ -1311,8 +1311,8 @@ The two videos were filmed by different cameras, so nothing measures where the
 imported take belongs. It is placed by continuing the person: it starts where
 they were last seen, turned to face the way they last faced, with its own
 height above the floor and the person's body shape. The camera of the open
-scene is used for it. Its timeline frames show the open video's last frame,
-because the open video ends before them, and they have no tracking box.
+scene is used for it. Its frames show the open video at those times, or its
+last frame where the open video has ended, and they have no tracking box.
 
 The import is refused, with the reason in the status bar, when the take is not
 30 fps (`Only 30 fps takes can be imported; the chosen take has 25 fps.`), was

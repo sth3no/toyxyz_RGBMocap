@@ -30,7 +30,8 @@ class ImportTakeDialog(QDialog):
         self.gap = QDoubleSpinBox();self.gap.setAccessibleName('Gap before the imported take, in seconds')
         self.gap.setDecimals(1);self.gap.setSingleStep(.1);self.gap.setRange(.1, int(AUTO_MAX_FRAMES/FPS*10)/10);self.gap.setValue(1.);self.gap.setSuffix(' s')
         form.addRow('Gap:', self.gap)
-        hint = QLabel(f'Smooth join fills a gap of up to {SMOOTH_MAX_FRAMES/FPS:.1f} s, Automatic (Experimental) up to {self.gap.maximum():.1f} s.')
+        self.hint = hint = QLabel(f'Smooth join fills a gap of up to {SMOOTH_MAX_FRAMES/FPS:.1f} s, Automatic (Experimental) up to '
+                                  f'{self.gap.maximum():.1f} s. Automatic motion is plausible, not what the person did.')
         hint.setObjectName('muted');hint.setWordWrap(True);form.addRow(hint)
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.buttons.button(QDialogButtonBox.Ok).setText('Import')
