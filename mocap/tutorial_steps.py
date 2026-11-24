@@ -101,8 +101,8 @@ BASICS = Chapter('basics', 'From video to export', (
                    + (SAMPLE_HINT if sample_action(w) else ''),
          lambda w: [file_menu(w)], done=video_open, waiting='Waiting for a video…', action=sample_action, card='center'),
     Step('trim', 'Trim the clip (optional)',
-         'Drag the ends of the Video track to limit playback and reconstruction to a part of the clip. '
-         'Reset Trim restores the full clip.',
+         'Drag the ends of the Video track to limit playback and reconstruction to a part of the clip, '
+         'or type the start and end in From and To and press Set. Reset Trim restores the full clip.',
          lambda w: [track_rows(w, 0, 1)]),
     PEOPLE,
     Step('run', 'Reconstruct 3D',

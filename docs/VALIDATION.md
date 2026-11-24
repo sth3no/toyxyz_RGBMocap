@@ -1,5 +1,28 @@
 # Source package validation
 
+## Typed trim range (2026-11-24)
+
+**From**, **To** and **Set** beside the timeline's Clip label trim the
+loaded clip to typed times (12:34.5, 1:02:03 or 754.5 seconds).
+
+- Tests, offscreen with the GUI runtime (`tests/test_clip_range.py`, 19):
+  parsing and formatting, bad input ("abc", negative, too many parts,
+  seconds or minutes above 59), end before start, beyond the clip, too short;
+  on the real `MainWindow` with the state that opening a 108,000-frame 30 fps
+  video leaves (set directly, no video decoded): 50:00 to 50:30 sets
+  `clip_in`/`clip_out` to 90000/90900, the Clip label reads 90001–90900 and
+  30.00 s, `processing_range()` is 3000–3030 s, the view shows both handles
+  and the playhead moves to the start; Enter applies; an invalid entry names
+  the reason in the status bar and leaves the trim; the fields follow
+  `set_clip`; Set without editing keeps exact frames; the controls are
+  disabled exactly when `trim_enabled` is False; the row fits a 1100×700
+  window. The whole `tests` folder in one process: 756 tests passed,
+  94 skipped, none failed.
+- The 1100×700 window and its timeline were drawn offscreen in the dark and
+  light themes with that range set and "abc" typed, and looked at.
+- Not run: a real long video opened, a reconstruction of a typed range, the
+  fields on a real screen or at other UI scales.
+
 ## Low-memory stop note (2026-11-24)
 
 When Resource Safety stops a job for low memory, the message adds the PC's

@@ -1214,6 +1214,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.clip_label.setToolTip(tooltip_text(f"Video range: {start_seconds:.3f}–{end_seconds:.3f} s\nDrag the video track edges to trim playback and reconstruction. Existing motion files stay unchanged until you reconstruct again."))
         else:
             self.clip_label.setText("Clip: no video")
+        from . import clip_range_ui
+        clip_range_ui.show(self)
 
     def present_frame(self, index):
         if self._pear_active:

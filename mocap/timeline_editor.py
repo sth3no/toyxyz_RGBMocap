@@ -10,6 +10,7 @@ from .footlock_editor import FootLockEditor
 class TimelineSlider(FootLockEditor,QSlider):
     clip_changed = Signal(int, int)  # Inclusive in, exclusive out, in media frames.
     trim_started = Signal()
+    trim_enabled_changed = Signal(bool)
     contacts_changed=Signal(object)
     contacts_edit_started=Signal()
     contacts_reset=Signal()
@@ -32,7 +33,7 @@ class TimelineSlider(FootLockEditor,QSlider):
         self._pan_origin = None
         self._playhead_drag = None
         self.clip_in, self.clip_out = 0, 1
-        self.trim_enabled = True
+        self._trim_enabled = True
         self._trim_drag = None
         self.setMouseTracking(True)
         self.rangeChanged.connect(self.frame_all)
@@ -46,6 +47,29 @@ class TimelineSlider(FootLockEditor,QSlider):
         self.RULER_HEIGHT = ui_px(25)
         self.setMinimumHeight(ui_px(190))
         self._cache_key = None
+        self.update()
+
+    @property
+    def trim_enabled(self):
+        return self._trim_enabled
+
+    @trim_enabled.setter
+    def trim_enabled(self, value):
+        # Controls that also edit the trim follow this, wherever it is switched.
+        if bool(value) != self._trim_enabled:
+            self._trim_enabled = bool(value)
+            self.trim_enabled_changed.emit(self._trim_enabled)
+
+    def show_frames(self, first, end):
+        """Zoom and pan so frames [first, end) and both trim handles are in view, with a small margin."""
+        total = max(1, self.maximum() - self.minimum())
+        margin = max(1., (end - 1 - first) * .05)
+        span = max(min(12, total), end - 1 - first + 2 * margin)
+        if span >= total:
+            self.frame_all()
+            return
+        self.view_span, self.view_start = span, first - margin
+        self._clamp_view()
         self.update()
 
     def frame_all(self, *_):

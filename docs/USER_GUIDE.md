@@ -518,7 +518,11 @@ For ExMR, FlowHMR and GVHMR:
 
 1. Choose an **AI Motion Model**, then **File → Open Video**, or drop a video
    into the workspace.
-2. Optionally trim the timeline's **Video** track by dragging its ends.
+2. Optionally trim the timeline's **Video** track by dragging its ends, or
+   type the start and end in **From** and **To** beside the clip range above
+   the tracks and press Enter or **Set**. Times count from the start of the
+   loaded clip, for example 12:34.5 or 1:02:03; the fields follow the handles.
+   Typing is the precise way to pick a range of a long video.
 3. Use **Model Manager** to prepare the selected model's files.
 4. For ExMR/FlowHMR/GVHMR with several people, use **Find person** and check
    who to reconstruct. MAMMA/PromptHMR track people during reconstruction.
@@ -986,6 +990,7 @@ an estimate and can leave residual sliding or penetration.
 | **Timeline ruler / blue frame box** | Click or drag to seek. Track editing does not seek. Wheel zooms; middle drag or Shift+wheel pans. |
 | **Playback / frame number / speed** | Space plays/pauses; arrows step one frame, Shift+arrows one second. Enter a frame number to jump. Playback plays the video's audio when available. MAMMA uses the selected camera's audio. Playback speed affects preview only. |
 | **Timeline Frame All / Reset Trim** | Fit the full timeline / restore the full clip range. |
+| **Timeline From / To / Set** | Type the trimmed range in minutes and seconds of the loaded clip (12:34.5, 1:02:03 or 754.5). Enter or **Set** trims to it, moves the playhead to its start and fits the timeline to it. An invalid time is explained in the status bar and changes nothing. Unavailable while a job runs, like trimming. |
 
 ExMR/FlowHMR/GVHMR process checked people independently; MAMMA and PromptHMR
 reconstruct people together from their respective inputs. Results are shown in a shared scene.

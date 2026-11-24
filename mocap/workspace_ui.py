@@ -280,6 +280,7 @@ def build_workspace(w):
         "The thin playhead line does not capture clicks.\n"
         "Wheel: zoom | Shift + wheel or MMB: pan\n\n"
         "Video clip edges: trim the playback and reconstruction range.\n"
+        "From / To: type the range, for example 12:34.5, then press Enter or Set.\n"
         "Frame All: fit the full timeline | Reset Trim: restore the full clip.\n\n"
         "L/R foot and L/R hand: drag empty space to add a lock.\n"
         "Drag a lock to move it; drag its edges to resize it.\n"
@@ -336,6 +337,8 @@ def build_workspace(w):
     w.clip_label.setMinimumWidth(0)
     w.clip_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
     action_bar.addWidget(w.clip_label, 1)
+    from . import clip_range_ui
+    clip_range_ui.build(w, action_bar)
     w.reset_footlocks_button=button('Reset Locks',w.reset_foot_contacts,action_bar)
     w.reset_footlocks_button.setToolTip(tooltip_text('Restore automatic foot and hand contact timings for this person. Click Apply Correction to update the motion.'))
     w.timeline_frame_all_button = button("Frame All", w.slider.frame_all, action_bar)
