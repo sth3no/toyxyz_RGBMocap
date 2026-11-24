@@ -990,7 +990,7 @@ an estimate and can leave residual sliding or penetration.
 | **Floor Grid / Correction Floor** | Show the gray zero-height reference grid / orange correction floor preview. Neither applies correction. |
 | **Motion Path / Follow Actor** | Show the person's path / move the viewing camera with the person. |
 | **Lock** | Show active hand/foot contacts as translucent horizontal discs in timeline colors. Hand discs are at palm height, including raised supports. Display only. |
-| **Name** | Show list names above visible people and imported characters. Text stays upright and the same screen size as you move the camera. Rename a person from the list's right-click menu. |
+| **Name** | Show list names above visible people and imported characters. A person shown as a ghost inside an unfilled [hidden range](#hidden-ranges) has `(hidden)` after the name. Text stays upright and the same screen size as you move the camera. Rename a person from the list's right-click menu. |
 | **Timeline ruler / blue frame box** | Click or drag to seek. Track editing does not seek. Wheel zooms; middle drag or Shift+wheel pans. |
 | **Playback / frame number / speed** | Space plays/pauses; arrows step one frame, Shift+arrows one second. Enter a frame number to jump. Playback plays the video's audio when available. MAMMA uses the selected camera's audio. Playback speed affects preview only. |
 | **Timeline Frame All / Reset Trim** | Fit the full timeline / restore the full clip range. |
@@ -1101,6 +1101,20 @@ the gap stays empty and each take is used as before.
 
 To fill a gap, choose a method for that range in **Hidden ranges**, then click
 **Fill hidden ranges**.
+
+**Hidden people in the 3D view.** While a hidden range is not filled, a checked
+person inside it is shown as a ghost: a see-through body in the person's
+colour, standing in the last captured pose before the range, with `(hidden)`
+after the name. A ghost has no bones, contact discs or motion path, and
+**Follow Actor** keeps it in view. The line at the top of the view counts it,
+for example `3 people visible, 1 hidden`, and a note names the person and the
+frames, for example `Person 2: hidden in frames 101–120.` (several people at
+once: `Person 2, Person 5: hidden at this frame.`). A ghost is only drawn:
+export, **Apply Correction** and the Blender stream use the takes as before.
+Once the range is filled, the motion of the joined take is shown instead.
+There is no ghost before a person's first take or after the last one, when
+the take before the range has no result for the selected options, and in
+scenes of models without Hidden ranges (FlowHMR, PromptHMR, MAMMA).
 
 **Smooth join** is plain interpolation between the last frame before the gap and
 the first frame after it, with no model. It is available only for gaps of up to
