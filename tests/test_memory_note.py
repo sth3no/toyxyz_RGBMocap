@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 from PySide6.QtWidgets import QApplication
 
-from mocap import memory_note, paths
+from mocap import memory_note, paths, processing_guard  # imported here: patch.dict of sys.modules would drop a module first imported inside it
 
 APP = QApplication.instance() or QApplication([])
 GIB = 1024 ** 3
@@ -45,6 +45,14 @@ class SentenceTest(unittest.TestCase):
     def test_without_large_users_only_the_ram_is_named(self):
         self.assertEqual(memory_note.sentence(16 * GIB, 0.5 * GIB, []), 'This PC has 16.0 GiB of RAM; 0.5 GiB is free now.')
 
+    def test_a_stop_for_allocation_headroom_with_free_ram_says_so(self):
+        # The guard also stops below 1 GiB of Windows allocation headroom (page file full) while RAM is free.
+        self.assertEqual(memory_note.sentence(32 * GIB, 12 * GIB, [], commit=0.4 * GIB),
+                         'This PC has 32.0 GiB of RAM; 12.0 GiB is free now, but Windows can allocate only 0.4 GiB more.')
+        self.assertEqual(memory_note.sentence(32 * GIB, 1 * GIB, [], commit=0.4 * GIB),
+                         'This PC has 32.0 GiB of RAM; 1.0 GiB is free now, and Windows can allocate only 0.4 GiB more.')
+        self.assertEqual(memory_note.sentence(32 * GIB, 1 * GIB, [], commit=8 * GIB), 'This PC has 32.0 GiB of RAM; 1.0 GiB is free now.')
+
 
 class CollectTest(unittest.TestCase):
     def test_reads_memory_and_processes(self):
@@ -53,8 +61,10 @@ class CollectTest(unittest.TestCase):
             process_iter=lambda attrs: iter([SimpleNamespace(pid=1, info={'name': 'cl.exe', 'memory_info': SimpleNamespace(rss=4 * GIB)}),
                                              SimpleNamespace(pid=os.getpid(), info={'name': 'python.exe', 'memory_info': SimpleNamespace(rss=GIB)})]),
             Process=lambda pid: SimpleNamespace(children=lambda recursive: []))
-        with patch.dict('sys.modules', psutil=fake):
+        with patch.dict('sys.modules', psutil=fake), patch('mocap.processing_guard.commit_headroom', return_value=None):
             self.assertEqual(memory_note.collect(), 'This PC has 32.0 GiB of RAM; 2.0 GiB is free now. Largest users: cl 4.0 GiB, RGB MoCap 1.0 GiB.')
+        with patch.dict('sys.modules', psutil=fake), patch('mocap.processing_guard.commit_headroom', return_value=GIB // 2):
+            self.assertIn('2.0 GiB is free now, and Windows can allocate only 0.5 GiB more.', memory_note.collect())
 
     def test_a_failing_psutil_gives_no_note(self):
         def broken(): raise OSError('denied')

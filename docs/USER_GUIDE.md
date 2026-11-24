@@ -908,8 +908,11 @@ free at the stop and which programs use the most, for example "This PC has
 31.1 GiB of RAM; 2.1 GiB is free now. Largest users: cl 4.5 GiB, dotnet
 3.9 GiB." It names at most four programs above about 0.3 GiB, adding up the
 processes of each program; the app's own processes appear as RGB MoCap. The
-check counts free RAM, not installed RAM, so closing the largest programs is
-the quickest way to continue. The Console opens with the whole message. The
+check counts free RAM and Windows allocation headroom, not installed RAM, so
+closing the largest programs is the quickest way to continue. When Windows can
+allocate less than 1 GiB more, the message says so even if RAM is free, for
+example "This PC has 32.0 GiB of RAM; 12.0 GiB is free now, but Windows can
+allocate only 0.4 GiB more."; a larger page file also helps then. The Console opens with the whole message. The
 status bar shows its whole text when you hold the pointer over it.
 Completed stages are retained for retry. ExMR Low Memory prepares Sapiens' existing
 FP16 layers on CPU and loads body/hand weights on CPU before GPU transfer; its

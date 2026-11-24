@@ -1,4 +1,4 @@
-"""One sentence for a low-memory stop: the PC's RAM, what is free and which programs hold the most."""
+"""One sentence for a low-memory stop: the PC's RAM, what is free, low Windows allocation headroom and which programs hold the most."""
 import os
 
 GIB = 1024 ** 3
@@ -20,8 +20,13 @@ def largest(processes, app_pids=()):
     return [(names[key], size) for key, size in ranked[:SHOWN] if size >= SMALLEST]
 
 
-def sentence(total, available, users):
-    text = f'This PC has {total / GIB:.1f} GiB of RAM; {available / GIB:.1f} GiB is free now.'
+def sentence(total, available, users, commit=None):
+    """`commit` is the Windows allocation headroom; below 1 GiB it stops a job as low RAM does, so it is named then."""
+    text = f'This PC has {total / GIB:.1f} GiB of RAM; {available / GIB:.1f} GiB is free now'
+    if commit is not None and commit < GIB:
+        from .compute_policy import ram_reserve
+        text += (', but' if available >= ram_reserve(total) else ', and') + f' Windows can allocate only {commit / GIB:.1f} GiB more'
+    text += '.'
     if users: text += ' Largest users: ' + ', '.join(f'{name} {size / GIB:.1f} GiB' for name, size in users) + '.'
     return text
 
@@ -30,6 +35,7 @@ def collect():
     """The sentence for this moment, or '' when the system cannot be read: the stop itself must not fail."""
     try:
         import psutil
+        from .processing_guard import commit_headroom
         memory = psutil.virtual_memory()
         own = psutil.Process(os.getpid())
         app_pids = {os.getpid(), *(child.pid for child in own.children(recursive=True))}
@@ -37,6 +43,6 @@ def collect():
         for process in psutil.process_iter(['name', 'memory_info']):
             info = process.info
             rows.append((process.pid, info.get('name'), getattr(info.get('memory_info'), 'rss', None)))
-        return sentence(memory.total, memory.available, largest(rows, app_pids))
+        return sentence(memory.total, memory.available, largest(rows, app_pids), commit_headroom())
     except Exception:
         return ''
