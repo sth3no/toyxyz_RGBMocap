@@ -756,7 +756,10 @@ colour made stronger, the motion green for a grey one). `t3_theme.dress` does
 what a style sheet cannot: pictures on the transport buttons, the play and
 pause icons in the look's colour and the Windows 11 title bar colour through
 `DwmSetWindowAttribute`; `t3_theme.paint_person` draws a row of the People
-list. The app updates the
+list. The application style is `t3_theme.Look` (Fusion in a `QProxyStyle`):
+its `polish` calls `prepare` once per widget, which is where a menu gets its
+see-through background; do not add an event filter on the application for
+this, it is asked for every event of every widget. The app updates the
 Qt palette, fonts, widget styles, and timeline geometry when the user clicks
 **OK**. The system display scale still applies.
 
@@ -1266,6 +1269,7 @@ The app uses separate runtime profiles to maintain compatibility, with bounded b
 
 ## Code map and verification
 
+- Window arrangement and menus: `mocap/workspace_layout.py` (`arrange`, the last line of `build_workspace`: moves the People panel into the splitter beside the Movie Clip, puts the file line and the `JobChip` into the menu bar's right corner and hides the row under the menus, wraps the two Track Face rows in a **Face** group and adds `SectionTabs`, which scroll the settings to a section) and `mocap/menus.py` (`build`: View, Playback, Sequence, People and Motion between File and Help; a `Section` entry presses an existing control with `click()` and reads its state in `aboutToShow`, so a new control needs one `press`, `box` or `choice` line and no state of its own; only Theme and UI Scale write `config/local.json`). Both only move or mirror widgets that `build_workspace` made.
 - GUI, people, controls and logging: `mocap/gui.py`, `workspace_ui.py`, `people_ui.py`, `character_ui.py`, `console_log.py`, `tooltips.py`; remembered window choices: `local_choices.py`.
 - In-window tutorial: `mocap/tutorial.py` (highlight overlay, card, the controller that polls the window, saved state under `tutorial` in `config/local.json`) and `mocap/tutorial_steps.py` (chapters as data: targets, texts and the rules that end, skip or repeat a step). `MainWindow` never starts it: `app.py` calls `first_run` after `show()` outside smoke runs, and **Help → Tutorial** opens a chapter. A step only reads window state and listens to existing signals; it must not change a model, a setting or a project. Step texts state only what [USER_GUIDE.md](USER_GUIDE.md) states. Sizes go through `ui_px`, colours through `theme_color` or `set_appearance_style`. The optional sample video is `assets/tutorial/sample.mp4`: when the file exists, the steps that ask for a video offer **Import sample video**; without it the tutorial uses the user's video.
 - Low-memory stop note: `mocap/memory_note.py` (total and free RAM and the largest programs, read once with psutil when `ProcessingGuard.reason` is `'memory'`; `MainWindow.check_processing_resources` appends it and opens the Console; an empty string when psutil fails). The status label (`StatusLabel` in `workspace_ui.py`) keeps its whole text as its tooltip.

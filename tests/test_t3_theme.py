@@ -20,6 +20,11 @@ def application():
         theme.configure_application(APP);application.configured = True
 
 
+def name_look(look, scale=100):
+    """Make `look` the current one for what is painted by hand, without restyling every widget alive in the process."""
+    APP.setProperty('uiTheme', look);APP.setProperty('uiScale', scale)
+
+
 def contrast(first, second):
     def luminance(color):
         parts = [(level / 255 / 12.92 if level / 255 <= .03928 else ((level / 255 + .055) / 1.055) ** 2.4)
@@ -86,10 +91,17 @@ class ColourTest(unittest.TestCase):
 
 
 class AppearanceTest(unittest.TestCase):
-    def setUp(self):
+    """These restyle the whole application, which costs time for every widget alive in the test process; the look
+    they found is put back once, after the class."""
+
+    @classmethod
+    def setUpClass(cls):
         application()
-        old = theme.current_appearance()
-        self.addCleanup(lambda:theme.apply_appearance(APP, *old))
+        cls.old = theme.current_appearance()
+
+    @classmethod
+    def tearDownClass(cls):
+        theme.apply_appearance(APP, *cls.old)
 
     def test_the_four_looks(self):
         self.assertEqual(theme.THEME_IDS, ('dark', 'light', 'classic-dark', 'classic-light'))
@@ -203,12 +215,12 @@ class TimelineBarsTest(unittest.TestCase):
     def setUp(self):
         application()
         old = theme.current_appearance()
-        self.addCleanup(lambda:theme.apply_appearance(APP, *old))
+        self.addCleanup(lambda:name_look(*old))
 
     def bar(self, look, color, alpha=80, outline=False):
         from PySide6.QtCore import QRectF
         from PySide6.QtGui import QImage, QPainter
-        theme.apply_appearance(APP, look, 100)
+        name_look(look, 100)
         image = QImage(60, 24, QImage.Format_ARGB32);image.fill(QColor('#242424'))
         p = QPainter(image);theme.paint_track_bar(p, QRectF(2, 2, 56, 20), color, alpha, outline);pen = p.pen().color().name();p.end()
         return image, pen
@@ -248,14 +260,14 @@ class TimelineBarsTest(unittest.TestCase):
         self.assertEqual(self.bar('dark', '#303030')[0].pixelColor(30, 12).name(), '#111111')   # an empty row
 
     def test_text_and_grid(self):
-        theme.apply_appearance(APP, 'classic-dark', 100)
+        name_look('classic-dark', 100)
         self.assertEqual(theme.track_text('#6289ad', '#b1b9c1').name(), '#b1b9c1')
         self.assertEqual(theme.grid_color(True).getRgb(), (115, 115, 115, 145))
         self.assertEqual(theme.grid_color(False).getRgb(), (133, 133, 133, 40))
         self.assertEqual(theme.track_tint('#56b6a7', 40).getRgb(), (0x56, 0xb6, 0xa7, 40))
-        theme.apply_appearance(APP, 'classic-light', 100)
+        name_look('classic-light', 100)
         self.assertEqual(theme.track_text('#6289ad', '#b1b9c1').name(), '#314c64')
-        theme.apply_appearance(APP, 'dark', 100)
+        name_look('dark', 100)
         self.assertEqual(theme.track_text('#6289ad', '#b1b9c1').name(), '#ffffff')
         self.assertEqual(theme.track_text('#6289ad', '#b1b9c1', 25).name(), '#f5f5f5')   # on a faint bar
         self.assertEqual(theme.track_text('#303030', '#aebeb4').name(), '#818181')       # on an empty row
@@ -266,7 +278,7 @@ class TimelineBarsTest(unittest.TestCase):
         from mocap.timeline_editor import TimelineSlider
 
         def rows(look):
-            theme.apply_appearance(APP, look, 100)
+            name_look(look, 100)
             slider = TimelineSlider();self.addCleanup(slider.deleteLater)
             slider.setRange(0, 99);slider.reset_trim();slider.has_motion = True;slider.resize(800, 400)   # 0-99 is a new slider's range already
             slider.set_contacts([[(10, 40)], [(50, 80)]], editable=True, identity='x', token=1)
@@ -286,7 +298,7 @@ class TimelineBarsTest(unittest.TestCase):
         from mocap.people_ui import PeopleList
 
         def swatch(look):
-            theme.apply_appearance(APP, look, 100)
+            theme.apply_appearance(APP, look, 100)   # the row's height comes from the look's style sheet
             people = PeopleList();self.addCleanup(people.deleteLater);people.resize(170, 200)
             item = QListWidgetItem('Anna');item.setData(Qt.UserRole, 1);item.setData(Qt.UserRole + 1, '#d86a8f')
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable);item.setCheckState(Qt.Checked);people.addItem(item)
@@ -298,6 +310,7 @@ class TimelineBarsTest(unittest.TestCase):
         self.assertNotEqual(corner, '#d86a8f')     # a dot, not the square that fills the place
         centre, corner = swatch('classic-dark')
         self.assertEqual((centre, corner), ('#d86a8f', '#d86a8f'))
+        theme.apply_appearance(APP, 'dark', 100)
 
 
 if __name__ == '__main__':

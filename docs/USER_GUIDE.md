@@ -605,6 +605,33 @@ RGB MoCap, the CLI and MCP. Select a row to see its job ID, result or error.
 command can be stopped with Ctrl+C in its terminal. To continue a stopped
 long reconstruction, use **Resume** in **Reconstruct in parts...**.
 
+### The window and its menus
+
+The bar at the top holds the menus. At its right end it shows the open file
+with its state and, while a job runs, the job's progress and remaining time;
+hold the pointer over the progress to read the status line. Under the bar,
+**People** is the column on the left, with the **Movie Clip** and the
+**3D Viewport** beside it, the **Timeline** below them and the settings on the
+right. Drag the edge between two panels to give one of them more room.
+
+Above the settings are the names of their sections: **Model**, **Correction**,
+**Face** and **Resources**. Click a name to scroll the settings to that
+section; while you scroll, the section at the top is the marked one. A section
+that the current model does not have has no name there.
+
+Between **File** and **Help** are five menus. Each entry is a control that is
+also in the window, under the same name: choosing the entry does what a click
+on that control does, a checked entry shows whether its box is checked, and an
+entry is grey while its control cannot be used.
+
+| Menu | Entries |
+| --- | --- |
+| **View** | **Theme** and **UI Scale** (the two choices of **File > Settings...**, saved at once), **Overlays** of the Movie Clip, the boxes of the 3D Viewport (**Bone Overlay**, **Face Overlay**, **Floor Grid**, **Correction Floor**, **Motion Path**, **Lock**, **Name**, **Camera**, **Follow Actor**), **View Direction**, and **Console**. |
+| **Playback** | **Play / Pause**, **First Frame**, **Previous Frame**, **Next Frame**, **Last Frame**, **Speed**, the timeline's **Frame All** and **Reset Trim**, and **Timeline Help**. The keys written beside the entries are the window's keys. |
+| **Sequence** | The buttons above the sequence timeline (**Add Video...**, **Cut**, **Delete**, **Join**, **Frame All**, **Review Range...**, **Auto-advance**) and its four tools. |
+| **People** | **Find person**, **Person Tracking Model**, **RIFE Frame Interpolation**, **Fill all hidden ranges** and **People Help**. |
+| **Motion** | **Reconstruct 3D**, **Reconstruct in parts...**, **Prepare Preview**, **Cancel Job**, the boxes **Enable Correction**, **Track Face** and **Resource Safety**, **Model Manager** and **Model Guide**. |
+
 ### Appearance
 
 Choose **File > Settings...** to select a **Theme** and adjust

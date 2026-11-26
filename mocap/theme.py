@@ -274,15 +274,14 @@ class AppearanceDialog(QDialog):
 
 def configure_application(app, theme=DEFAULT_THEME, scale=DEFAULT_SCALE):
     QLocale.setDefault(QLocale(QLocale.English, QLocale.UnitedStates))
-    app.setStyle("Fusion")
+    app.setStyle(t3_theme.Look("Fusion"))  # Fusion, and what a widget needs once when it is polished
     # Bundled OFL font also works in the offscreen renderer without system fonts.
     font_id = QFontDatabase.addApplicationFont(str(ROOT / "assets/fonts/NotoSansKR.ttf"))
     family = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
     app.setProperty('classicFont', QFont(family[0] if family else "Segoe UI", 9))
     app.setProperty('interFont', t3_theme.load_fonts())
     app.setFont(app.property('classicFont'))
-    menus = t3_theme.RoundMenus(app)
-    app.installEventFilter(menus)
+    t3_theme.follow_windows(app)
     apply_appearance(app, theme, scale)
 
 

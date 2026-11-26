@@ -1,5 +1,43 @@
 # Source package validation
 
+## Window arrangement and menus (2026-11-26)
+
+**People** is a column of its own beside the Movie Clip, the menu bar carries
+the file's line and the running job at its right end in place of the row under
+the menus, the settings have section names (**Model**, **Correction**,
+**Face**, **Resources**) that scroll to a section, the two Track Face rows are
+a **Face** group, and five menus (**View**, **Playback**, **Sequence**,
+**People**, **Motion**) stand between **File** and **Help**. The menu entries
+press controls that are already in the window. The application's style object
+now prepares each widget once, in place of an event filter on the application.
+
+- **Tests** (unittest, Qt offscreen, the real main window): `test_workspace_layout`
+  13 (the People column, the file line in the menu bar and its width following
+  the text, the job shown only while the window is busy, the section names and
+  where they scroll, the Face group; menu entries that follow and press their
+  box, button or list, grey entries, the sequence tools, Theme and UI Scale
+  saved through a patched settings writer, and the menus still usable after
+  the menu bar was asked for them the way `mcp_desktop.py` asks).
+  `test_t3_theme` 25. The whole `tests` folder: 1,475 tests, OK, 18 skipped,
+  in 21 minutes; a first run of the folder had two errors, both the same rare
+  failure while a menu class of this change was being constructed, and the
+  menus are now made by the menu bar itself.
+- **Timing of the style object:** the 30 window tests of `test_sequence_join`
+  took 104 s with the style object, 129 s without any application event filter
+  on the earlier code and 131 s in Classic Dark with the filter.
+- **The real window on Windows 11 (build 26200):** the main window was shown off
+  the screen without taking the focus, with a temporary home folder and nothing
+  opened, in Dark and Light, and read back with `PrintWindow`: the title bar in
+  the window's colour, the menus, the file line, the job's progress at the end
+  of the bar after the busy flag and the progress were set by hand, the People
+  column, the section names and the 3D viewport's grid were in the picture.
+- **Offscreen pictures:** the window with two linked blocks in Dark and Light,
+  the settings scrolled to their end, each of the five menus opened.
+- **Not run:** nobody used the window on a screen: no menu was opened with the
+  mouse, no panel edge was dragged, no section name was clicked there. No job
+  ran, so the job's progress in the bar was seen only with values set by hand.
+  No reconstruction, import, export or playback was run for this change.
+
 ## Sequence: the card over a seam, and scissors for the Razor (2026-11-26)
 
 Resting the pointer on the seam between two blocks of the sequence timeline

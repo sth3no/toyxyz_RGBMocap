@@ -8,10 +8,10 @@ widget style sheets need no second set of colours.
 import re
 import sys
 
-from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QIcon, QLinearGradient, QPainter,
                            QPainterPath, QPalette, QPen, QPixmap, QPolygonF)
-from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QPushButton, QStyle, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QProxyStyle, QPushButton, QStyle, QWidget
 
 from .paths import ROOT
 
@@ -43,8 +43,13 @@ QTabWidget#peopleTabs QTabBar, QTabBar#modelManagerTabs { qproperty-drawBase:0; 
 QTabWidget#peopleTabs QTabBar::tab, QTabBar#modelManagerTabs::tab { background:#0a0a0a; color:#a3a3a3; border:1px solid #0a0a0a; border-radius:6px; padding:5px 10px; }
 QTabWidget#peopleTabs QTabBar::tab:!selected:hover, QTabBar#modelManagerTabs::tab:!selected:hover { background:#161616; color:#f5f5f5; }
 QTabWidget#peopleTabs QTabBar::tab:selected, QTabBar#modelManagerTabs::tab:selected { background:#1e1e1e; border-color:#262626; color:#f5f5f5; }
-QGroupBox { background:#111111; border:1px solid #1f1f1f; border-radius:10px; margin-top:19px; padding:10px 8px 8px; font-weight:600; }
-QGroupBox::title { subcontrol-origin:margin; left:4px; padding:0 3px; color:#f5f5f5; }
+QTabBar#sidebarTabs::tab { background:transparent; color:#a3a3a3; border:1px solid transparent; border-radius:6px; padding:4px 6px; margin:4px 0 2px 0; }
+QTabBar#sidebarTabs::tab:!selected:hover { background:#161616; color:#f5f5f5; }
+QTabBar#sidebarTabs::tab:selected { background:#1e1e1e; border-color:#262626; color:#f5f5f5; }
+QGroupBox { background:#111111; border:1px solid #1f1f1f; border-radius:10px; margin-top:0; padding:24px 3px 3px; font-weight:600; }
+QGroupBox::title { subcontrol-origin:padding; subcontrol-position:top left; left:9px; top:8px; padding:0; color:#f5f5f5; }
+QGroupBox QLabel { color:#a3a3a3; }
+QGroupBox QLabel#muted { color:#818181; }
 QPushButton { background:#171717; border:1px solid #262626; border-radius:6px; padding:5px 9px; font-weight:500; }
 QPushButton:hover { background:#1e1e1e; border-color:#2f2f2f; }
 QPushButton:pressed { background:#111111; }
@@ -494,21 +499,47 @@ def dress_all(app, classic, is_light, scale):
         dress(widget, classic, is_light, scale)
 
 
-class RoundMenus(QObject):
-    """Lets the rounded corners of a menu show what is behind them: a menu is a window of its own, and without a
-    see-through background its corners outside the rounded border are painted square."""
+def prepare(widget):
+    """What a widget needs once, when the style polishes it: a menu gets a see-through background so the corners
+    outside its rounded border show what is behind them (a menu is a window of its own), a transport button and a
+    window get what dress() gives them."""
+    if isinstance(widget, QMenu):
+        if not widget.testAttribute(Qt.WA_TranslucentBackground):
+            widget.setWindowFlag(Qt.FramelessWindowHint, True)
+            widget.setWindowFlag(Qt.NoDropShadowWindowHint, True)
+            widget.setAttribute(Qt.WA_TranslucentBackground, True)
+        return
+    is_window = widget.isWindow()
+    if not is_window and widget.objectName() != 'transport':
+        return
+    app = QApplication.instance()
+    theme, scale = app.property('uiTheme') or 'dark', app.property('uiScale') or 100
+    classic, is_light = theme.startswith('classic'), theme.endswith('light')
+    dress(widget, classic, is_light, scale)
+    if is_window:   # a button polished before its window was complete
+        for button in widget.findChildren(QPushButton, 'transport'):
+            dress(button, classic, is_light, scale)
 
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Polish and isinstance(watched, QMenu) and not watched.testAttribute(Qt.WA_TranslucentBackground):
-            watched.setWindowFlag(Qt.FramelessWindowHint, True)
-            watched.setWindowFlag(Qt.NoDropShadowWindowHint, True)
-            watched.setAttribute(Qt.WA_TranslucentBackground, True)
-        elif event.type() in (QEvent.Polish, QEvent.Show) and isinstance(watched, QWidget) and (
-                watched.isWindow() if event.type() == QEvent.Show else watched.objectName() == 'transport'):
-            app = QApplication.instance()
-            theme, scale = app.property('uiTheme') or 'dark', app.property('uiScale') or 100
-            dress(watched, theme.startswith('classic'), theme.endswith('light'), scale)
-            if event.type() == QEvent.Show:   # a button polished before its window was complete
-                for button in watched.findChildren(QPushButton, 'transport'):
-                    dress(button, theme.startswith('classic'), theme.endswith('light'), scale)
-        return False
+
+class Look(QProxyStyle):
+    """The application's style: Fusion, and prepare() for every widget as it is polished. A style is asked once per
+    widget; an event filter on the application would be asked for every event of every widget."""
+
+    def polish(self, target):
+        result = super().polish(target)
+        if isinstance(target, QWidget):
+            prepare(target)
+        return result
+
+
+def follow_windows(app):
+    """Colour the title bar of a window when it gets the focus: a window polished before Windows made it has no title
+    bar to colour yet."""
+    def focused(window):
+        if window is None:
+            return
+        widget = next((candidate for candidate in app.topLevelWidgets() if candidate.windowHandle() is window), None)
+        if widget is not None and widget.windowType() in (Qt.Window, Qt.Dialog, Qt.Tool):
+            theme = app.property('uiTheme') or 'dark'
+            title_bar(widget, theme.startswith('classic'), theme.endswith('light'))
+    app.focusWindowChanged.connect(focused)
