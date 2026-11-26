@@ -3,7 +3,11 @@
 The local [MCP toolkit](MCP.md) derives headless tools from `mocap.cli.parser`.
 `tools/rgbmocap_mcp.py` owns the stdio protocol and CLI jobs.
 `mocap/mcp_desktop.py` handles desktop operations in the Qt thread of a
-managed window, behind the existing application lock.
+managed window, behind the existing application lock. `mocap/job_queue.py`
+stores workflow IDs, phases and outcomes in the installation's local SQLite
+registry. `mocap/job_queue_ui.py` reads and cancels jobs in the desktop.
+The MCP monitor claims queued writes in order and supervises its own CLI
+children. `parts_run.json` still determines which parts Resume can reuse.
 
 This guide is for agents helping users operate or modify RGB MoCap. It describes the Git/CMD version. User requests and newer verified behavior take precedence over historical benchmarks. The Windows distribution offers the English desktop interface and a command line for automation. Avoid asking for the user's videos or model weights if the existing local project is sufficient.
 
@@ -666,6 +670,13 @@ both enabled and disabled. See the
 [bind pose and foot spacing checks](VALIDATION.md#ue5-mannequin-bind-pose-and-foot-spacing-2026-11-20)
 and [original mesh export checks](VALIDATION.md#ue5-mannequin-fbx-with-optional-mesh-2026-11-20).
 
+`mocap/unreal_animation.py` validates local import profiles and reads the binary
+FBX model graph by skipping animation and geometry payloads. The Unreal
+commandlet obtains the target skeleton through the saved Skeletal Mesh, checks
+names and parents, and saves each validated animation through the Legacy FBX
+importer. Use a scratch Unreal project for round-trip checks and inspect the
+per-file report, especially when a batch only partly succeeds.
+
 ### Portable Blender export implementation
 
 Source FBX/BVH requests accept default-off `place_at_origin` and `symmetric_rest`.
@@ -1253,7 +1264,23 @@ The app uses separate runtime profiles to maintain compatibility, with bounded b
 - Typed trim range: `mocap/clip_range.py` (parse/format m:ss.s and h:mm:ss.s, seconds to frames with plain reasons) and `mocap/clip_range_ui.py` (From / To / Set beside the timeline's Clip label; applies through `slider.set_clip`, then `slider.show_frames`; enabled through `TimelineSlider.trim_enabled_changed`; refreshed from `MainWindow.clip_changed`). Times are seconds of the loaded clip, not of the source.
 - Take from another video: `mocap/take_import.py` (job `take_import` through `take_import_boot.py` and `take_join_runtime.import_command`, outside `worker.py`: `place` turns the take about +Y to the receiver's last heading, moves it horizontally to the receiver's last pelvis, keeps its own height plus the rest-leg difference of the receiver's betas, and rewrites `smpl_params_incam` through the receiver's last-frame pairing so `take_join.assemble` anchors it with the identity; writes `<preview>/takes/<a>_<b>_import_v1` and appends it to `takes`), `mocap/take_import_check.py` (stdlib-only refusals, among them a take of another model than the scene's, whose floor height differs, and the list of finished takes) and `mocap/take_import_ui.py` (dialog). `take_join.people_clip` pads media beyond the video with its last frame.
 - Memory fit: `mocap/memory_fit.py` (no Qt, no Torch: `NEEDS` starting numbers and `need` raised by `seen`/`remember`, the per-model peaks under `memory_seen` in `config/local.json`; `start_note`, `tight_note`; `begin`/`tick`/`end`, the three calls from `gui.py` in `start_jobs`, `check_processing_resources` and the batch end of `next_job`; `part_seconds`/`part_frames`, the longest part that fits the free video memory and disk, `last_step_bytes` for ExMR's last step, `free_vram` through `nvidia-smi`). `mocap/processing_guard.py` keeps the worker tree's peak working set and private commit. `parts_runner.fitted(w)` gathers the window's values and `parts_runner.start(w, None, overlap_seconds, delete, first, end)` processes a range in fitted parts: call these from other features instead of choosing a part length.
-- Reconstruct in parts: `mocap/parts.py` (pure: `plan` with the last part absorbing a remainder under a third of a part, `visible` runs as `prepare_person` finds them, `job_range` (the frames `input_person_jobs` and the person job make of a trim: end clipped to the scene end, rounded), `finished`, `marks` of the seams between planned parts, the frame-storage estimate from 188 KB per 1080p frame), `mocap/parts_runner.py` (`PartsRunner`, a QObject polled by a 200 ms QTimer: per part it shows the person preview so the slider spans the scene, `slider.set_clip`, restores the settings `load_project` resets, checks only the visible people through the People check boxes, waits for `video_readable`, waits while any other job is `busy`, calls `MainWindow.run_full`, requires `_people_batch` and remembers `batch_serial` (counted in `start_jobs`), and reads that batch's own `last_batch` (serial, failed, cancelled, status; recorded at the end of `next_job` and in `process_error`) so a job that starts right after it cannot hide its outcome; a part is finished when `selected_export` of the base result (`base_result(kind)`) is ready, as the Hidden ranges panel decides, because a corrected result goes stale whenever a later part changes the shared scene floor; every step checks that the window still shows the run's scene root before marking, deleting or launching; seams marked with `parts_mark`, deletes only `exmr_frames/*.jpg` and its `receipt.json` (`delete_frames`, per-file `OSError` counted as kept), writes `parts_run.json` in the scene folder; `tick` catches every exception and stops; every exit restores the checks and the starting view and trim; `cancel_job` sets its `stopping` flag (Cancel Job stays enabled while a run exists) and `closeEvent` calls `close()`; `join_issue` gives the Hidden ranges `disabled_reason` for the dialog and end message) and `mocap/parts_ui.py` (the dialog; the button is built in `workspace_ui` under Reconstruct 3D, shown for `parts_runner.MODELS`, hidden in PEAR).
+- Reconstruct in parts: `mocap/parts.py` plans trims on the scene frame grid,
+  mirrors the person job's visible ranges, marks overlaps and classifies worker
+  allocation errors. `mocap/parts_runner.py` uses a 200 ms Qt timer and calls
+  `MainWindow.run_full` with explicit person IDs. It matches completion to
+  `batch_serial` and `last_batch` and checks that the scene and detection
+  generation still match. `selected_export` for `base_result(kind)` determines
+  readiness. Shared-floor changes can invalidate correction after base motion
+  is ready. The runner atomically saves `parts_run.json` version 2 with the
+  exact plan, actors, reconstruction options and detected people identity.
+  `parts_runner.resume(w)` resumes that plan with current local resource
+  preferences. Version 1 still provides the dialog's previous sizes.
+  Worker allocation failures and Windows allocation stops can split unfinished
+  visible ranges at most two levels. `people_store.seam_takes` excludes replaced
+  unfinished parents from placement and joining while preserving their files.
+  The existing ExMR cleanup removes only generated frame JPGs and their receipt
+  after a part finishes. `parts_ui.py` provides **Resume** and **Reconstruct**,
+  and `cancel_job` and `closeEvent` stop scheduling parts.
 - Takes that share frames: `mocap/overlap_join.py` (numpy only: `weights`, `align`, `blend`; used by `take_join.assemble` for `method: 'overlap'` seams from `hidden_ranges.seams`).
 - Hidden people in the 3D view: `mocap/scene_ghosts.py` (no Qt: `unfilled` = the gaps between the takes in use for a result, so a current joined take removes its range; `ghosts` = each checked person inside one, at the last frame of the take before it). `PeopleWorkspace.sync_scene_visibility` hands them to `MotionView.scene_hidden` and `PeopleScene.hidden`; `MotionView.draw_people_scene` draws them after the people through `MeshRenderer.draw(alpha=MotionView.GHOST_ALPHA)` (depth-only pass, then one blended pass). `PeopleScene.take_at` stays strict, so export, correction, faces and the stream never see a ghost. Offscreen Qt has no OpenGL: the drawing itself is checked by `experiments/multi-person-preview/gl_ghost.py` (an off-screen framebuffer, no window).
 - Sequence document: `mocap/sequence.py` (pure, no Qt: `Sequence` of `Block`s, each a range of one video in source seconds with one remembered clip folder per model; `add`, `cut`, `delete`, `move`, `resize` and `remember` (a changed range forgets every folder), `starts`, `locate`, `position`; `save`/`load` of a versioned JSON file; files stay on disk whatever the document does). Stage 2 adds people who continue across neighbouring blocks: `Link` (source and target `(block id, person id)`, `method` `smooth`/`auto`, `prints` = the two people lists' fingerprints, `model`, `built` = the join record), `gaps` (the transition length in seconds per later block, one per pair, default 1.0 s, laid out only while the selected model has a link into the block; a playhead in a gap `locate`s to the earlier block's end), `decided` (per model, the later blocks that had a link, so the automatic link is not made again after Unlink; the controller clears a block when its link goes stale), `Sequence.model` (the selected model; `model_links`, `link_into`, `link_out`, `chain` and `gap` see only its links), `link`/`unlink`/`set_gap`/`set_method`, and `dropped`: every link an edit (`cut`, `delete`, a reordering `move`, a changing `resize` or `remember`, of every model) removes, for the controller to take its join back.

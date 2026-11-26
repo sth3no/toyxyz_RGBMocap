@@ -5,6 +5,7 @@ from copy import deepcopy
 
 from .hidden_ranges import gap_key, gaps, method_issue
 from .hidden_ranges_state import choose, gap_rows
+from .people_store import seam_takes
 
 AUTO_RATE = 'Automatic fill needs 30 fps takes; this scene has {}.'  # take_join's own sentence
 EXPERIMENTAL = 'Experimental support. Generated motion is plausible, not what the person did.'
@@ -43,7 +44,7 @@ def plan(root, people, checked, kind, model, fps, hidden, auto_issue=None, text_
         ident = person['id'];waiting = {gap_key(r) for r in hidden[ident]}
         saved = person.get('gap_fill') if isinstance(person.get('gap_fill'), dict) else {}
         choices = deepcopy(saved);fills, skipped, stopped = [], [], None
-        for gap in gaps(person.get('takes', [])):
+        for gap in gaps(seam_takes(person)):
             if gap_key(gap) not in waiting:continue
             row = gap_rows([gap], saved, fps, people, ident, auto_issue, text_issue)[0]
             method, issue, chosen = row['method'], row['issue'], row['method'] != 'none'

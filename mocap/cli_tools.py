@@ -160,6 +160,8 @@ def batch(args, report):
         if args.dry_run:
             job.dry_run = True
         try:
+            if set_phase := getattr(report, 'set_phase', None):
+                set_phase(job.command, message=f'Batch job {index}/{len(queue)}')
             report(f'Batch job {index}/{len(queue)} · {job.command}')
             prior = None
             if job.command == 'export' and job.dry_run:

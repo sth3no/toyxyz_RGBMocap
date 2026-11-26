@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFil
 
 from .models import MODELS_LIST, import_body_model, missing, ready
 from .paths import ROOT, PROJECTS, worker_command
+from . import job_queue_ui
 from .video import select_preview
 from .viewer import VideoView, MotionView
 from .playback import playback_frame, PlaybackTimerResolution
@@ -712,6 +713,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.task_timer=QTimer(self)
         self.task_timer.setInterval(500)
         self.task_timer.timeout.connect(self.update_task_progress)
+        self._queue_job_id = self._queue_cancel_sent = None
+        self._queue_timer = QTimer(self, interval=1000)
+        self._queue_timer.timeout.connect(lambda: job_queue_ui.poll(self))
         # Initialize the same model-specific visibility used on selector changes.
         # Otherwise the empty GVHMR stack reserves the FlowHMR page height.
         self.select_model()
@@ -1360,7 +1364,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.stop_playback()
         super().hideEvent(event)
 
-    def input_jobs(self, stages, result=None, *, people_options=None):
+    def input_jobs(self, stages, result=None, *, people_options=None, person_ids=None):
         if MOTION_TOOLS[self.model_choice.currentData()].input_setup_only:
             self.status.setText('MAMMA camera input setup is available; reconstruction is not integrated yet.')
             return
@@ -1380,7 +1384,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             if manifest.get('interpolation', '') != interpolation:
                 self.status.setText('Video interpolation changed. Run Find person again, then reconstruct the selected people.')
                 return
-            if self.input_person_jobs(stages, result):
+            if self.input_person_jobs(stages, result, person_ids=person_ids):
                 return
         if not self.ready_for_interpolation(interpolation):
             return
@@ -1409,7 +1413,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
     def run_analysis(self):
         self.input_jobs(["track", "pva"])
 
-    def run_full(self):
+    def run_full(self, *, person_ids=None):
         tool = MOTION_TOOLS[self.model_choice.currentData()]
         if tool.key=='mamma':return self.run_mamma()
         if tool.key=='prompthmr':return self.run_prompthmr()
@@ -1429,7 +1433,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         correction=self.motion_correction.isChecked()
         if correction:self.save_correction_options()
         hand=tool.key=='gvhmr' and self.handflow_refine.isChecked()
-        self.input_jobs(tool.stages(refine, foot,correction,handflow=hand), result=result_kind(refine, foot,correction,handflow=hand))
+        self.input_jobs(tool.stages(refine, foot,correction,handflow=hand),
+                        result=result_kind(refine, foot,correction,handflow=hand), person_ids=person_ids)
 
     def save_correction_options(self):
         if self.project is not None:
@@ -1601,6 +1606,13 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self.batch_serial = getattr(self, 'batch_serial', 0) + 1  # tells a batch from the next one (Reconstruct in parts)
         self.jobs, self.busy, self.cancelled, self.failed = list(jobs), True, False, False
         self._task_preparing=any(stage=='prepare' for stage,_ in self.jobs)
+        if jobs:
+            stage, arguments = jobs[0]
+            project = (Path(arguments[arguments.index('--project') + 1]) if arguments and '--project' in arguments
+                       else self.project or self.video_path)
+            self._queue_job_id = job_queue_ui.note(self, 'add', 'gui', STAGES.get(stage, stage), project=project)
+            if self._queue_job_id:
+                self._queue_timer.start()
         self.update_readiness()
         self.next_job()
 
@@ -1696,10 +1708,12 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                     message = 'Reference rig export complete.' if self.current_stage == 'stream_reference' else 'Motion export complete.'
                     self.status.setText(message+(' '+paths[0] if len(paths)==1 else f' {len(paths)} files.' if paths else ''))
                     for path in paths:self.log.append('Exported: '+path)
+                job_queue_ui.finish_batch(self)
                 self.update_readiness()
                 return
             if self.current_stage=='save_project':
                 self.finish_project_save()
+                job_queue_ui.finish_batch(self)
                 return
             completion_message=self.status.text()
             self.finish_people_jobs()
@@ -1730,6 +1744,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.update_readiness()
             # Model Manager may have been closed while the job ran; the Hidden ranges rows show what is installed now.
             if self.current_stage in MODEL_JOB_STAGES:self.refresh_hidden_ranges_after_models()
+            job_queue_ui.finish_batch(self)
             if self.failed or self.cancelled:
                 self.character_refresh_queue=[]
             else:
@@ -1752,6 +1767,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.status.setText(("Downloading " if stage == "download" else "Importing ") + BY_KEY[model_key].name + "...")
         else:
             self.status.setText(STAGES[stage] + "...")
+        if job_id := getattr(self, '_queue_job_id', None):
+            project = self.job_project or self.project or self.video_path
+            job_queue_ui.note(self, 'phase', job_id, stage, message=self.status.text(), project=project)
         key,estimate=self.task_descriptor(stage,arguments)
         self.task_state.begin(time.monotonic(),key,self.status.text(),estimate)
         actor=next((part for part in self.job_project.parts if part.startswith('person_')),'') if self.job_project else ''
@@ -1764,6 +1782,7 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         self._stdout_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._stderr_decoder = codecs.getincrementaldecoder("utf-8")("replace")
         self._stderr_buffer = ""
+        self._worker_stderr_tail = ''
         if stage in ('flow_batch','exmr_batch','gvhmr_batch'):
             from .queue_groups import write_request
             try:
@@ -1826,7 +1845,11 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 if note:message += ' '+note
             shown = typed(message) if memory_stop else message
             self.failed = True
-            self.cancel_job()
+            runner = self.parts_runner
+            if memory_stop and runner is not None and runner.note_memory_failure():
+                self.cancel_job(stop_parts=False)
+            else:
+                self.cancel_job()
             self.status.setText(shown)
             self.log.append(shown)
             if memory_stop:self.log.setVisible(True)
@@ -1882,7 +1905,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
         lines = self._stderr_buffer.split("\n");self._stderr_buffer = lines.pop()
         if final and self._stderr_buffer:lines.append(self._stderr_buffer);self._stderr_buffer = ""
         for line in lines:
-            if line.strip():self.log.append(line[-8192:])
+            if line.strip():
+                self._worker_stderr_tail = line[-8192:]
+                self.log.append(self._worker_stderr_tail)
 
     def handle_event(self, event):
         kind = event["type"]
@@ -1895,6 +1920,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self._task_actor=f"Actor/take {event['index']}/{event['count']}"
             self.task_state.update(dict(current=0,total=0,phase=f"batch:{event['phase']}:{event['index']}",message='Loading actor data'),time.monotonic())
             self.status.setText(self._task_actor+' · '+STAGES.get(event['stage'],event['stage']))
+            if job_id := getattr(self, '_queue_job_id', None):
+                job_queue_ui.note(self, 'phase', job_id, self._batch_inner_stage,
+                                  message=self.status.text(), project=self.job_project)
             self.update_task_progress()
         elif kind == 'face_ready':
             self.update_face_overlay(refresh=True)
@@ -1937,6 +1965,10 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.hardware_summary = f"{data.get('gpu', 'GPU unavailable')} · RAM {data.get('ram_gib', '?')}GB · CUDA check {'Passed' if data.get('cuda_matmul_verified') else 'Unavailable'}"
             self.status.setText(self.hardware_summary)
         elif kind in {"failed", "blocked"}:
+            if kind == 'failed' and self.parts_runner is not None:
+                from .parts import allocation_failure
+                if allocation_failure(event.get('message') or ''):
+                    self.parts_runner.note_memory_failure()
             self.failed = True
             self.task_timer.stop();self.task_info.setText('Failed')
             label = 'Face tracking failed. ' if self.current_stage == 'face_track' else 'Processing failed. '
@@ -1959,6 +1991,9 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
                 self.failed = True
                 if "failed" not in self.status.text():
                     self.status.setText("Processing stopped. See the console for details.")
+                    if job_id := getattr(self, '_queue_job_id', None):
+                        detail = getattr(self, '_worker_stderr_tail', '') or f'Worker exited with code {code}.'
+                        job_queue_ui.note(self, 'phase', job_id, self.current_stage, message=detail)
         except Exception as error:
             self.worker_completion_error(error)
         finally:
@@ -1995,10 +2030,11 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             self.finish_people_jobs()
             self.status.setText("Cannot start the processing engine. Check the app installation.")
             self.last_batch = (getattr(self, 'batch_serial', 0), True, self.cancelled, self.status.text())
+            job_queue_ui.finish_batch(self)
             self.update_readiness()
 
-    def cancel_job(self):
-        if self.parts_runner is not None:
+    def cancel_job(self, *, stop_parts=True):
+        if stop_parts and self.parts_runner is not None:
             self.parts_runner.cancel()  # Cancel Job stops the whole run, also between its parts
             if not self.busy:return
         self.pear_leave()
@@ -2387,6 +2423,8 @@ class MainWindow(PreviewExportWorkspace,PearWorkspace,GemXWorkspace,PromptHMRWor
             if worker:
                 worker.waitForFinished(3000)
         if self.parts_runner is not None:self.parts_runner.close()  # nothing more starts in a closing window
+        job_queue_ui.finish_batch(self, state='interrupted', message='The window closed before the worker reported an outcome.')
+        self._queue_timer.stop()
         self.pear_leave()
         self.pear_stop_scan()
         if self.character_process is not None:

@@ -293,7 +293,7 @@ class Runner(QObject):
         person = next(p for p in state['people'] if p['id'] == self.ident)
         choices = person['gap_fill'] if isinstance(person.get('gap_fill'), dict) else {}
         methods = {link.built['copy']:link.method for link in self.links}
-        for gap in gaps(person['takes']):
+        for gap in gaps(people_store.seam_takes(person)):
             method = methods.get(gap['after']['project'])
             if method and (choices.get(gap_key(gap)) or {}).get('method') != method:choose(choices, gap_key(gap), method)   # a choice of that method keeps its seed and description
         person['gap_fill'] = choices

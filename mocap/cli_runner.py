@@ -31,6 +31,8 @@ def stop_worker(process):
 
 
 def run_process(command, stage, env, report, resource_safety):
+    if set_phase := getattr(report, 'set_phase', None):
+        set_phase(stage)
     report(f'{stage}…')
     with subprocess.Popen(command, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,

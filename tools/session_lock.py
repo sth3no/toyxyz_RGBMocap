@@ -4,6 +4,10 @@ from pathlib import Path
 import msvcrt
 import os
 
+class AppBusyError(RuntimeError):
+    """The desktop, CLI or setup already holds the installation lock."""
+
+
 @contextmanager
 def app_lock(root):
     folder=Path(root)/'.setup';folder.mkdir(exist_ok=True)
@@ -12,6 +16,6 @@ def app_lock(root):
         if os.fstat(stream.fileno()).st_size==0:stream.write(b'0');stream.flush()
         stream.seek(0)
         try:msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
-        except OSError:raise RuntimeError('Close RGB MoCap or the other installation/update before continuing.') from None
+        except OSError:raise AppBusyError('Close RGB MoCap or the other installation/update before continuing.') from None
         try:yield
         finally:stream.seek(0);msvcrt.locking(stream.fileno(),msvcrt.LK_UNLCK,1)

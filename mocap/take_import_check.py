@@ -63,13 +63,14 @@ def filled(folder):
 
 
 def last_take(person):
-    takes = [t for t in person.get('takes') or [] if isinstance(t, dict)]
+    from .people_store import seam_takes
+    takes = seam_takes(person)
     return max(takes, key=lambda t: (t['end'], t['first'])) if takes else None
 
 
 def refusal(root, person, source, frames, result):
     """The first reason the take in folder `source` cannot be imported for `person` of scene `root`, or None."""
-    from .people_store import root_for, safe_child
+    from .people_store import root_for, safe_child, seam_takes
     root, source = Path(root).resolve(), Path(source).resolve()
     scene = _manifest(root) or {}
     model = _model(scene)
@@ -95,7 +96,7 @@ def refusal(root, person, source, frames, result):
     for kind in needed:
         if not finished(source, [kind]):return FINGERS if kind.startswith('handflow_') else FOOTMR
     last = last_take(person)
-    try:folders = [safe_child(root, t['project']) for t in person.get('takes') or []]
+    try:folders = [safe_child(root, t['project']) for t in seam_takes(person)]
     except (ValueError, KeyError, TypeError):folders = []
     if last is None or not any(finished(f) for f in folders):return RECEIVER.format(name)
     if not finished(safe_child(root, last['project']), needed):return LAST.format(name)
@@ -116,7 +117,7 @@ def scene_roots(folder):
 def sources(folder):
     """Finished takes and current joined takes without filled frames of every person of the scenes in `folder`, as dicts for the import dialog."""
     from .motion_tools import MOTION_TOOLS
-    from .people_store import active_takes, load_people, safe_child
+    from .people_store import active_takes, load_people, safe_child, seam_takes
     out = []
     for root in scene_roots(folder):
         try:state = load_people(root)
@@ -124,7 +125,7 @@ def sources(folder):
         if not state:continue
         for person in state['people']:
             name = str(person.get('name') or f"Person {person['id']}")
-            try:takes = person.get('takes', [])+[t for t in active_takes(root, person) if t.get('join')]
+            try:takes = seam_takes(person)+[t for t in active_takes(root, person) if t.get('join')]
             except (OSError, ValueError, KeyError, TypeError):continue
             for take in takes:
                 try:

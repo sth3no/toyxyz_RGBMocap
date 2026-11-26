@@ -98,6 +98,8 @@ def main(argv, emit):
                 print('Cannot save the batch error: '+path_error_message(log_error),file=sys.stderr,flush=True)
         if isinstance(error,MemoryError) or 'out of memory' in message.lower():
             from .memory_mode import GUIDANCE
+            if isinstance(error, MemoryError):
+                message = 'Processing ran out of memory. ' + message
             message+=' '+GUIDANCE
         emit('failed',message=message)
         return 1

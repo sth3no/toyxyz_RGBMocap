@@ -26,6 +26,7 @@ class FitTest(unittest.TestCase):
     MODEL = 'exmr'
     END = 10.
     setUp = base.RunnerTest.setUp
+    open_window = base.RunnerTest.open_window
     finish = base.RunnerTest.finish
 
     def stop(self):

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QWidget,QFrame,QVBoxLayout,QHBoxLayout,QLabel,QPu
     QListWidget,QListWidgetItem,QColorDialog,QComboBox,QFileDialog,QTabWidget,QCheckBox,
     QStyledItemDelegate,QStyleOptionViewItem,QToolTip,QStyle,QMenu,QInputDialog,QMessageBox)
 
-from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,owned_projects
+from .people_store import load_people,save_people,root_for,safe_child,DEFAULT_COLOR,active_takes,owned_projects,seam_takes
 from .hidden_ranges_ui import HiddenRangesPanel
 from .person_merge import PENDING,MODELS,Refused,candidates,absorbed
 
@@ -566,7 +566,7 @@ class PeopleWorkspace:
         self.person_takes.blockSignals(True)
         try:
             self.person_takes.clear()
-            takes=person.get('takes',[])+(person.get('joins') or []) if person else []
+            takes=seam_takes(person)+(person.get('joins') or []) if person else []
             # A joined take that is switched off is kept on disk but not offered.
             unlisted=set()
             if self.people_state and person and person.get('joins'):
@@ -586,7 +586,7 @@ class PeopleWorkspace:
     def refresh_hidden_ranges(self,person):
         from .hidden_ranges import listed
         # Hidden ranges, and where parts of Reconstruct in parts meet; their shared frames are blended without a method.
-        found=listed(person.get('takes',[]),person.get('gap_fill')) if person else []
+        found=listed(seam_takes(person),person.get('gap_fill')) if person else []
         if not found:self.hidden_ranges.hide();return
         from .hidden_ranges_state import panel_state
         choices=person.get('gap_fill') or {}
@@ -956,10 +956,11 @@ class PeopleWorkspace:
                 return
         self.input_jobs(['sam31_people'], people_options=options)
 
-    def input_person_jobs(self,stages,result):
+    def input_person_jobs(self,stages,result,*,person_ids=None):
         if self.people_state is None:return False
         if self.busy:return True
-        selected=self.checked_people()
+        selected = (self.checked_people() if person_ids is None else
+                    [p for p in self.people_state['people'] if p['id'] in person_ids])
         if not selected:
             self.status.setText('Check at least one person in the People list to extract motion.')
             return True
@@ -1051,7 +1052,7 @@ class PeopleWorkspace:
         kind=self.active_result
         edits=self.contact_tracks.get(base_result(kind),{})
         for person in people:
-            takes,joins=person.get('takes',[]),person.get('joins') or []
+            takes,joins=seam_takes(person),person.get('joins') or []
             # Source and joined takes are numbered separately; only a joined take in use is usable.
             usable={t['project'] for t in active_takes(self.people_root,person,kind) if t.get('join')} if joins else set()
             for joined,number,total,take in [(False,n,len(takes),t) for n,t in enumerate(takes,1)]+[(True,n,len(joins),t) for n,t in enumerate(joins,1)]:
@@ -1090,7 +1091,7 @@ class PeopleWorkspace:
             if not people:
                 raise ValueError('Check a person in the People list to export their takes.')
             for person in people:
-                if not person.get('takes'):
+                if not seam_takes(person):
                     problems.append(f"{person['name']}\nReason: This person has no saved takes.\nWhat to do: Run Reconstruct 3D.")
             choices=self.take_choices(people,validate_scene=True)
             # By default a current joined take replaces its sources; a stale one never hides them.

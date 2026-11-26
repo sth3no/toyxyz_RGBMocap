@@ -6,13 +6,14 @@ from .clip_range import format_time
 from .memory_fit import LIMITS
 from .theme import ui_px
 
-DELETE_TIP = ('ExMR writes every frame of a part as a picture before it reconstructs it. Deleting them after each part '
-              'keeps only one part on disk at a time; they are made again if that part is reconstructed again.')
+DELETE_TIP = ('ExMR writes every frame of a part as a picture before it reconstructs it. Deleting frames after a part finishes '
+              'reduces disk use. Unfinished parts can still have temporary frames.')
 NO_FRAMES = 'Only ExMR writes temporary frames.'
+RESUME = 2  # a separate dialog result from Accepted (start with the current fields)
 
 
 class PartsDialog(QDialog):
-    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2., join_issue=None, fit=None):
+    def __init__(self, parent, first, end, fps, width, height, people, writes_frames, part=60., overlap=2., join_issue=None, fit=None, resume=None):
         super().__init__(parent)
         self.setWindowTitle('Reconstruct in Parts')
         self.setMinimumWidth(ui_px(420))
@@ -33,6 +34,12 @@ class PartsDialog(QDialog):
         self.delete.setToolTip(DELETE_TIP if writes_frames else NO_FRAMES);form.addRow(self.delete)
         self.line = QLabel();self.line.setObjectName('muted');self.line.setWordWrap(True);form.addRow(self.line)
         self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        if resume is not None:
+            first, end, count = resume
+            note = QLabel(f'You can resume the saved run for frames {first+1} through {end} ({count} parts).')
+            note.setWordWrap(True)
+            layout.addWidget(note)
+            self.buttons.addButton('Resume', QDialogButtonBox.ActionRole).clicked.connect(lambda: self.done(RESUME))
         self.buttons.button(QDialogButtonBox.Ok).setText('Reconstruct')
         self.buttons.accepted.connect(self.accept);self.buttons.rejected.connect(self.reject);layout.addWidget(self.buttons)
         for control in (self.part, self.overlap):control.valueChanged.connect(self._update)
@@ -50,7 +57,7 @@ class PartsDialog(QDialog):
     def _update(self):
         plan = self.plan();ok = not isinstance(plan, str)
         self.line.setText(parts.summary(plan, *self.size, self.people, self.delete.isChecked(), self.writes) if ok else plan)
-        self.buttons.button(QDialogButtonBox.Ok).setEnabled(ok)
+        self.buttons.button(QDialogButtonBox.Ok).setEnabled(ok and self.people > 0)
 
     def choice(self):return self.part.value(), self.overlap.value(), self.delete.isChecked() and self.writes
 
@@ -58,18 +65,30 @@ class PartsDialog(QDialog):
 def ask(w):
     """Opens the dialog for the window's scene and starts the run it is accepted with; a refusal goes to the status bar."""
     from . import parts_runner
-    reason = parts_runner.refusal(w)
+    reason = parts_runner.refusal(w, resuming=True)
     if reason:
         w.status.setText(reason);return None
     scene = parts_runner._scene(w.people_root);first, end = parts_runner.default_range(w, scene);fps = scene['fps']
     # The same range offers the last run's sizes, so its finished parts are planned again and skipped.
-    record = parts_runner.saved(w.people_root);same = record is not None and (record['first'], record['end']) == (first, end)
+    record = parts_runner.saved(w.people_root)
+    same = record is not None and (record['first'], record['end']) == (first, end)
+    resume = None
+    if parts_runner.resumable(w, record, scene):
+        resume = record['first'], record['end'], len(record['parts'])
+    if resume is None and not w.checked_people():
+        w.status.setText(parts_runner.CHECK)
+        return None
     fit = parts_runner.fitted(w)
     sizes = dict(part=record['part']/fps, overlap=record['overlap']/fps) if same and record['overlap'] > 0 else dict(part=fit[0])
     dialog = PartsDialog(w, first, end, fps, scene['width'], scene['height'], len(w.checked_people()), w.model_choice.currentData() == 'exmr', **sizes,
-                         join_issue=parts_runner.join_issue(w), fit=fit)
+                         join_issue=parts_runner.join_issue(w), fit=fit, resume=resume)
     try:
-        if dialog.exec() != QDialog.Accepted:return None
+        action = dialog.exec()
         part, overlap, delete = dialog.choice()
-    finally:dialog.deleteLater()
-    return parts_runner.start(w, part, overlap, delete, first, end)
+    finally:
+        dialog.deleteLater()
+    if action == RESUME:
+        return parts_runner.resume(w)
+    if action == QDialog.Accepted:
+        return parts_runner.start(w, part, overlap, delete, first, end)
+    return None

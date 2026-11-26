@@ -5,6 +5,7 @@ import json
 import math
 from pathlib import Path
 import os
+import subprocess
 import uuid
 
 from . import project_workspace as workspace
@@ -521,6 +522,9 @@ def output_paths(args, rows):
             # Existing take-directory keys include the source-frame interval. Person ID disambiguates names.
             key = Path(ident).name
             name = f'{export_stem(person["name"])}_p{person_id:04d}_{key}'
+            if getattr(args, 'unreal_profile', None):
+                from .unreal_animation import safe_asset_name
+                name = safe_asset_name(name)
             path = args.output_dir / (name + '.' + fmt)
         path = path.resolve()
         if path.suffix.lower() != '.' + fmt or path.is_dir():
@@ -541,10 +545,22 @@ def output_paths(args, rows):
 def export(args, report):
     check_camera_refinement(args)
     fmt = args.format
+    unreal_profile = None
+    if getattr(args, 'unreal_profile', None) is not None:
+        from .unreal_animation import load_profile
+        if fmt != 'fbx' or args.include_mesh:
+            raise ValueError('Unreal import requires animation-only FBX export.')
+        unreal_profile = load_profile(args.unreal_profile)
+        args.fbx_profile = unreal_profile['fbx_profile']
+        args.ue5_target = unreal_profile['ue5_target']
     if args.refine_camera_rotation is not None and (fmt != 'blend' or args.no_camera_animation):
         raise ValueError('Refine Camera Rotation requires --format blend with camera animation enabled.')
     root, group, takes = select_takes(args)
     targets = output_paths(args, takes)
+    if unreal_profile:
+        from .unreal_animation import ASSET_NAME
+        if any(not ASSET_NAME.fullmatch(target.stem) for target in targets):
+            raise ValueError('Use letters, digits and underscores in Unreal animation filenames.')
     ue5 = args.fbx_profile == 'ue5_mannequin'
     combined = args.combined or args.whole_scene
     if combined and (fmt != 'blend' or args.output is None):
@@ -597,6 +613,8 @@ def export(args, report):
             for path, _, _, _ in selected:
                 context(root, path)
         plan = {'dry_run': True, 'project': str(root), 'outputs': [str(target) for target in targets]}
+        if unreal_profile:
+            plan['unreal_destination'] = unreal_profile['destination']
         if fmt == 'blend' and args.model in CAMERA_REFINEMENT_MODELS:
             plan['refine_camera_rotation'] = options.get('background_refine', False)
         return plan
@@ -639,6 +657,15 @@ def export(args, report):
             except (OSError, ValueError) as error:
                 report(f'Could not clean an export staging path: {error}')
     result = {'project': str(root), 'outputs': [str(target) for target in dict.fromkeys(targets)]}
+    if unreal_profile:
+        from .unreal_animation import import_files
+        try:
+            unreal = import_files(unreal_profile, targets, report)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            unreal = dict(failed=True, error=str(error))
+        result['unreal'] = unreal
+        if unreal.get('failed'):
+            result['failed'] = True
     if args.face:
         result['face_outputs'] = [event['face_output'] for event in events if 'face_output' in event]
         errors = [event['face_error'] for event in events if 'face_error' in event]
@@ -650,6 +677,9 @@ def export(args, report):
 
 
 def execute(args, report):
+    if args.command == 'unreal':
+        from .unreal_animation import run
+        return run(args, report)
     if args.command == 'check':
         from .offline_jobs import DEDICATED
         model = args.model

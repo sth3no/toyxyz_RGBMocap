@@ -82,13 +82,14 @@ def gap_rows(gaps, choices, fps, people=None, ident=None, auto_issue=None, text_
 
 def _sources(gaps, choices, people, ident):
     """{project: (take, donor name or None)} of the takes the worker would read; Automatic's runtime is not checked here."""
+    from .people_store import seam_takes
     choices = choices if isinstance(choices, dict) else {};people = _people(people);out = {}
     for g in gaps:
         method, person, _, offset, _, _, issue = _shown(choices.get(gap_key(g)), g, people, ident)
         if method == 'none' or issue:continue
         for t in (g['before'], g['after']):out[t['project']] = (t, None)
         donor = next((p for p in people if p.get('id') == person), None) if method == 'copy' else None
-        take = donor_take(donor.get('takes'), g, offset) if donor else None
+        take = donor_take(seam_takes(donor), g, offset) if donor else None
         if take is not None:out.setdefault(take['project'], (take, str(donor.get('name') or f'Person {person}')))
     return out
 
@@ -146,10 +147,10 @@ def take_to_show(root, person, kind, project, frame=None):
 
 def unlisted_joins(root, person, kind, people=None):
     """Joined takes the take selector leaves out: not in use, and not what Fill hidden ranges would write again."""
-    from .people_store import active_takes
+    from .people_store import active_takes, seam_takes
     try:
         used = {t['project'] for t in active_takes(root, person, kind) if t.get('join')}
-        wanted = [[t['project'] for t in chain] for chain in chains(person['takes'], person.get('gap_fill') or {}, people or [], person.get('id'))]
+        wanted = [[t['project'] for t in chain] for chain in chains(seam_takes(person), person.get('gap_fill') or {}, people or [], person.get('id'))]
         return {j['project'] for j in person.get('joins') or [] if j['project'] not in used and j.get('sources') not in wanted}
     except (ValueError, KeyError, TypeError, AttributeError, OSError):return set()
 
