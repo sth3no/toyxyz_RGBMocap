@@ -1,5 +1,33 @@
 # Source package validation
 
+## Dark and Light looks: cleaner panels, livelier timelines (2026-11-26)
+
+**Dark** and **Light** draw the panels as rounded cards on a black or
+near-white canvas, the timelines' tracks as solid rounded bars in stronger
+colours, pictures on the transport buttons, the People rows with a picture or
+an initial and a colour dot, and on Windows 11 the title bar in the window's
+colour. **Classic Dark** and **Classic Light** paint as before.
+
+- **Tests** (unittest, Qt offscreen): `test_t3_theme` 25 (the colour rules, the
+  four looks, the transport pictures, a Classic track tinted pixel for pixel as
+  before, a solid rounded bar in Dark and Light, the frame timeline's rows in
+  both looks, the People row's colour dot). The whole `tests` folder: 1,437
+  tests, OK, 18 skipped.
+- **The real window, offscreen:** the main window was photographed in Dark,
+  Light and Classic Dark with two linked blocks, with the frame timeline of a
+  block holding a moving person, a filled hidden range and foot locks put into
+  the slider by hand, at 150 % scale, with the File menu, Settings, the model
+  manager and the Console. No model ran for these pictures.
+- **The title bar on Windows 11 (build 26200):** a small main window and a
+  dialog were shown off the screen without taking the focus in Dark, Light and
+  Classic Dark, and read back with `PrintWindow`. The caption had the window's
+  colour in Dark (`#000000`, `#0a0a0a` for the dialog) and Light (`#fafafa`,
+  `#fcfcfc`); in Classic Dark it kept the colour Windows gives it.
+- **Not run:** nobody looked at the program's own window on a screen. The
+  rounded corners of menus, the pictures on the transport buttons and the
+  People rows were seen only in offscreen pictures. No reconstruction, import,
+  export or playback was run for this change.
+
 ## Sequence: Project panel, timeline tools and zooming out to hours (2026-11-26)
 
 The Timeline panel now holds a **Project** panel (the library of the
