@@ -70,6 +70,13 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(self.w.status.text(), SLOW+NOTE)
         self.assertIn(SLOW+NOTE, self.w.log.toPlainText())
 
+    def test_during_reconstruct_in_parts_the_note_goes_to_the_console_and_the_parts_status_stays(self):
+        self.w.parts_runner = object();self.addCleanup(setattr, self.w, 'parts_runner', None)
+        self.w.status.setText('Part 2 of 4: frames 76–165.')
+        self.begin([('person', [])])
+        self.assertEqual(self.w.status.text(), 'Part 2 of 4: frames 76–165.')
+        self.assertIn(SLOW+NOTE, self.w.log.toPlainText())
+
     def test_too_little_allocation_headroom_is_the_warning_that_wins(self):
         self.begin([('person', [])], room=9 * GIB)
         self.assertIn('ExMR needs Windows to allocate about 14.7 GiB, and Windows can allocate only 9.0 GiB more', self.w.status.text())
