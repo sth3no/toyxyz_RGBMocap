@@ -101,7 +101,8 @@ def begin(w, jobs):
         memory = psutil.virtual_memory();room = commit_headroom()
         if start_note('', needs, memory.available, room, '') is None:return
         text = start_note(MOTION_TOOLS[model].label, needs, memory.available, room, memory_note.collect())
-        w.status.setText(text);w.log.append(text)
+        w.log.append(text)
+        if getattr(w, 'parts_runner', None) is None:w.status.setText(text)   # a parts run keeps its "Part 2 of 4" there
     except Exception:pass  # a note must never keep a job from starting
 
 

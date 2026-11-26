@@ -47,7 +47,8 @@ The **Resource Safety** checkbox sits below Resource Mode and defaults **on**.
   currently free VRAM. These thresholds have not been increased.
 - **Before a reconstruction starts** (Resource Safety on), Console and the
   status bar say when memory is short for the chosen model; the job starts
-  anyway. Less free RAM than the model needs: `ExMR needs up to about 12.0 GiB
+  anyway. During **Reconstruct in parts...** only Console says it, so the
+  status bar keeps `Part 2 of 4: ...`. Less free RAM than the model needs: `ExMR needs up to about 12.0 GiB
   of RAM, more than is free, so Windows will move other programs' memory to
   disk and this job can run slower.` Less Windows allocation headroom than the
   model needs plus 1 GiB: `ExMR needs Windows to allocate about 14.7 GiB, and

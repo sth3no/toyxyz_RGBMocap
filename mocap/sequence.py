@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,33 @@ class Block:
     length: float
     folders: dict[str, str] = field(default_factory=dict)
     review: dict | None = None
+
+
+@dataclass
+class Media:
+    """A video of the library (the Project panel): its file and its length in seconds."""
+    video: str
+    length: float
+
+
+def _key(video) -> str:
+    """Two spellings of one path are one video; the file system is not asked."""
+    return os.path.normcase(os.path.normpath(str(video)))
+
+
+def _length(value) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError('A video needs a length above zero.')
+    return float(value)
+
+
+def _media(item) -> Media:
+    if not isinstance(item, dict) or not isinstance(item.get('video'), str):
+        raise ValueError(_BAD)
+    try:
+        return Media(item['video'], _length(item.get('length')))
+    except ValueError:
+        raise ValueError(_BAD) from None
 
 
 @dataclass
@@ -113,6 +141,39 @@ class Sequence:
         self.dropped: list[Link] = []      # links the edits dropped (of every model); the controller reads and clears it
         self.model: str | None = None      # the selected model, set by the controller (not saved): link queries see its links
         self._decided: dict = {}           # model -> later block ids whose automatic link was already decided
+        self.library: list[Media] = []     # the Project panel's videos, in the order they were added
+        self._unlisted: set[str] = set()   # videos of blocks the user removed from the library
+        for block in self.blocks:
+            self._list(block.video, block.length)
+
+    def media(self, video) -> Media | None:
+        key = _key(video)
+        return next((item for item in self.library if _key(item.video) == key), None)
+
+    def add_media(self, video, length) -> Media:
+        """List a video in the library; one that is listed keeps its place and takes the length read now."""
+        length, item = _length(length), self.media(video)
+        self._unlisted.discard(_key(video))
+        if item is None:
+            item = Media(str(video), length); self.library.append(item)
+        else:
+            item.length = length
+        return item
+
+    def remove_media(self, video) -> bool:
+        """Take a video out of the library; its blocks stay on the timeline. False when it was not listed."""
+        item = self.media(video)
+        if item is None:
+            return False
+        self.library.remove(item)
+        if any(_key(block.video) == _key(video) for block in self.blocks):
+            self._unlisted.add(_key(video))
+        return True
+
+    def _list(self, video, length) -> None:
+        """A block's video belongs in the library unless the user took it out."""
+        if self.media(video) is None and _key(video) not in self._unlisted and length > 0 and math.isfinite(length):
+            self.library.append(Media(str(video), float(length)))
 
     @property
     def decided(self) -> set[str]:
@@ -126,6 +187,20 @@ class Sequence:
         block = Block(uuid.uuid4().hex[:12], str(video), float(start), float(length if end is None else end),
                       float(length), dict(folders or {}))
         self.blocks.append(block)
+        self._list(block.video, block.length)
+        return block
+
+    def insert(self, index, video, length, start=0.0, end=None, folders=None) -> Block:
+        """A new block before the block at `index` (as dropped on the timeline); a link it comes between is dropped, and
+        the block after it may link by itself again."""
+        block = Block(uuid.uuid4().hex[:12], str(video), float(start), float(length if end is None else end),
+                      float(length), dict(folders or {}))
+        at = max(0, min(int(index), len(self.blocks)))
+        self.blocks.insert(at, block)
+        self._list(block.video, block.length)
+        for ids in self._decided.values():
+            ids.difference_update(other.id for other in self.blocks[at + 1:at + 2])
+        self._drop([link for link in self.links if not self._neighbours(link)])
         return block
 
     def index(self, id) -> int:
@@ -301,7 +376,10 @@ class Sequence:
                                                 **({'review': dict(b.review)} if b.review is not None else {})}
                                                for b in self.blocks],
                 **({'links': links} if links else {}), **({'gaps': dict(self.gaps)} if self.gaps else {}),
-                **({'decided': decided} if decided else {})}
+                **({'decided': decided} if decided else {}),
+                # Written only when it says more than the blocks do, so a plain sequence's file stays as it was.
+                **({'library': [{'video': m.video, 'length': m.length} for m in self.library]}
+                   if [_key(m.video) for m in self.library] != list(dict.fromkeys(_key(b.video) for b in self.blocks)) else {})}
 
     @classmethod
     def from_dict(cls, data) -> Sequence:
@@ -316,7 +394,15 @@ class Sequence:
                 or not isinstance(decided, dict) or not all(isinstance(k, str) for k in [*gaps, *decided]) \
                 or not all(isinstance(v, list) and all(isinstance(k, str) for k in v) for v in decided.values()):
             raise ValueError(_BAD)
+        library = data.get('library')
+        if library is not None and not isinstance(library, list):
+            raise ValueError(_BAD)
         sequence = cls([_block(item) for item in data['blocks']])
+        if library is not None:   # as saved: a block's video that is not in it was taken out by the user
+            sequence.library = []
+            for item in map(_media, library):
+                sequence.add_media(item.video, item.length)
+            sequence._unlisted = {_key(block.video) for block in sequence.blocks if sequence.media(block.video) is None}
         ids = {block.id for block in sequence.blocks}
         gaps = {k: _number(v) for k, v in gaps.items()}
         sequence.gaps = {k: v for k, v in gaps.items() if k in ids and math.isfinite(v) and v >= _FRAME - _SAME}

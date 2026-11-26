@@ -1,6 +1,9 @@
 """The sequence in the main window: one stacked timeline with today's slider at level 3 (page "clip") and the sequence view
 at levels 1 and 2 (page "sequence"), loading the selected block into the window, the playhead in sequence time and the way
-between the levels. Play and the transport stay the window's own and act on the loaded block."""
+between the levels. Play and the transport stay the window's own and act on the loaded block.
+
+Left of the timeline sit the Project panel (sequence_library: the videos of the sequence's library, dragged from there to
+the timeline) and the strip of timeline tools (sequence_tools)."""
 import json
 import math
 from copy import deepcopy
@@ -9,14 +12,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSizePolicy,
+                               QFormLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from . import paths, people_store, sequence_join, sequence_links, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
 from .sequence import DEFAULT_METHOD, METHODS, Sequence
-from .sequence_view import METHOD_LABELS, SequenceView
+from .sequence_library import Library
+from .sequence_tools import ToolStrip
+from .sequence_view import METHOD_LABELS, SequenceView, dragged_videos
 from .take_import_check import gap_frames
 from .theme import ui_px
 from .tooltips import tooltip_text
@@ -24,6 +29,7 @@ from .tooltips import tooltip_text
 OTHER_MODEL = 'The sequence works with GVHMR, ExMR and FlowHMR.'
 PROJECT_MODEL = 'Only GVHMR, ExMR and FlowHMR projects can be added to a sequence.'
 BUSY = 'A job is running. This block can be opened when it is done.'
+PLACE_BUSY = 'A job is running. Videos can be put on the timeline when it is done.'
 LAST = 'A sequence needs at least one block.'
 PANEL = 'The Timeline panel changed; the sequence is not available.'
 CHANGE = 'This block has results. They belong to the old range and stay on disk; the changed block will show as not tracked. Change it?'
@@ -40,6 +46,15 @@ LINKED = '{} now continues {}.'
 UNLINKED = '{} no longer continues {}.'
 TRANSITION = 'Transition set to {:g} s {}.'
 EXPERIMENTAL = 'Experimental: the generated motion is plausible, not what the person did.'
+VIDEOS = 'Videos (*.mp4 *.mov *.avi *.mkv *.webm)'
+ADDED = '{} added to the Project panel. Drag one to the timeline.'
+REMOVED = '{} removed from the Project panel. {}'
+KEPT = {(True, True): 'Its blocks stay on the timeline; the file stays on disk.', (True, False): 'The file stays on disk.',
+        (False, True): 'Their blocks stay on the timeline; the files stay on disk.', (False, False): 'The files stay on disk.'}
+
+
+def count_of(count, noun='video'):
+    return f'{count} {noun}{"" if count == 1 else "s"}'
 
 
 def video_length(path):
@@ -169,7 +184,25 @@ class Controller(QObject):
         page = QVBoxLayout(self.sequence_page);page.setContentsMargins(0, 0, 0, 0);page.setSpacing(0)
         page.addWidget(bar);page.addWidget(self.view, 1)
         self.stack = QStackedWidget();self.stack.addWidget(self.clip_page);self.stack.addWidget(self.sequence_page)
-        layout.insertWidget(1, self.stack, 1)
+        # The Project panel | the tools | the timeline, as an editing program lays them out.
+        self.library, self.tools = Library(), ToolStrip()
+        timeline = QWidget();beside = QHBoxLayout(timeline);beside.setContentsMargins(0, 0, 0, 0);beside.setSpacing(0)
+        beside.addWidget(self.tools);beside.addWidget(self.stack, 1)
+        self.body = QSplitter(Qt.Horizontal);self.body.setChildrenCollapsible(False)
+        self.body.addWidget(self.library);self.body.addWidget(timeline)
+        self.body.setStretchFactor(0, 0);self.body.setStretchFactor(1, 1)
+        layout.insertWidget(1, self.body, 1)
+        self._listed = None   # what the Project panel shows: the library's videos and which of them have a block
+        self.stack.currentChanged.connect(lambda _:self._tools())
+        self.tools.picked.connect(self.view.set_tool)
+        self.view.tool_changed.connect(self.tools.set_tool)
+        self.view.cut_requested.connect(self.cut_at)
+        self.view.dropped.connect(lambda videos, index:self.place(videos, index))
+        self.library.imported.connect(self.import_videos)
+        self.library.import_requested.connect(self.choose_media)
+        self.library.placed.connect(lambda video:self.place([video]))
+        self.library.removed.connect(self.remove_media)
+        w.slider.setAcceptDrops(True)   # a video dragged onto an opened block; see eventFilter
         self.view.selected.connect(self._select)
         self.view.opened.connect(lambda block_id, person:self._opened(block_id, person))
         self.view.scrubbed.connect(self._scrubbed)
@@ -185,6 +218,13 @@ class Controller(QObject):
     def _appearance(self):
         self.bar.layout().setContentsMargins(ui_px(9), ui_px(3), ui_px(6), ui_px(3))
         self.view.refresh_appearance()
+        self.library.refresh_appearance();self.tools.refresh_appearance()
+        if not getattr(self, '_sized', False):
+            self._sized = True;self.body.setSizes([ui_px(270), ui_px(1100)])
+
+    def _tools(self):
+        """The tools act on the sequence timeline (levels 1 and 2), not on an opened block's own timeline."""
+        self.tools.setEnabled(self.supported() and not self.at_clip_level())
 
     # Levels
 
@@ -258,7 +298,8 @@ class Controller(QObject):
     def _save(self):
         """Keep review settings even for a single block."""
         sequence = self.sequence
-        if sequence.path is None and len(sequence.blocks) <= 1 and not any(b.review for b in sequence.blocks):
+        if sequence.path is None and len(sequence.blocks) <= 1 and not any(b.review for b in sequence.blocks) \
+                and 'library' not in sequence.to_dict():   # nor a library that holds more than the block's video
             return
         try:sequence.save(free_name() if sequence.path is None else None)
         except OSError as error:self._say(f'Cannot save the sequence: {error}')
@@ -346,6 +387,76 @@ class Controller(QObject):
             self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
         self._changed()
         return block
+
+    # The Project panel
+
+    def _refused(self, video, error):
+        text = f'Cannot add {Path(video).name}: {error}';self.w.log.append(text);return text
+
+    def choose_media(self):
+        names, _ = QFileDialog.getOpenFileNames(self.w, 'Import Videos', '', VIDEOS)
+        if names:self.import_videos([Path(name) for name in names])
+
+    def import_videos(self, videos):
+        """List videos in the Project panel (dropped files or the Import dialog); a file that is no video is named and left
+        out. Nothing is tracked or loaded, so this is allowed while a job runs."""
+        said, added = [], 0
+        for video in videos:
+            video, known = Path(video), self.sequence.media(video) is not None
+            try:self.sequence.add_media(video, video_length(video))
+            except ValueError as error:
+                said.append(self._refused(video, error));continue
+            added += not known
+        if added:
+            said.append(ADDED.format(count_of(added)))
+            if not self.sequence.blocks and self.supported():   # the empty timeline is where they are dragged to
+                self.stack.setCurrentWidget(self.sequence_page);self.view.frame_all()
+            self._changed()
+        if said:self.w.status.setText(' '.join(said))
+
+    def place(self, videos, index=None):
+        """Put videos on the timeline, each as a block covering its whole video, before the block at `index` (None: at the
+        end), as dropped there. The blocks made; None when nothing can be placed now (the reason is in the status bar).
+        The loaded block stays loaded; on an empty timeline the first new block is loaded."""
+        w = self.w
+        if not self.supported():
+            w.status.setText(OTHER_MODEL);return None
+        if self.busy():
+            w.status.setText(PLACE_BUSY);return None
+        blocks = self.sequence.blocks;first = not blocks;unloaded = self.current not in self._ids()
+        at, placed, said = len(blocks) if index is None else max(0, min(int(index), len(blocks))), [], []
+        for video in videos:
+            listed = self.sequence.media(video)
+            video = Path(listed.video if listed is not None else video)   # one spelling of the path in the library and the blocks
+            try:length = video_length(video)
+            except ValueError as error:
+                said.append(self._refused(video, error));continue
+            if not self._may_change(lambda s, video=video, length=length, at=at:s.insert(at, video, length)):continue
+            placed.append(self.sequence.insert(at, video, length));at += 1
+        if placed:
+            if unloaded:self.load(placed[0].id)
+            self.stack.setCurrentWidget(self.sequence_page)
+            if first:self.view.frame_all()
+            self._changed()
+        if said:w.status.setText(' '.join(said))
+        return placed
+
+    def remove_media(self, videos):
+        """Take videos out of the Project panel. Their blocks stay on the timeline and nothing on disk is touched."""
+        from .sequence import _key
+        used = {_key(block.video) for block in self.sequence.blocks}
+        gone = [video for video in videos if self.sequence.remove_media(video)]
+        if not gone:return
+        what = Path(gone[0]).name if len(gone) == 1 else count_of(len(gone))
+        self._changed()
+        self.w.status.setText(REMOVED.format(what, KEPT[len(gone) == 1, any(_key(video) in used for video in gone)]))
+
+    def _show_library(self):
+        """Show the library again only when its videos, or which of them are on the timeline, changed."""
+        used = [block.video for block in self.sequence.blocks]
+        listed = [(item.video, item.length) for item in self.sequence.library], sorted(set(used))
+        if listed != self._listed:
+            self._listed = listed;self.library.show_media(self.sequence.library, used)
 
     # Existing projects
 
@@ -451,8 +562,15 @@ class Controller(QObject):
         """Split the block under the playhead at the playhead; the second piece becomes the loaded block."""
         if self.busy() or not self.supported():return
         found = self._source_time()
-        if found is None:return
-        block, seconds = found
+        if found is not None:self._cut(*found)
+
+    def cut_at(self, block_id, seconds):
+        """The Razor's click: split that block at that time of its video. The loaded block stays loaded, unless it is the
+        one cut: then its second piece is loaded, as Cut does."""
+        if self.busy() or not self.supported() or block_id not in self._ids():return
+        self._cut(self.sequence.block(block_id), seconds)
+
+    def _cut(self, block, seconds):
         if block.folders and not self.ask(CHANGE) or not self._may_change(lambda s:s.cut(block.id, seconds)):return
         try:_, second = self.sequence.cut(block.id, seconds)
         except ValueError as error:
@@ -1021,6 +1139,7 @@ class Controller(QObject):
             row_states = {link.target:sequence_links.status(self.sequence, states, link.target, model) for link in self.sequence.model_links()}
         self.view.show_sequence(self.sequence, states, rows, row_states)
         self.view.set_current(self.current if self.current in self._ids() else None)
+        self._show_library()
         count = len(self.sequence.blocks)
         self.summary.setText(f'{count} block{"" if count == 1 else "s"} | {format_time(self.sequence.total())}')
         supported, busy, loaded = self.supported(), self.busy(), self.current in self._ids()
@@ -1033,6 +1152,8 @@ class Controller(QObject):
                                      ('join', self.join_button, not busy and bool(self.sequence.model_links()))):
             button.setEnabled(supported and enabled);button.setToolTip(tooltip_text(TIPS[key] if supported else OTHER_MODEL))
         if not supported:self._show_clip()
+        self.library.setEnabled(supported);self.library.setToolTip('' if supported else tooltip_text(OTHER_MODEL))
+        self._tools()
         self._playhead()
 
     def eventFilter(self, watched, event):
@@ -1041,10 +1162,21 @@ class Controller(QObject):
             full = w.slider.view_span is None or w.slider.view_span >= max(1, w.slider.maximum() - w.slider.minimum())
             if full and self.supported():
                 self.back();return True
+        elif watched is w.slider and event.type() in (QEvent.DragEnter, QEvent.DragMove, QEvent.Drop):
+            # A video dragged onto an opened block's timeline goes after that block; anything else is left to the window.
+            videos = dragged_videos(event.mimeData()) if self.supported() and not self.busy() else []
+            if not videos:
+                event.ignore();return True
+            event.setDropAction(Qt.CopyAction);event.accept()
+            if event.type() == QEvent.Drop:
+                self.place(videos, self.sequence.index(self.current) + 1 if self.current in self._ids() else None)
+            return True
         elif watched is w.parts_button and event.type() == QEvent.EnabledChange:
             self.refresh()   # update_readiness after Reconstruct in parts started or stopped
-        elif watched is self.view and event.type() == QEvent.FontChange:
-            self._appearance()   # the UI scale changed
+        elif watched is self.view and event.type() in (QEvent.FontChange, QEvent.StyleChange):
+            self._appearance()   # the UI scale or the theme changed
+        elif watched is w and event.type() == QEvent.Close:
+            self.library.stop()
         elif watched is w and event.type() == QEvent.ChildAdded and event.child().isWidgetType():
             event.child().installEventFilter(self)   # the guide's overlay and card are children of the window
         elif watched is not w and watched.parent() is w and event.type() == QEvent.Show:

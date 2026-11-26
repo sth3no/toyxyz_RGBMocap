@@ -1,6 +1,11 @@
 """The sequence timeline at its two upper levels: the videos as blocks (level 1) and, zoomed in, the rows of their people
 under the blocks (level 2). Painted like TimelineSlider (same margins, rows, colours, grid, zoom and playhead) so the
-levels read as one timeline; its time is sequence seconds. It edits nothing itself: every change is a signal."""
+levels read as one timeline; its time is sequence seconds. It edits nothing itself: every change is a signal.
+
+The left button does what the chosen tool does (TOOLS): Selection selects, moves and trims blocks and links people; Razor
+cuts the block under the pointer; Hand drags the view; Zoom zooms in on a click and out with Alt. Videos dragged from
+the Project panel (MIME) or from the file manager are dropped between the blocks under the pointer."""
+import json
 import math
 from pathlib import Path
 
@@ -14,9 +19,25 @@ from .theme import theme_color, ui_px
 
 ZOOM = .22                       # per wheel notch, as the slider
 NARROWEST = 12 / 30              # the slider's narrowest view, 12 frames of the 30 fps working clip
+FARTHEST = 24 * 3600             # the widest view in seconds, also past the end of a shorter sequence
+ZOOM_CLICK = 2                   # wheel notches of one click of the Zoom tool
+TOOLS = ('select', 'razor', 'hand', 'zoom')
+KEYS = {Qt.Key_V: 'select', Qt.Key_C: 'razor', Qt.Key_H: 'hand', Qt.Key_Z: 'zoom'}
+CURSORS = {'select': Qt.ArrowCursor, 'razor': Qt.SplitHCursor, 'hand': Qt.OpenHandCursor, 'zoom': Qt.CrossCursor}
+MIME = 'application/x-rgbmocap-videos'   # a JSON list of video paths dragged from the Project panel
+VIDEO_SUFFIXES = ('.mp4', '.mov', '.avi', '.mkv', '.webm')   # as the Add Video dialog lists them
 LEAST = MIN_SECONDS * (1 + 1e-9)  # a dragged edge keeps a range the document accepts despite rounding
 STEPS = (.1, .2, .5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 18000, 36000)
-HINT = 'Add a video to start a sequence.'
+HINT = 'Drag a video here from the Project panel, or drop a video file.'
+
+
+def dragged_videos(mime):
+    """The video paths a drag carries: the Project panel's own list, else the video files among dropped files."""
+    if mime.hasFormat(MIME):
+        try:paths = json.loads(bytes(mime.data(MIME)).decode('utf-8'))
+        except ValueError:return []
+        return [path for path in paths if isinstance(path, str) and path] if isinstance(paths, list) else []
+    return [url.toLocalFile() for url in mime.urls() if url.isLocalFile() and url.toLocalFile().lower().endswith(VIDEO_SUFFIXES)]
 VIDEO = '#6289ad'
 GENERATED = ('#d8a24a', '#8a4809')   # generated frames, as TimelineSlider paints its fill_runs
 METHOD_LABELS = {'smooth': 'Smooth join', 'auto': 'Automatic (Experimental)'}   # the Hidden ranges panel's names
@@ -44,6 +65,9 @@ class SequenceView(QWidget):
     unlinked = Signal(object)                  # target
     transition_clicked = Signal(object)        # target of the link whose piece was clicked
     menu_requested = Signal(str, object, object)  # block id, person id, global QPoint
+    cut_requested = Signal(str, float)         # block id, source seconds: the Razor's click
+    dropped = Signal(object, int)              # video paths, the index their blocks are inserted at
+    tool_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +82,10 @@ class SequenceView(QWidget):
         self._editable = True
         self._press = None       # the left button's gesture: mode, block, pressed x, how far it went
         self._pan_origin = None
+        self.tool = TOOLS[0]
+        self.razor_at = None     # x where a click of the Razor would cut, while it is over a block
+        self.incoming = None     # the index a dragged video would be inserted at, while it is over the timeline
+        self.setAcceptDrops(True)
         self.refresh_appearance()
 
     def refresh_appearance(self):
@@ -75,7 +103,17 @@ class SequenceView(QWidget):
     def editable(self, value):
         self._editable = bool(value)
         if not self._editable and self._press and self._press['mode'] in ('start', 'end', 'body', 'person', 'piece'):
-            self._press = None;self.setCursor(Qt.ArrowCursor)
+            self._press = None;self.setCursor(CURSORS[self.tool])
+        if not self._editable:self.razor_at = self.incoming = None
+        self.update()
+
+    def set_tool(self, tool):
+        """Choose what the left button does; an unfinished gesture of the tool before ends."""
+        if tool not in TOOLS:raise ValueError(f'Unknown tool: {tool}')
+        if tool == self.tool:return
+        self.tool, self._press, self._pan_origin, self.razor_at = tool, None, None, None
+        self.setCursor(CURSORS[tool])
+        self.tool_changed.emit(tool)
         self.update()
 
     # What is shown
@@ -83,11 +121,12 @@ class SequenceView(QWidget):
     def show_sequence(self, sequence, states, rows=None, row_states=None):
         """`rows`: sequence_links.rows, the row of every (block id, person id); None puts each person at its index.
         `row_states`: link target -> 'linked' | 'joined' | 'out of date'. A gesture in progress ends."""
-        if self._press is not None:self.setCursor(Qt.ArrowCursor)
+        if self._press is not None:self.setCursor(CURSORS[self.tool])
         self.sequence, self.states, self._press = sequence, dict(states), None
         self.rows, self.row_states = (None if rows is None else dict(rows)), dict(row_states or {})
-        if self.view_span is not None and self.view_span >= .999 * self.total():
-            self.view_span = None
+        self.razor_at = None
+        if self.view_span is not None and self._fits(self.view_span):
+            self.view_span = None   # a view wider than the sequence stays: it was zoomed out on purpose
         self._clamp_view()
         self.update()
 
@@ -149,6 +188,53 @@ class SequenceView(QWidget):
 
     def span(self):
         return self.view_span if self.view_span is not None else max(self.total(), MIN_SECONDS)
+
+    def _fits(self, span):
+        """`span` shows the whole sequence and no more."""
+        return abs(span - self.total()) <= .001 * self.total()
+
+    def farthest(self):
+        return max(self.total(), FARTHEST)
+
+    def zoom_at(self, x, steps):
+        """Zoom by wheel notches around x. Zooming in on a block that already fills the view opens it instead; the whole
+        sequence is a stop on the way in and out, and the view widens past it up to `farthest`."""
+        old, total = self.span(), self.total()
+        if not steps or total <= 0:return
+        x = max(self.LEFT, min(self.width() - self.RIGHT, x))
+        fraction = (x - self.LEFT) / self._width()
+        anchor = self.view_start + fraction * old
+        found = self._block_at(x)
+        narrowest = min(NARROWEST, total)
+        if steps > 0 and found and (old <= .5 * (found[0].end - found[0].start) or old <= narrowest + 1e-9):
+            self.opened.emit(found[0].id, None)
+            return
+        span = old * math.exp(-steps * ZOOM)
+        if (old - total) * (span - total) < 0 and not self._fits(old):span = total
+        span = max(narrowest, min(self.farthest(), span))
+        if self._fits(span):
+            self.view_start, self.view_span = 0., None
+        else:
+            self.view_span, self.view_start = span, anchor - fraction * span
+        self._clamp_view()
+        self.update()
+
+    def ruler_step(self):
+        """Seconds between two labelled ticks of the ruler: from tenths of a second up to hours."""
+        target = self.span() / max(1, (self.width() - self.LEFT) / ui_px(85))
+        return next((s for s in STEPS if s >= target), math.ceil(target / 3600) * 3600)
+
+    def ruler_text(self, seconds):
+        """A ruler label: with tenths while the steps are shorter than a second, else as a clock (30:00, 1:00:00)."""
+        if self.ruler_step() < 1:return format_time(seconds)
+        seconds = int(round(seconds));minutes, seconds = divmod(seconds, 60);hours, minutes = divmod(minutes, 60)
+        return f'{hours}:{minutes:02d}:{seconds:02d}' if hours else f'{minutes}:{seconds:02d}'
+
+    def _insert_x(self, index):
+        """Where the mark of a video dragged to `index` is drawn: the left edge of the block there, else the end."""
+        rects = [rect for _, _, rect in self._layout()]
+        if not rects:return self.LEFT
+        return rects[index].left() if index < len(rects) else rects[-1].right()
 
     def _width(self):
         return max(1, self.width() - self.LEFT - self.RIGHT)
@@ -288,10 +374,26 @@ class SequenceView(QWidget):
         self.scrubbed.emit(self.playhead, True)
         self.update()
 
+    def _tool_press(self, point, modifiers):
+        """The left button with Razor, Hand or Zoom; False when the tool leaves the press to the ruler's scrub."""
+        hit = self._hit(point)
+        if hit and hit[0] == 'ruler' and self.tool == 'razor':return False
+        self._press = None
+        if self.tool == 'hand':
+            self._pan_origin = (point.x(), self.view_start);self.setCursor(Qt.ClosedHandCursor)
+        elif self.tool == 'zoom':
+            self.zoom_at(point.x(), -ZOOM_CLICK if modifiers & Qt.AltModifier else ZOOM_CLICK)
+        elif self.editable and hit and hit[0] == 'block':
+            block, at, _ = hit[1]
+            self.cut_requested.emit(block.id, max(block.start, min(block.end, block.start + self.time_at(point.x()) - at)))
+        return True
+
     def mousePressEvent(self, event):
         point = event.position()
         if event.button() == Qt.MiddleButton:
             self._pan_origin = (point.x(), self.view_start)
+        elif event.button() == Qt.LeftButton and self.tool != 'select' and self._tool_press(point, event.modifiers()):
+            self.setFocus(Qt.MouseFocusReason)
         elif event.button() == Qt.LeftButton:
             self.setFocus(Qt.MouseFocusReason)
             hit = self._hit(point)
@@ -324,6 +426,12 @@ class SequenceView(QWidget):
             pixel, start = self._pan_origin
             self.view_start = start - (point.x() - pixel) * self.span() / self._width()
             self._clamp_view();self.update()
+        elif press is None and self.tool != 'select':
+            hit = self._hit(point)
+            over = point.x() if self.tool == 'razor' and self.editable and hit and hit[0] == 'block' else None
+            if over != self.razor_at:
+                self.razor_at = over;self.update()
+            self.setCursor(Qt.PointingHandCursor if hit and hit[0] == 'ruler' and self.tool == 'razor' else CURSORS[self.tool])
         elif press is None:
             hit = self._hit(point)
             self.setCursor(Qt.PointingHandCursor if hit and hit[0] == 'ruler'
@@ -350,6 +458,8 @@ class SequenceView(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MiddleButton:
             self._pan_origin = None
+        elif event.button() == Qt.LeftButton and self._press is None and self.tool != 'select':
+            self._pan_origin = None;self.setCursor(CURSORS[self.tool])
         elif event.button() == Qt.LeftButton and self._press is not None:
             press, self._press = self._press, None
             block = press.get('block')
@@ -369,14 +479,21 @@ class SequenceView(QWidget):
                 if press['far'] <= ui_px(8):self.transition_clicked.emit(press['target'])
             elif press['far'] <= ui_px(8):
                 self._click(press)
-            self.setCursor(Qt.ArrowCursor)
+            self.setCursor(CURSORS[self.tool])
             self.update()
         else:
             super().mouseReleaseEvent(event)
             return
         event.accept()
 
+    def leaveEvent(self, event):
+        if self.razor_at is not None:
+            self.razor_at = None;self.update()
+        super().leaveEvent(event)
+
     def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and self.tool != 'select':   # the second click of a tool is one more click
+            self.mousePressEvent(event);return
         hit = self._hit(event.position()) if event.button() == Qt.LeftButton else None
         if hit and hit[0] in ('block', 'person'):
             self._press = None
@@ -387,35 +504,53 @@ class SequenceView(QWidget):
 
     def wheelEvent(self, event):
         steps = event.angleDelta().y() / 120
-        old, total = self.span(), self.total()
         if event.modifiers() & Qt.ShiftModifier:
-            self.view_start -= steps * old * .12
-        elif steps and total > 0:
-            x = max(self.LEFT, min(self.width() - self.RIGHT, event.position().x()))
-            fraction = (x - self.LEFT) / self._width()
-            anchor = self.view_start + fraction * old
-            found = self._block_at(x)
-            narrowest = min(NARROWEST, total)
-            # Zooming in while the block under the cursor already fills the view opens it instead.
-            if steps > 0 and found and (old <= .5 * (found[0].end - found[0].start) or old <= narrowest + 1e-9):
-                self.opened.emit(found[0].id, None)
-                event.accept()
-                return
-            span = max(narrowest, min(total, old * math.exp(-steps * ZOOM)))
-            if span >= .999 * total:
-                self.view_start, self.view_span = 0., None
-            else:
-                self.view_span, self.view_start = span, anchor - fraction * span
-        self._clamp_view()
-        self.update()
+            self.view_start -= steps * self.span() * .12
+            self._clamp_view()
+            self.update()
+        else:
+            self.zoom_at(event.position().x(), steps)
         event.accept()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Delete and self.editable and any(b.id == self.current for b in self.sequence.blocks):
             self.removed.emit(self.current)
             event.accept()
+        elif event.key() in KEYS and not event.modifiers() & ~Qt.KeypadModifier:
+            self.set_tool(KEYS[event.key()])
+            event.accept()
         else:
             super().keyPressEvent(event)
+
+    # Videos dragged from the Project panel or the file manager
+
+    def _drag(self, event):
+        if self.editable and dragged_videos(event.mimeData()):
+            index = self._drop_index(None, event.position().x())
+            if index != self.incoming:
+                self.incoming = index;self.update()
+            event.setDropAction(Qt.CopyAction);event.accept()
+        else:
+            self._no_drag();event.ignore()
+
+    def _no_drag(self):
+        if self.incoming is not None:
+            self.incoming = None;self.update()
+
+    def dragEnterEvent(self, event):self._drag(event)
+
+    def dragMoveEvent(self, event):self._drag(event)
+
+    def dragLeaveEvent(self, event):
+        self._no_drag();event.accept()
+
+    def dropEvent(self, event):
+        videos = dragged_videos(event.mimeData()) if self.editable else []
+        self._no_drag()
+        if not videos:
+            event.ignore();return
+        event.setDropAction(Qt.CopyAction);event.accept()
+        self.dropped.emit(videos, self._drop_index(None, event.position().x()))
 
     def event(self, event):
         if event.type() == QEvent.ToolTip:
@@ -445,6 +580,7 @@ class SequenceView(QWidget):
         p.drawText(ui_px(9), ui_px(17), 'Time')
         if not self.sequence.blocks:
             p.drawText(QRectF(0, self.RULER_HEIGHT, self.width(), self.height() - self.RULER_HEIGHT), Qt.AlignCenter, HINT)
+            self._paint_marks(p)
             return
         layout = sorted(self._layout(), key=lambda item: -item[2].width())  # a tiny block is drawn over a long one
         people_rows = self._row_count() if self.level() == 2 else 0
@@ -467,6 +603,7 @@ class SequenceView(QWidget):
         for first, row_state in chains.items():
             if people_rows and row_state in SUFFIX:self._paint_row(p, first, row_state, bars, pieces)
         self._paint_drag(p, layout)
+        self._paint_marks(p)
         p.restore()
         p.setPen(QColor(theme_color('#aaaaaa')))
         rows = ('Video',) + (('People',) if people_rows else ())
@@ -563,11 +700,19 @@ class SequenceView(QWidget):
         p.drawText(QRectF(shown.left() + ui_px(6), shown.top(), width, shown.height()), Qt.AlignVCenter,
                    self.fontMetrics().elidedText(' | '.join(parts), Qt.ElideRight, round(width)))
 
+    def _paint_marks(self, p):
+        """Where a dragged video would be inserted, and where the Razor would cut."""
+        if self.incoming is not None:
+            x = self._insert_x(self.incoming)
+            p.setPen(QPen(QColor(theme_color('#74a6e0')), 2))
+            p.drawLine(QPointF(x, self.TRACK_TOP), QPointF(x, self.TRACK_TOP + self.TRACK_HEIGHT))
+        if self.razor_at is not None:
+            p.setPen(QPen(QColor(theme_color('#d9e8fa')), 1, Qt.DashLine))
+            p.drawLine(QPointF(self.razor_at, self.TRACK_TOP), QPointF(self.razor_at, self.TRACK_TOP + self.TRACK_HEIGHT))
+
     def _paint_grid(self, p):
         """Ticks and grid as the slider's, in sequence time; the ruler labels are drawn by the same steps."""
-        span = self.span()
-        target = span / max(1, (self.width() - self.LEFT) / ui_px(85))
-        step = next((s for s in STEPS if s >= target), math.ceil(target / 3600) * 3600)
+        span, step = self.span(), self.ruler_step()
         end = self.view_start + span
         for size, color in ((step / 5, QColor(133, 133, 133, 40)), (step, QColor(115, 115, 115, 145))):
             p.setPen(QPen(color, 1))
@@ -579,7 +724,7 @@ class SequenceView(QWidget):
         p.setPen(QColor(theme_color('#b3b3b3')))
         for n in range(math.ceil(self.view_start / step - 1e-9), math.floor(end / step + 1e-9) + 1):
             x = self.x_of(n * step)
-            p.drawText(QRectF(x - ui_px(35), ui_px(2), ui_px(70), ui_px(20)), Qt.AlignCenter, format_time(n * step))
+            p.drawText(QRectF(x - ui_px(35), ui_px(2), ui_px(70), ui_px(20)), Qt.AlignCenter, self.ruler_text(n * step))
         p.restore()
 
     def _paint_drag(self, p, layout):
