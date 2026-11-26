@@ -70,7 +70,8 @@ Unreal® Engine, Copyright 1998 – 2026, Epic Games, Inc. All rights reserved.
 
 Other runtime packages retain their included licenses. Supporting notices include
 [PyTorch3D transforms (BSD)](native_compat/LICENSE),
-[Noto Sans KR (SIL OFL)](assets/fonts/OFL.txt), and
+[Noto Sans KR (SIL OFL)](assets/fonts/OFL.txt),
+[Inter (SIL OFL)](assets/fonts/Inter-OFL.txt), and
 [Eigen / pybind11 notices](third_party/KimodoMotionCorrection/notices).
 
 ## Attribution and local adaptations

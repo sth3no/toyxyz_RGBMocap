@@ -607,8 +607,16 @@ long reconstruction, use **Resume** in **Reconstruct in parts...**.
 
 ### Appearance
 
-Choose **File > Settings...** to select **Dark** or **Light** and adjust
-**UI Scale**. The scale is applied on top of the display scale and changes
+Choose **File > Settings...** to select a **Theme** and adjust
+**UI Scale**. **Dark** and **Light** use near-black or near-white flat
+surfaces, thin lines, rounded controls and the Inter font; **Classic Dark**
+and **Classic Light** are the earlier grey looks. All four have the same
+controls in the same places. In **Dark** and **Light** the timeline draws its
+tracks as solid rounded bars in stronger colours: a person's bars take that
+person's display colour, and a person whose colour is a grey gets the green of
+the **Motion** row. The first, previous, next and last frame buttons show
+pictures there, and on Windows 11 the title bar takes the colour of the window.
+The scale is applied on top of the display scale and changes
 text, buttons, and panels together. **Default** resets the choices to **Dark**
 and **100%**. Select **OK** to apply and save your choices immediately.
 The **Tutorial** buttons apply and save the choices like **OK** and then start

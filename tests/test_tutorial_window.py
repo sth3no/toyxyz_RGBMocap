@@ -156,6 +156,9 @@ class MenuTest(WindowCase):
         tutorial.open_chapter(w, 'basics')
         self.addCleanup(apply_appearance, APP, 'dark', 100)
         apply_appearance(APP, 'light', 200);resize_appearance_controls(w)
+        self.assertEqual(w.tutorial.card.width(), 640);self.assertIn('background:#ffffff', w.tutorial.card.styleSheet())
+        self.assertTrue(w.rect().contains(w.tutorial.card.geometry()))
+        apply_appearance(APP, 'classic-light', 200);resize_appearance_controls(w)
         self.assertEqual(w.tutorial.card.width(), 640);self.assertIn('#f1f3f6', w.tutorial.card.styleSheet())
         self.assertTrue(w.rect().contains(w.tutorial.card.geometry()))
 

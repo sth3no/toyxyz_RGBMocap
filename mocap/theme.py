@@ -2,11 +2,13 @@
 import re
 
 from PySide6.QtCore import QLocale
-from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QMessageBox, QPushButton, QVBoxLayout, QWidget)
+from . import t3_theme
 from .paths import ROOT
 
+# The style of Classic Dark; Classic Light is this one with LIGHT_COLORS. Dark and Light are in t3_theme.
 STYLE = """
 QWidget { color:#d5d5d5; font-size:12px; }
 QMainWindow,QDialog { background:#252525; }
@@ -98,7 +100,8 @@ QComboBox QAbstractItemView,QTextEdit,QTableWidget { selection-color:#ffffff; }
 DEFAULT_THEME = 'dark'
 DEFAULT_SCALE = 100
 UI_SCALES = (75, 90, 100, 110, 125, 150, 175, 200)
-THEMES = (('Dark', 'dark'), ('Light', 'light'))
+THEMES = (('Dark', 'dark'), ('Light', 'light'), ('Classic Dark', 'classic-dark'), ('Classic Light', 'classic-light'))
+THEME_IDS = tuple(value for _, value in THEMES)
 
 
 def load_appearance():
@@ -111,7 +114,7 @@ def load_appearance():
     theme = settings.get('ui_theme')
     scale = settings.get('ui_scale')
     return (
-        theme if theme in ('dark', 'light') else DEFAULT_THEME,
+        theme if theme in THEME_IDS else DEFAULT_THEME,
         scale if type(scale) is int and scale in UI_SCALES else DEFAULT_SCALE,
     )
 
@@ -128,25 +131,78 @@ def ui_px(pixels):
 
 
 def is_light_theme():
-    return current_appearance()[0] == 'light'
+    return current_appearance()[0].endswith('light')
+
+
+def is_classic_theme():
+    return current_appearance()[0].startswith('classic')
 
 
 def theme_color(color, light=None):
+    """The colour to show for a Classic Dark colour, with Classic Light's own choice for it when the caller has one."""
+    if not is_classic_theme():
+        return t3_theme.color(color, light or LIGHT_COLORS.get(color.lower()), is_light_theme())
     return (light or LIGHT_COLORS.get(color.lower(), color)) if is_light_theme() else color
 
 
+def paint_track_bar(p, rect, color, alpha=80, outline=False):
+    """A bar of a timeline track in `color`. Classic tints the track with it, with a line around it for `outline` whose
+    pen stays for the text; Dark and Light draw a rounded bar, solid for an alpha of 80 and above, and leave the pen
+    that reads on it."""
+    if is_classic_theme():
+        tint = QColor(color)
+        tint.setAlpha(alpha)
+        p.fillRect(rect, tint)
+        if outline:
+            p.setPen(QPen(QColor(color), 1))
+            p.drawRect(rect)
+        return
+    t3_theme.paint_bar(p, rect, color, alpha, ui_px(5), is_light_theme())
+    p.setPen(t3_theme.bar_text(color, alpha, is_light_theme()))
+
+
+def track_tint(color, alpha):
+    """The fill of a track drawn column by column, where single bars are too many to draw."""
+    if is_classic_theme():
+        tint = QColor(color)
+        tint.setAlpha(alpha)
+    else:
+        tint = QColor(t3_theme.track(color) or theme_color('#303030'))
+        tint.setAlphaF(t3_theme.bar_opacity(alpha))
+    return tint
+
+
+def track_text(color, classic, alpha=80):
+    """The colour of text on a bar painted by paint_track_bar; `classic` is the colour Classic Dark writes it in."""
+    if is_classic_theme():
+        return QColor(theme_color(classic))
+    return t3_theme.bar_text(color, alpha, is_light_theme())
+
+
+def grid_color(major):
+    """The colour of the timeline's time grid, for its major or its minor lines."""
+    if is_classic_theme():
+        return QColor(115, 115, 115, 145) if major else QColor(133, 133, 133, 40)
+    return t3_theme.grid(major, is_light_theme())
+
+
 def themed_colors(text):
+    if not is_classic_theme():
+        return re.sub(r'#[0-9a-fA-F]{6}\b', lambda match: theme_color(match[0]), text)
     if not is_light_theme():
         return text
     return re.sub(r'#[0-9a-fA-F]{6}\b', lambda match: LIGHT_COLORS.get(match[0].lower(), match[0]), text)
 
 
-def appearance_style(style):
+def scaled_style(style):
     scale = current_appearance()[1]
-    style = themed_colors(style)
     if scale == DEFAULT_SCALE:
         return style
     return re.sub(r'([1-9]\d*)px\b', lambda match: f'{max(1, round(int(match[1]) * scale / 100))}px', style)
+
+
+def appearance_style(style):
+    return scaled_style(themed_colors(style))
 
 
 def set_appearance_style(widget, style):
@@ -222,30 +278,40 @@ def configure_application(app, theme=DEFAULT_THEME, scale=DEFAULT_SCALE):
     # Bundled OFL font also works in the offscreen renderer without system fonts.
     font_id = QFontDatabase.addApplicationFont(str(ROOT / "assets/fonts/NotoSansKR.ttf"))
     family = QFontDatabase.applicationFontFamilies(font_id) if font_id >= 0 else []
-    app.setFont(QFont(family[0] if family else "Segoe UI", 9))
+    app.setProperty('classicFont', QFont(family[0] if family else "Segoe UI", 9))
+    app.setProperty('interFont', t3_theme.load_fonts())
+    app.setFont(app.property('classicFont'))
+    menus = t3_theme.RoundMenus(app)
+    app.installEventFilter(menus)
     apply_appearance(app, theme, scale)
 
 
 def apply_appearance(app, theme, scale):
     app.setProperty('uiTheme', theme)
     app.setProperty('uiScale', scale)
-    font = app.font()
+    classic = theme.startswith('classic')
+    font = QFont(app.property('classicFont') or app.font())
     font.setPointSizeF(9 * scale / 100)
-    app.setFont(font)
+    app.setFont(font if classic or not app.property('interFont') else t3_theme.font(font, 9 * scale / 100))
     palette = app.style().standardPalette()
-    for role, color in ((QPalette.Window, "#303030"), (QPalette.WindowText, "#d5d5d5"),
-                        (QPalette.Base, "#242424"), (QPalette.AlternateBase, "#333333"),
-                        (QPalette.Text, "#d5d5d5"), (QPalette.Button, "#454545"),
-                        (QPalette.ButtonText, "#d5d5d5"), (QPalette.Highlight, "#477bb7"),
-                        (QPalette.HighlightedText, "#ffffff")):
-        palette.setColor(role, QColor(theme_color(color)))
-    if theme == "light":
-        palette.setColor(QPalette.Link, QColor(theme_color("#8ed2ff")))
-    app.setPalette(palette)
-    style = appearance_style(STYLE) + (LIGHT_STYLE if theme == "light" else "")
-    app.setStyleSheet(style.replace('CHECK_ICON',(ROOT/'assets/icons/check.svg').as_posix()))
+    if not classic:
+        app.setPalette(t3_theme.palette(palette, theme == 'light'))
+        app.setStyleSheet(scaled_style(t3_theme.stylesheet(theme == 'light')))
+    else:
+        for role, color in ((QPalette.Window, "#303030"), (QPalette.WindowText, "#d5d5d5"),
+                            (QPalette.Base, "#242424"), (QPalette.AlternateBase, "#333333"),
+                            (QPalette.Text, "#d5d5d5"), (QPalette.Button, "#454545"),
+                            (QPalette.ButtonText, "#d5d5d5"), (QPalette.Highlight, "#477bb7"),
+                            (QPalette.HighlightedText, "#ffffff")):
+            palette.setColor(role, QColor(theme_color(color)))
+        if theme == "classic-light":
+            palette.setColor(QPalette.Link, QColor(theme_color("#8ed2ff")))
+        app.setPalette(palette)
+        style = appearance_style(STYLE) + (LIGHT_STYLE if theme == "classic-light" else "")
+        app.setStyleSheet(style.replace('CHECK_ICON',(ROOT/'assets/icons/check.svg').as_posix()))
     for widget in app.allWidgets():
         style = widget.property('baseAppearanceStyle')
         if style:
             widget.setStyleSheet(appearance_style(style))
         QWidget.update(widget)
+    t3_theme.dress_all(app, classic, theme.endswith('light'), scale)

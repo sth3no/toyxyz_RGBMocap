@@ -3,7 +3,7 @@ import math
 from PySide6.QtCore import Qt, QRectF, QPointF, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtWidgets import QSlider, QSizePolicy
-from .theme import current_appearance, theme_color, ui_px
+from .theme import current_appearance, grid_color, paint_track_bar, theme_color, track_text, ui_px
 from .footlock_editor import FootLockEditor
 
 
@@ -259,11 +259,9 @@ class TimelineSlider(FootLockEditor,QSlider):
             # below them for future channels rather than stretching controls.
             for row, label, color in rows:
                 y = self.TRACK_TOP + row * row_height
-                tint = QColor(color)
-                tint.setAlpha(80)
                 left, right = self.clip_edges() if row == 0 else (self.LEFT, self.width() - self.RIGHT)
                 left, right = max(self.LEFT, left), min(self.width() - self.RIGHT, right)
-                p.fillRect(QRectF(left, y + 2, max(0, right - left), row_height - 5), tint)
+                paint_track_bar(p, QRectF(left, y + 2, max(0, right - left), row_height - 5), color)
             y = self.TRACK_TOP + row_height
             for first_fill, end_fill in self.fill_runs:
                 left, right = max(self.LEFT, self.frame_x(first_fill - .5)), min(self.width() - self.RIGHT, self.frame_x(end_fill - .5))
@@ -275,11 +273,11 @@ class TimelineSlider(FootLockEditor,QSlider):
             p.setClipRect(QRectF(self.LEFT, self.RULER_HEIGHT, max(1,self.width()-self.LEFT-self.RIGHT),self.height()-self.RULER_HEIGHT))
             minor_step = max(1,step//5)
             minor_first = math.ceil((self.view_start+1)/minor_step)*minor_step-1
-            p.setPen(QPen(QColor(133,133,133,40),1))
+            p.setPen(QPen(grid_color(False),1))
             for frame in range(minor_first,math.ceil(self.view_start+self.span())+1,minor_step):
                 x = self.frame_x(frame)
                 p.drawLine(QPointF(x, self.RULER_HEIGHT),QPointF(x,self.height()))
-            p.setPen(QPen(QColor(115,115,115,145),1))
+            p.setPen(QPen(grid_color(True),1))
             for frame in range(first,math.ceil(self.view_start+self.span())+1,step):
                 x = self.frame_x(frame)
                 p.drawLine(QPointF(x, self.RULER_HEIGHT),QPointF(x,self.height()))
@@ -294,7 +292,7 @@ class TimelineSlider(FootLockEditor,QSlider):
                 y = self.TRACK_TOP + row * row_height
                 p.setPen(QColor(theme_color("#aaaaaa")))
                 p.drawText(QRectF(ui_px(8), y, ui_px(53), row_height), Qt.AlignVCenter, label)
-                p.setPen(QColor(theme_color("#b1b9c1" if row == 0 else "#aebeb4")))
+                p.setPen(track_text(color, "#b1b9c1" if row == 0 else "#aebeb4"))
                 text = self.video_track_label if row == 0 else ((self.person_name or "Body animation") if self.has_motion else "No motion data")
                 if row==1 and getattr(self,"live_preview",False):text="PEAR live preview — no recording"
                 left, right = self.clip_edges() if row == 0 else (self.LEFT, self.width() - self.RIGHT)
