@@ -10,20 +10,21 @@ from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QObject, QTimer, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, QTimer, Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from . import paths, people_store, sequence_join, sequence_links, sequence_state
+from . import paths, people_store, sequence_join, sequence_links, sequence_seam, sequence_state
 from .clip_range import format_time
 from .parts_runner import MODELS
 from .sequence import DEFAULT_METHOD, METHODS, Sequence
 from .sequence_library import Library
-from .sequence_tools import ToolStrip
+from .sequence_tools import ToolStrip, picture
 from .sequence_view import METHOD_LABELS, SequenceView, dragged_videos
 from .take_import_check import gap_frames
-from .theme import ui_px
+from .theme import theme_color, ui_px
 from .tooltips import tooltip_text
 
 OTHER_MODEL = 'The sequence works with GVHMR, ExMR and FlowHMR.'
@@ -213,12 +214,28 @@ class Controller(QObject):
         self.view.unlinked.connect(lambda target:self.unlink(target))
         self.view.transition_clicked.connect(lambda target:self.edit_transition(target))
         self.view.menu_requested.connect(lambda block_id, person, point:self.person_menu(block_id, person, point))
+        # The card over the seam between two blocks the pointer rests on.
+        card = self.seam_card = sequence_seam.SeamCard(w)
+        self._seam_wanted = None   # the seam the pointer is on, while the card waits to be shown
+        self._seam_show, self._seam_hide = QTimer(self), QTimer(self)
+        for timer, wait, slot in ((self._seam_show, sequence_seam.HOVER_MS, lambda:self.show_seam()),
+                                  (self._seam_hide, sequence_seam.LEAVE_MS, lambda:self._seam_left())):
+            timer.setSingleShot(True);timer.setInterval(wait);timer.timeout.connect(slot)
+        self.view.seam_changed.connect(self._seam_changed)
+        card.entered.connect(self._seam_hide.stop);card.left.connect(self._seam_hide.start)
+        card.join_clicked.connect(lambda:self._seam_action(lambda:self.join_seam(card.later)))
+        card.open_clicked.connect(lambda:self._seam_action(lambda:self.open_joined(card.offer.joined)))
+        card.transition_clicked.connect(lambda:self._seam_action(lambda:self.edit_transition(card.offer.targets[0])))
         self._appearance()
 
     def _appearance(self):
         self.bar.layout().setContentsMargins(ui_px(9), ui_px(3), ui_px(6), ui_px(3))
         self.view.refresh_appearance()
-        self.library.refresh_appearance();self.tools.refresh_appearance()
+        self.library.refresh_appearance();self.tools.refresh_appearance();self.seam_card.refresh_appearance()
+        side = ui_px(14);scissors = QIcon()   # the Razor's scissors on the button that cuts at the playhead
+        scissors.addPixmap(picture('razor', side * 2, theme_color('#c8c8c8', '#3a3a3a')), QIcon.Normal)
+        scissors.addPixmap(picture('razor', side * 2, theme_color('#6e6e6e', '#a8a8a8')), QIcon.Disabled)
+        self.cut_button.setIcon(scissors);self.cut_button.setIconSize(QSize(side, side))
         if not getattr(self, '_sized', False):
             self._sized = True;self.body.setSizes([ui_px(270), ui_px(1100)])
 
@@ -940,10 +957,11 @@ class Controller(QObject):
 
     # Join
 
-    def _chains(self, target=None):
-        """The linked rows to join: the row of `target`, else every linked row, in block order."""
+    def _chains(self, targets=None):
+        """The linked rows to join: the rows of the bars `targets`, else every linked row, in block order."""
         sequence = self.sequence
-        chains = [sequence.chain(*target)] if target is not None else list(dict.fromkeys(tuple(sequence.chain(*l.target)) for l in sequence.model_links()))
+        targets = [link.target for link in sequence.model_links()] if targets is None else targets
+        chains = list(dict.fromkeys(tuple(sequence.chain(*target)) for target in targets))
         return sorted((list(chain) for chain in chains if len(chain) > 1), key=lambda chain:(sequence.index(chain[0][0]), str(chain[0][1])))
 
     def join(self, target=None):
@@ -951,14 +969,70 @@ class Controller(QObject):
         started."""
         if not self._may_link():return False
         if target is not None and tuple(target)[0] not in self._ids():return False
-        chains, model, states = self._chains(None if target is None else tuple(target)), self.w.model_choice.currentData(), self._states()
+        return self._join(self._chains(None if target is None else [tuple(target)]), target is None)
+
+    def _join(self, chains, every=False):
+        """Join the rows `chains` that are not joined yet, after the question; with `every` they are all the linked rows."""
+        model, states = self.w.model_choice.currentData(), self._states()
         joined = [chain for chain in chains if sequence_links.status(self.sequence, states, chain[0], model) == 'joined']
         if chains and len(joined) == len(chains):   # Join never rebuilds what is current
-            self.w.status.setText(sequence_join.ALL_JOINED if target is None else sequence_join.ALREADY.format(self._name(states, chains[0][0])));return False
+            self.w.status.setText(sequence_join.ALL_JOINED if every else ' '.join(sequence_join.ALREADY.format(self._name(states, chain[0])) for chain in chains));return False
         chains = [chain for chain in chains if chain not in joined]
         if not chains or not self.ask(sequence_join.QUESTION, 'Join'):return False
         self.joiner = sequence_join.Runner(self, chains);self.joiner.start()
         return True
+
+    # The seam between two blocks
+
+    def _seam_changed(self, later_id):
+        """The pointer came onto a seam of the timeline (its card shows once it has rested there) or left it (the card goes
+        after a moment, unless the pointer went onto the card)."""
+        if later_id is None:
+            self._seam_show.stop()
+            if not self.seam_card.isHidden():self._seam_hide.start()
+            return
+        self._seam_hide.stop();self._seam_wanted = later_id
+        if self.seam_card.isHidden() or self.seam_card.later != later_id:self._seam_show.start()
+
+    def show_seam(self, later_id=None):
+        """Show the card of the seam before block `later_id` (default: the seam the pointer is on) above that seam, and
+        return what it offers. No card, and None, while a job runs, inside a block (level 3), with a model the sequence does
+        not work with, and for a block that has none before it."""
+        w, card = self.w, self.seam_card
+        later_id = self._seam_wanted if later_id is None else later_id
+        if self.busy() or not self.supported() or self.at_clip_level() or later_id not in [b.id for b in self.sequence.blocks[1:]]:
+            self.hide_seam();return None
+        model = self.sequence.model = w.model_choice.currentData()
+        offer = sequence_seam.offer(self.sequence, self._states(), later_id, model)
+        self._seam_show.stop();self._seam_hide.stop()
+        card.show_offer(later_id, offer)
+        above, margin = self.view.mapTo(w, QPoint(self.view.seam_rect(later_id).center().x(), self.view.TRACK_TOP)), ui_px(4)
+        card.move(max(margin, min(w.width() - card.width() - margin, above.x() - card.width() // 2)),
+                  max(margin, above.y() - card.height() - ui_px(2)))
+        card.show();card.raise_()
+        return offer
+
+    def hide_seam(self):
+        self._seam_show.stop();self._seam_hide.stop();self.seam_card.hide()
+
+    def _seam_left(self):
+        """The pointer has been off the seam for a moment: the card goes, unless the pointer is on it."""
+        if not self.seam_card.underMouse():self.hide_seam()
+
+    def _seam_action(self, action):
+        """A button of the card: the card goes first, since the action may ask or open a block."""
+        self.hide_seam();action()
+
+    def join_seam(self, later_id):
+        """Join the tracking across the seam before block `later_id`: one person on each side who are not linked are
+        linked first, then every linked row that crosses the seam and is not joined yet is joined, after Join's question.
+        False, with the reason in the status bar, when nothing started."""
+        if not self._may_link() or later_id not in [b.id for b in self.sequence.blocks[1:]]:return False
+        offer = sequence_seam.offer(self.sequence, self._states(), later_id, self.sequence.model)
+        if not offer.join:
+            self.w.status.setText(' '.join(offer.lines));return False
+        if offer.link is not None and not self.link(*offer.link):return False
+        return self._join(self._chains([link.target for link in self.sequence.model_links() if link.target[0] == later_id]))
 
     def take_back(self, target):
         """Take the joined copies of the row of the bar `target` out of its first block's take list, after asking when it has
@@ -1155,6 +1229,7 @@ class Controller(QObject):
         self.library.setEnabled(supported);self.library.setToolTip('' if supported else tooltip_text(OTHER_MODEL))
         self._tools()
         self._playhead()
+        if not self.seam_card.isHidden():self.show_seam(self.seam_card.later)   # what it offers may have changed
 
     def eventFilter(self, watched, event):
         w = self.w
@@ -1173,6 +1248,8 @@ class Controller(QObject):
             return True
         elif watched is w.parts_button and event.type() == QEvent.EnabledChange:
             self.refresh()   # update_readiness after Reconstruct in parts started or stopped
+        elif watched is self.view and event.type() in (QEvent.MouseButtonPress, QEvent.Wheel):
+            self.hide_seam()   # the press trims or selects, the wheel moves the seam away
         elif watched is self.view and event.type() in (QEvent.FontChange, QEvent.StyleChange):
             self._appearance()   # the UI scale or the theme changed
         elif watched is w and event.type() == QEvent.Close:

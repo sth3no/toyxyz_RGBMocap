@@ -16,7 +16,7 @@ TIPS = {'select': 'Selection (V): click a block to select it, drag it to another
 
 
 def picture(tool, size, color):
-    """The tool's icon, drawn in a 16-unit box: an arrow, a blade, a hand, a magnifying glass."""
+    """The tool's icon, drawn in a 16-unit box: an arrow, scissors, a hand, a magnifying glass."""
     image = QPixmap(size, size);image.fill(Qt.transparent)
     p = QPainter(image);p.setRenderHint(QPainter.Antialiasing);p.scale(size / 16, size / 16)
     pen = QPen(QColor(color), 1.5, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin);p.setPen(pen);p.setBrush(Qt.NoBrush)
@@ -24,8 +24,9 @@ def picture(tool, size, color):
         p.setBrush(QColor(color))
         p.drawPolygon(QPolygonF([QPointF(*xy) for xy in ((4, 2), (4, 13), (7, 10.5), (9, 14.5), (10.8, 13.6), (8.8, 9.7), (12.5, 9.7))]))
     elif tool == 'razor':
-        p.drawPolygon(QPolygonF([QPointF(*xy) for xy in ((2.5, 11), (9.5, 3), (13, 6.5), (5, 13.5), (2.5, 13.5))]))
-        p.drawLine(QPointF(7.2, 5.6), QPointF(10.6, 9))
+        for y in (4.2, 11.8):p.drawEllipse(QPointF(4.2, y), 2.1, 2.1)   # the two handles
+        p.drawLine(QPointF(13.5, 2.6), QPointF(5.7, 10.4));p.drawLine(QPointF(5.7, 5.6), QPointF(8.2, 8.1))   # the blades,
+        p.drawLine(QPointF(9.8, 9.7), QPointF(13.5, 13.4))                                                    # crossing at the middle
     elif tool == 'hand':
         path = QPainterPath()
         for x, top in ((5, 4.5), (7, 3), (9, 3.5), (11, 5)):   # four fingers

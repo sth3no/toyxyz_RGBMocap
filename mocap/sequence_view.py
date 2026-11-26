@@ -68,6 +68,7 @@ class SequenceView(QWidget):
     cut_requested = Signal(str, float)         # block id, source seconds: the Razor's click
     dropped = Signal(object, int)              # video paths, the index their blocks are inserted at
     tool_changed = Signal(str)
+    seam_changed = Signal(object)              # the later block's id of the seam under the pointer, or None
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -85,6 +86,7 @@ class SequenceView(QWidget):
         self.tool = TOOLS[0]
         self.razor_at = None     # x where a click of the Razor would cut, while it is over a block
         self.incoming = None     # the index a dragged video would be inserted at, while it is over the timeline
+        self.seam = None         # the later block's id of the seam between two blocks the pointer is on
         self.setAcceptDrops(True)
         self.refresh_appearance()
 
@@ -104,7 +106,8 @@ class SequenceView(QWidget):
         self._editable = bool(value)
         if not self._editable and self._press and self._press['mode'] in ('start', 'end', 'body', 'person', 'piece'):
             self._press = None;self.setCursor(CURSORS[self.tool])
-        if not self._editable:self.razor_at = self.incoming = None
+        if not self._editable:
+            self.razor_at = self.incoming = None;self._set_seam(None)
         self.update()
 
     def set_tool(self, tool):
@@ -112,6 +115,7 @@ class SequenceView(QWidget):
         if tool not in TOOLS:raise ValueError(f'Unknown tool: {tool}')
         if tool == self.tool:return
         self.tool, self._press, self._pan_origin, self.razor_at = tool, None, None, None
+        self._set_seam(None)
         self.setCursor(CURSORS[tool])
         self.tool_changed.emit(tool)
         self.update()
@@ -125,6 +129,7 @@ class SequenceView(QWidget):
         self.sequence, self.states, self._press = sequence, dict(states), None
         self.rows, self.row_states = (None if rows is None else dict(rows)), dict(row_states or {})
         self.razor_at = None
+        if self.seam not in [block.id for block in sequence.blocks[1:]]:self._set_seam(None)
         if self.view_span is not None and self._fits(self.view_span):
             self.view_span = None   # a view wider than the sequence stays: it was zoomed out on purpose
         self._clamp_view()
@@ -180,6 +185,10 @@ class SequenceView(QWidget):
             if link.target == tuple(target):
                 return rect.intersected(self._track()).toAlignedRect()
         return QRect()
+
+    def seam_rect(self, later_id):
+        """The seam before block `later_id` in the Video row, as the pointer finds it; empty for the first block."""
+        return next((rect.intersected(self._track()).toAlignedRect() for seam, rect in self._seams() if seam == later_id), QRect())
 
     # Geometry
 
@@ -293,6 +302,24 @@ class SequenceView(QWidget):
             out.append((link, QRectF(earlier.right(), cell.top(), later.left() - earlier.right(), cell.height())))
         return out
 
+    def _seams(self):
+        """(later block id, rect) of each seam: the Video row from the end of a block to the start of the next, as far into
+        each as the edge that trims it, and over the transition between them."""
+        layout, out = self._layout(), []
+        for (_, _, a), (later, _, b) in zip(layout, layout[1:]):
+            left, right = a.right() - min(ui_px(8), a.width() / 4), b.left() + min(ui_px(8), b.width() / 4)
+            out.append((later.id, QRectF(left, a.top(), max(1., right - left), a.height())))
+        return out
+
+    def _seam_at(self, point):
+        """The seam under the pointer of the Selection tool while no button is held."""
+        if self.tool != 'select' or not self.editable or self._press is not None or self._pan_origin is not None:return None
+        return next((seam for seam, rect in self._seams() if rect.contains(point)), None)
+
+    def _set_seam(self, seam):
+        if seam != self.seam:
+            self.seam = seam;self.seam_changed.emit(seam);self.update()
+
     def _piece_at(self, point):
         return next((link for link, rect in self._pieces() if rect.contains(point)), None)
 
@@ -390,6 +417,7 @@ class SequenceView(QWidget):
 
     def mousePressEvent(self, event):
         point = event.position()
+        self._set_seam(None)
         if event.button() == Qt.MiddleButton:
             self._pan_origin = (point.x(), self.view_start)
         elif event.button() == Qt.LeftButton and self.tool != 'select' and self._tool_press(point, event.modifiers()):
@@ -422,6 +450,7 @@ class SequenceView(QWidget):
 
     def mouseMoveEvent(self, event):
         point, press = event.position(), self._press
+        self._set_seam(self._seam_at(point))
         if self._pan_origin is not None:
             pixel, start = self._pan_origin
             self.view_start = start - (point.x() - pixel) * self.span() / self._width()
@@ -487,6 +516,7 @@ class SequenceView(QWidget):
         event.accept()
 
     def leaveEvent(self, event):
+        self._set_seam(None)
         if self.razor_at is not None:
             self.razor_at = None;self.update()
         super().leaveEvent(event)
@@ -557,7 +587,9 @@ class SequenceView(QWidget):
             hit = self._hit(QPointF(event.pos()))
             piece = self._piece_at(QPointF(event.pos())) if hit else None
             text = ''
-            if piece is not None:
+            if self.seam is not None:   # the seam's card is shown there instead
+                pass
+            elif piece is not None:
                 text = piece_tip(self.sequence.gap(piece.target[0]), piece.method, self._name(piece.source), self._name(piece.target))
             elif hit and hit[0] == 'block':
                 state = self.states.get(hit[1][0].id)
@@ -701,7 +733,12 @@ class SequenceView(QWidget):
                    self.fontMetrics().elidedText(' | '.join(parts), Qt.ElideRight, round(width)))
 
     def _paint_marks(self, p):
-        """Where a dragged video would be inserted, and where the Razor would cut."""
+        """Where a dragged video would be inserted, where the Razor would cut, and the seam the pointer is on."""
+        seam = next((rect for later, rect in self._seams() if later == self.seam), None)
+        if seam is not None:
+            x, color = seam.center().x(), QColor(theme_color('#74a6e0'))
+            p.setPen(QPen(color, 2));p.drawLine(QPointF(x, self.TRACK_TOP), QPointF(x, self.TRACK_TOP + self.TRACK_HEIGHT))
+            p.setPen(Qt.NoPen);p.setBrush(color);p.drawEllipse(QPointF(x, seam.center().y()), ui_px(4), ui_px(4))
         if self.incoming is not None:
             x = self._insert_x(self.incoming)
             p.setPen(QPen(QColor(theme_color('#74a6e0')), 2))

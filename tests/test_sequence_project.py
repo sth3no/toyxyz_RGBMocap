@@ -53,6 +53,17 @@ class LayoutTest(ProjectCase):
         self.assertGreater(c.stack.width(), c.library.width())
         self.assertEqual(c.library.count.text(), '');self.assertFalse(c.library.hint.isHidden())
 
+    def test_the_cut_button_shows_the_razors_scissors(self):
+        from mocap.sequence_tools import picture
+        c = self.c;side = c.cut_button.iconSize().width()
+        self.assertFalse(c.cut_button.icon().isNull());self.assertEqual(c.cut_button.text(), 'Cut')
+        self.assertEqual(c.cut_button.icon().pixmap(side * 2, side * 2).toImage().size(), picture('razor', side * 2, '#c8c8c8').toImage().size())
+        image = picture('razor', 32, '#c8c8c8').toImage()   # two round handles on the left, open blades on the right
+        inked = lambda x, y:image.pixelColor(x, y).alpha() > 60
+        self.assertFalse(inked(8, 8));self.assertFalse(inked(8, 24))   # the holes of the handles
+        self.assertTrue(any(inked(x, 8) for x in range(2, 7)) and any(inked(x, 24) for x in range(2, 7)))
+        self.assertTrue(any(inked(27, y) for y in range(3, 9)) and any(inked(27, y) for y in range(24, 30)))   # two blade tips
+
     def test_the_tools_work_on_the_sequence_timeline_only(self):
         c = self.c
         self.assertTrue(c.at_clip_level());self.assertFalse(c.tools.isEnabled())
