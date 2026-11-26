@@ -1043,6 +1043,8 @@ an estimate and can leave residual sliding or penetration.
 | **Timeline From / To / Set** | Type the trimmed range in minutes and seconds of the loaded clip (12:34.5, 1:02:03 or 754.5). Enter or **Set** trims to it, moves the playhead to its start and fits the timeline to it. An invalid time is explained in the status bar and changes nothing. Unavailable while a job runs, like trimming. |
 | **← Sequence** | First button of the timeline's action bar. Shows the [sequence](#sequence-several-videos-on-one-timeline) timeline around the loaded block. Turning the wheel out while the whole clip is shown does the same, also for a single video. GVHMR, ExMR and FlowHMR only. |
 | **Add Video... / File > Add Video to Sequence...** | Add a video at the end of the sequence, as a new block covering the whole video. The button is in the bar above the sequence timeline. |
+| **Project panel** | Left of the timeline. The library of the sequence's videos, each with a picture, its file name and its length. **Import...** adds videos, and video files can be dropped on it. Drag a video from it to the timeline to add it as a block; double-click puts it at the end. Delete removes the selected videos from the library only. See [Project panel and timeline tools](#project-panel-and-timeline-tools). |
+| **Timeline tools** | The strip between the Project panel and the timeline: **Selection (V)**, **Razor (C)** cuts the block it clicks, **Hand (H)** drags the timeline sideways, **Zoom (Z)** zooms in on a click and out with Alt. They act on the sequence timeline (levels 1 and 2). |
 | **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. The last block cannot be deleted. Both are unavailable while a job runs. |
 | **Join** | In the bar above the sequence timeline. Joins every linked row that is not joined yet into one animation in the scene of its first block, after a question; a linked bar's right-click menu joins only its row. Unavailable while a job runs and while no person is linked. See [People who continue in the next video](#people-who-continue-in-the-next-video). |
 | **File > Add Project to Sequence...** | Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results. |
@@ -1078,6 +1080,61 @@ Sequence...**, adds a video at the end as a block that covers the whole video.
 project at the end as a block with its results; its video and range come from
 the project. If the project's video file is gone, the block still opens as a
 project and the status bar says that the video file is missing.
+
+#### Project panel and timeline tools
+
+The Timeline panel is laid out as in a video editor: the **Project** panel on
+the left, a strip of tools, then the timeline. Drag the border between the
+Project panel and the timeline to give either more room.
+
+- **Project** is the library of the sequence's videos. Each one shows a
+  picture from about a second into the video, its file name and its length
+  (`4:08`, `1:02:05`). Its tooltip adds the file's path, its size and frame
+  rate, and whether it is on the timeline; a file that is gone reads `The file
+  is missing.` Click **Import...** to add videos, several at once, or drop
+  video files on the panel from the file manager (.mp4, .mov, .avi, .mkv,
+  .webm). The status bar then says, for example, `2 videos added to the Project
+  panel. Drag one to the timeline.` A file that cannot be read as a video is
+  left out and named, for example `Cannot add notes.mp4: Cannot open the
+  video.` Importing loads and tracks nothing, so it is allowed while a job
+  runs. A video opened or added to the sequence in any other way is listed
+  too. With an empty timeline, the sequence timeline is shown and says `Drag a
+  video here from the Project panel, or drop a video file.`
+- **Onto the timeline.** Drag a video from the Project panel to the timeline.
+  A blue line shows where it will be inserted: between the two blocks nearest
+  the pointer, or at either end. It becomes a block that covers the whole
+  video, and the blocks after it move later; there are still no gaps. The same
+  video can be put on the timeline more than once. Double-click a video to put
+  it at the end. Several selected videos are placed in the order they were
+  selected. A video file dropped from the file manager straight on the
+  timeline is listed in the Project panel and placed. On the timeline of an
+  opened block (level 3) a dropped video goes after that block, and the
+  sequence timeline is shown. The loaded block stays loaded; on an empty
+  timeline the first new block is loaded. A link between two people of
+  neighbouring blocks is removed when a video is placed between those blocks,
+  after the same question as for other edits when the row is joined. While a
+  job runs nothing is placed: `A job is running. Videos can be put on the
+  timeline when it is done.`
+- **Out of the library.** Select videos in the Project panel and press Delete.
+  They leave the library only: `one.mp4 removed from the Project panel. Its
+  blocks stay on the timeline; the file stays on disk.`
+- **Tools.** The strip holds four tools; a click or the key in brackets
+  chooses one. The keys work while the sequence timeline has the keyboard
+  focus (click it first). **Selection (V)** is the timeline as before: click a
+  block to load it, drag its middle to move it, drag its edge to trim it, drag
+  a person's bar to link it. **Razor (C)**: a dashed line follows the pointer
+  over a block, and a click cuts the block there. The loaded block stays
+  loaded unless it is the one that was cut; then its second piece is loaded, as
+  **Cut** does. A block with results asks first, as every edit does. The ruler
+  still moves the playhead. **Hand (H)**: drag the timeline sideways.
+  **Zoom (Z)**: a click zooms in around the pointer, Alt+click zooms out. The
+  tools act on the sequence timeline (levels 1 and 2); on the timeline of an
+  opened block and with another model they are unavailable.
+- **Zooming out to hours.** Turning the wheel out stops at the whole sequence
+  (as **Frame All**); turning further widens the view past its end, up to 24
+  hours, so a long recording and the room after it can be seen at once. A
+  sequence longer than that is still shown whole. From steps of one second the
+  ruler reads as a clock: `30:00`, `1:00:00`.
 
 **Three levels.**
 
@@ -1175,7 +1232,9 @@ cannot be added, cut, deleted, moved or resized. A click on another block says
 sequence entries are unavailable too.
 
 **Saving.** A sequence of one block is not saved; it is the same as working on
-one video. A sequence of two or more blocks saves itself on every change, as
+one video, unless its Project panel holds another video. A sequence of two or
+more blocks, or with more videos in its Project panel than its blocks use,
+saves itself on every change, as
 `projects/sequences/Sequence <date> <time>.json`. A sequence opened from a file
 keeps saving to that file, also when only one block is left. **File > Open
 Sequence...** opens a saved sequence, shows it whole and loads its first block.
@@ -1184,7 +1243,9 @@ the reason, and the current sequence stays. **File > New Sequence** starts a
 new sequence with the loaded video as its one block (the whole video) and shows
 its timeline; with no video loaded the sequence is empty and **Add Video...**
 starts it. The loaded video or project stays open. A sequence file only
-lists the blocks; saving it changes no project.
+lists the blocks and the Project panel's videos; saving it changes no project.
+A new sequence starts with its own Project panel: the videos of the sequence
+before are not carried over.
 
 When a chapter of the in-window guide starts, the timeline goes to level 3.
 

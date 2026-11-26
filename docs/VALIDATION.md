@@ -1,5 +1,41 @@
 # Source package validation
 
+## Sequence: Project panel, timeline tools and zooming out to hours (2026-11-26)
+
+The Timeline panel now holds a **Project** panel (the library of the
+sequence's videos), a strip of four tools and the timeline. Videos are imported
+into the library, dragged to the timeline and cut with the Razor; the sequence
+timeline zooms out past its end, up to 24 hours. Blocks still have an order
+only.
+
+- **Tests** (unittest, Qt offscreen): `test_sequence_library` 13 (the
+  document's library and `insert`), `test_sequence_tools` 21 (the view's tools,
+  zoom and drops), `test_sequence_panel` 19 (the Project panel and the tool
+  strip; pictures read from a real 64x48 video made with ffmpeg),
+  `test_sequence_project` 31 (the real `MainWindow` with two real 3-second
+  videos: import, place, Razor, removal, the saved file, the opened block's
+  timeline as a drop target). Drag and drop was tested by sending Qt's drag and
+  drop events to the widgets and by asking the list's model for its drag data;
+  no drag was performed with a mouse through the operating system.
+- Two existing tests of `test_sequence_window` delete a video right after
+  adding it. They now wait for the Project panel's background read first
+  (`Library.stop()`), since the read holds the file open for a moment.
+- Whole `tests` folder: 1,411 passed, 18 skipped. Before this work the same
+  folder ran 1,327 tests with 18 skipped and one failure that depended on the
+  free RAM of the PC at that moment: `test_parts_window` read the status bar
+  when a part started, and the low-memory note of 2026-11-24 had replaced
+  `Part 1 of 4: ...` there. During Reconstruct in parts that note now goes to
+  Console only (`test_memory_fit_window`, 17 tests).
+- **Pictures looked at:** the real main window rendered offscreen in the dark
+  and the light theme with three test-pattern videos of 4:08, 26:22 and
+  1:02:10: empty at start, after import, with three blocks fitted, with the
+  Razor's line and an insertion mark, and zoomed out to about 3.7 hours.
+- **Not run:** anything on a real screen; a drag with the mouse from the
+  Project panel or from the file manager; the keys V, C, H, Z in the real
+  window; tracking of a block placed this way with real models; videos of other
+  codecs or sizes than the test patterns; a library of many videos; UI scales
+  other than 100 %.
+
 ## Sequence: people who continue across videos, stage 2 (2026-11-24)
 
 A person of one block linked to a person of the block before (by drag, the
