@@ -91,6 +91,18 @@ class LayoutTest(unittest.TestCase):
         self.assertEqual(chip.text.text(), 'Step left 0:42')
         idle();self.assertFalse(chip.isVisible())
 
+    def test_the_settings_cards_stand_on_the_windows_canvas(self):
+        if theme.is_classic_theme():self.skipTest('Classic keeps its grey panel behind the settings')
+        from mocap import t3_theme
+        w = self.w
+        content, first = w.settings_tabs.scroll.widget(), w.model_choice.parentWidget()
+        self.assertIs(first.parentWidget(), content)
+        canvas = t3_theme.light('#000000') if theme.is_light_theme() else '#000000'
+        image, box = content.grab().toImage(), first.geometry()
+        self.assertEqual(image.pixelColor(box.center().x(), box.bottom() + 4).name(), canvas)   # between two cards
+        self.assertEqual(image.pixelColor(box.left() + 1, box.top() + 1).name(), canvas)         # outside a card's round corner
+        self.assertNotEqual(image.pixelColor(box.center().x(), box.top() + 3).name(), canvas)    # inside the card
+
     def test_the_settings_have_section_names_that_scroll_to_them(self):
         w, tabs = self.w, self.w.settings_tabs
         self.assertEqual([tabs.tabText(index) for index in range(tabs.count())], ['Model', 'Correction', 'Face', 'Resources'])

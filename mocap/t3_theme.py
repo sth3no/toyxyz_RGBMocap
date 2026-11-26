@@ -103,7 +103,7 @@ QSplitter::handle { background:transparent; }
 QScrollArea { background:#0a0a0a; border:0; }
 QWidget#modelSidebar,QStackedWidget#modelPages,QWidget[motion_tool],
 QWidget#modelSettingsViewport,QFrame#modelActions { background:#000000; }
-QScrollArea#modelSettings,QStackedWidget#modelPages > QWidget { background:#000000; }
+QScrollArea#modelSettings,QStackedWidget#modelPages > QWidget,QWidget#modelSettingsViewport > QWidget { background:#000000; }
 QWidget#modelSidebar QGroupBox { background:#0a0a0a; }
 QScrollBar:vertical { width:9px; background:transparent; }
 QScrollBar::handle:vertical { background:#2a2a2a; border-radius:3px; min-height:25px; }
