@@ -33,11 +33,11 @@ now prepares each widget once, in place of an event filter on the application.
   column, the section names and the 3D viewport's grid were in the picture.
 - **Offscreen pictures:** the window with two linked blocks in Dark and Light,
   the settings scrolled to their end, each of the five menus opened.
-- **After his picture of a grey rectangle behind the settings' cards:** the
+- **After a picture of a grey rectangle behind the settings' cards:** the
   scroll content of the settings is painted in the window's colour, so the
   cards' round corners show; a test reads the pixels between two cards and at
-  a card's corner ( is 14 tests with it; it and
-   passed again, the whole folder was not run again for this
+  a card's corner (`test_workspace_layout` is 14 tests with it; it and
+  `test_t3_theme` passed again, the whole folder was not run again for this
   one style rule).
 - **Not run:** nobody used the window on a screen: no menu was opened with the
   mouse, no panel edge was dragged, no section name was clicked there. No job
