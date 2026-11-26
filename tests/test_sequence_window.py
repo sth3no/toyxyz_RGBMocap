@@ -416,6 +416,7 @@ class SequenceWindowTest(unittest.TestCase):
 
     def test_missing_video_and_missing_folder_do_not_crash(self):
         first, second = self.two();c, w = self.c, self.w;model = w.model_choice.currentData()
+        c.library.stop()   # the Project panel has read the video's picture and let go of the file
         self.v2.unlink();gone = self.base/'gone';first.folders[model] = str(gone);c.refresh()
         self.assertEqual(c.view.states[second.id].kind, 'missing')
         c.view.selected.emit(second.id)
@@ -612,7 +613,9 @@ class SequenceWindowTest(unittest.TestCase):
         self.assertEqual(c.current, block.id);self.assertEqual(c.view.states[block.id].kind, 'found')
 
     def test_a_click_on_a_block_that_cannot_load_tries_once(self):
-        first, second = self.two();c = self.c;self.v2.unlink();c.refresh()
+        first, second = self.two();c = self.c
+        c.library.stop()   # the Project panel has read the video's picture and let go of the file
+        self.v2.unlink();c.refresh()
         from PySide6.QtTest import QTest
         with mock.patch.object(c, 'load', wraps=c.load) as load:
             QTest.mouseClick(c.view, Qt.LeftButton, Qt.NoModifier, c.view.block_rect(second.id).center())
