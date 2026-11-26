@@ -1044,8 +1044,9 @@ an estimate and can leave residual sliding or penetration.
 | **← Sequence** | First button of the timeline's action bar. Shows the [sequence](#sequence-several-videos-on-one-timeline) timeline around the loaded block. Turning the wheel out while the whole clip is shown does the same, also for a single video. GVHMR, ExMR and FlowHMR only. |
 | **Add Video... / File > Add Video to Sequence...** | Add a video at the end of the sequence, as a new block covering the whole video. The button is in the bar above the sequence timeline. |
 | **Project panel** | Left of the timeline. The library of the sequence's videos, each with a picture, its file name and its length. **Import...** adds videos, and video files can be dropped on it. Drag a video from it to the timeline to add it as a block; double-click puts it at the end. Delete removes the selected videos from the library only. See [Project panel and timeline tools](#project-panel-and-timeline-tools). |
-| **Timeline tools** | The strip between the Project panel and the timeline: **Selection (V)**, **Razor (C)** cuts the block it clicks, **Hand (H)** drags the timeline sideways, **Zoom (Z)** zooms in on a click and out with Alt. They act on the sequence timeline (levels 1 and 2). |
+| **Timeline tools** | The strip between the Project panel and the timeline: **Selection (V)**, **Razor (C)**, the scissors, cuts the block it clicks, **Hand (H)** drags the timeline sideways, **Zoom (Z)** zooms in on a click and out with Alt. They act on the sequence timeline (levels 1 and 2). |
 | **Cut / Delete** | In the bar above the sequence timeline. **Cut** splits the block under the playhead at the playhead. **Delete** (or the Delete key on the sequence timeline) removes the selected block from the sequence; its files stay on disk. The last block cannot be deleted. Both are unavailable while a job runs. |
+| **Seam card** | Rest the pointer on the seam between two blocks in the Video row of the sequence timeline (Selection tool). A card above the seam names the two videos, says who continues whom and offers **Join tracking**, **Transition...** and, for a joined row, **Open joined animation**; or it says why nothing can be joined there yet. See **Joining at the seam** in [People who continue in the next video](#people-who-continue-in-the-next-video). |
 | **Join** | In the bar above the sequence timeline. Joins every linked row that is not joined yet into one animation in the scene of its first block, after a question; a linked bar's right-click menu joins only its row. Unavailable while a job runs and while no person is linked. See [People who continue in the next video](#people-who-continue-in-the-next-video). |
 | **File > Add Project to Sequence...** | Add a saved GVHMR, ExMR or FlowHMR project at the end of the sequence, as a block with its results. |
 | **File > Open Sequence... / New Sequence** | Open a saved sequence: it is shown whole and its first block is loaded / start a new sequence with the loaded video as its one block, or an empty one when no video is loaded; the loaded video or project stays open. A sequence of two or more blocks saves itself under `projects/sequences`. |
@@ -1344,6 +1345,32 @@ take, then that many frames, then the later person's whole take, wherever the
 two takes sit inside their blocks. Where a take does not reach the edge of its
 block, the picture between the blocks is schematic; the piece's tooltip says
 so.
+
+**Joining at the seam.** With the Selection tool, rest the pointer on the seam
+between two blocks in the Video row of the sequence timeline. The seam is
+marked, and after a moment a card opens above it; move the pointer onto the
+card to use it. A press on the timeline (to trim the edge there, for example)
+or a turn of the wheel closes it, and it does not open while a job runs. The
+card names the two videos (`one.mp4 → two.mp4`) and says one of these:
+
+- `Ben continues Anna. Transition: 1.0 s Smooth join.` for each linked pair of
+  people across the seam. **Join tracking** joins the linked rows that cross
+  this seam and are not joined yet, exactly as **Join** below does and after
+  the same question. A row that runs over more blocks is joined whole: `This
+  row runs over 3 blocks; all of them are joined together.` With one linked
+  pair, **Transition...** opens its method and length.
+- `Ben will continue Anna.` when each of the two blocks has one person and
+  they are not linked (after **Unlink**, for example). **Join tracking** links
+  them first, then joins.
+- `Ben continues Anna. Joined.` with **Open joined animation**. A join that is
+  no longer current reads `The join is out of date.`, and **Join tracking**
+  builds it again.
+- Why nothing can be joined here yet: `two.mp4 has no finished motion for the
+  selected model. Reconstruct it first.`, `The video file of two.mp4 is
+  missing.`, one of the reasons in the table above, or, when the blocks have
+  several people and none is linked, `More than one person here. Zoom in and
+  right-click a person's bar in two.mp4 to choose whom it continues, then join
+  here.`
 
 **Join.** Click **Join** above the sequence timeline to join every linked row
 that is not joined yet, or choose **Join** in a linked bar's menu to join that

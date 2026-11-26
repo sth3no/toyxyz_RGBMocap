@@ -1,5 +1,35 @@
 # Source package validation
 
+## Sequence: the card over a seam, and scissors for the Razor (2026-11-26)
+
+Resting the pointer on the seam between two blocks of the sequence timeline
+opens a card above it that offers **Join tracking** for the people linked
+across that seam, or says why nothing can be joined there yet. The join itself
+is the **Join** of 2026-11-24, unchanged; the card is a second way to start it.
+The Razor's icon is a pair of scissors now, also on the **Cut** button.
+
+- **Tests** (unittest, Qt offscreen): `test_sequence_seam` 24. Nine drive the
+  timeline widget alone (the pointer on a seam, its mark, its end by a press,
+  by leaving and by another tool, no block tooltip there). Thirteen run in the
+  real `MainWindow` over the ExMR scenes of `test_sequence_join` (synthetic
+  finished takes in real clip folders; the job queue starts no worker, take
+  import and Fill hidden ranges run in-process): the card after the pointer's
+  rest, its texts and buttons for a linked pair, an unlinked pair of single
+  people, several people, a block without results, a first block without a
+  people list, a row over three blocks, a joined row and a join out of date;
+  **Join tracking** through to `Joined Anna across 2 blocks.` and **Open joined
+  animation**. Two test the offer alone. `test_sequence_project` has one more
+  test (the scissors on **Cut**), 32 in all.
+- Whole `tests` folder: 1,437 tests ran with no failure; 18 of them were skipped.
+- **Pictures looked at:** the real main window rendered offscreen in the dark
+  theme over those synthetic scenes: the card of a linked pair, of a joined
+  row and of a block that is not tracked, and the tool strip with the scissors.
+- **Not run:** anything on a real screen: the pointer was moved by sending Qt
+  mouse events, so the 350 ms rest, moving from the seam onto the card and
+  trimming an edge under the card were not tried by hand; **Join tracking**
+  with real models (the join it starts ran with real ExMR on 2026-11-24); the
+  light theme and UI scales other than 100 % for the card.
+
 ## Sequence: Project panel, timeline tools and zooming out to hours (2026-11-26)
 
 The Timeline panel now holds a **Project** panel (the library of the
