@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QSizePolicy, QToolTip, QWidget
 
 from .clip_range import format_time
 from .sequence import MIN_SECONDS, Sequence
-from .theme import theme_color, ui_px
+from . import t3_theme
+from .theme import grid_color, is_classic_theme, paint_track_bar, theme_color, track_text, ui_px
 
 ZOOM = .22                       # per wheel notch, as the slider
 NARROWEST = 12 / 30              # the slider's narrowest view, 12 frames of the 30 fps working clip
@@ -589,7 +590,8 @@ class SequenceView(QWidget):
         track = self._track()
         p.save()
         p.setClipRect(track)
-        bars = {}
+        bars, classic = {}, is_classic_theme()
+        if not classic:self._paint_grid(p)   # under the solid bars; Classic draws it over its tinted tracks
         for block, at, rect in layout:
             self._paint_block(p, block, rect)
             for i, person in enumerate(self._people(block) if people_rows else ()):
@@ -597,7 +599,7 @@ class SequenceView(QWidget):
                                                                  SUFFIX.get(chains.get((block.id, person.id))))
         for link, rect in pieces:
             self._paint_piece(p, link, rect)
-        self._paint_grid(p)
+        if classic:self._paint_grid(p)
         for block, at, rect in layout:
             self._paint_label(p, block, rect)
         for first, row_state in chains.items():
@@ -619,6 +621,8 @@ class SequenceView(QWidget):
         state = self.states.get(block.id)
         kind, shown = state.kind if state else 'untracked', self._shown(rect)
         color = QColor(theme_color(VIDEO))
+        if not is_classic_theme():
+            return self._paint_block_round(p, block, shown, kind)
         if kind in ('untracked', 'missing'):
             p.setBrush(Qt.NoBrush)
             p.setPen(QPen(QColor(theme_color('#ffb45c')) if kind == 'missing' else color, 1, Qt.DashLine))
@@ -632,6 +636,26 @@ class SequenceView(QWidget):
         if block.id == self.current:
             p.setBrush(Qt.NoBrush);p.setPen(QPen(QColor(theme_color('#d9e8fa')), 1.5))
             p.drawRect(shown.adjusted(.75, .75, -.75, -.75))
+
+    def _paint_block_round(self, p, block, shown, kind):
+        """The block as Dark and Light draw it: a solid rounded bar once tracked, a fainter one while partly tracked, a
+        dashed outline before that, a white line around the chosen block."""
+        radius = ui_px(5)
+        if kind in ('untracked', 'missing'):
+            paint_track_bar(p, shown, VIDEO, 12)
+            t3_theme.outline(p, shown, theme_color('#ffb45c') if kind == 'missing' else t3_theme.track(VIDEO), 1, radius, dashed=True)
+        else:
+            paint_track_bar(p, shown, VIDEO, 80 if kind == 'tracked' else 45)
+        if block.id == self.busy:
+            p.fillRect(QRectF(shown.left() + radius, shown.bottom() - ui_px(3), max(0., shown.width() - 2 * radius), ui_px(3)),
+                       QColor(theme_color('#d8a24a', '#8a4809')))
+        if block.id == self.current:
+            t3_theme.outline(p, shown, theme_color('#ffffff', '#202020'), 2, radius)
+
+    def _block_alpha(self, block):
+        state = self.states.get(block.id)
+        kind = state.kind if state else 'untracked'
+        return 12 if kind in ('untracked', 'missing') else 80 if kind == 'tracked' else 45
 
     def _bars(self, block, at, cell, person):
         """(rect, take) of each of the person's takes inside its cell."""
@@ -648,15 +672,17 @@ class SequenceView(QWidget):
         color = QColor(theme_color(person.color))
         bars = self._bars(block, at, cell, person)
         for bar, take in bars:
-            tint = QColor(color);tint.setAlpha(80 if take.ready else 25)
-            p.fillRect(bar, tint)
+            paint_track_bar(p, bar, person.color, 80 if take.ready else 25)
             if not take.ready:
-                p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1, Qt.DashLine));p.drawRect(bar.adjusted(.5, .5, -.5, -.5))
+                if is_classic_theme():
+                    p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1, Qt.DashLine));p.drawRect(bar.adjusted(.5, .5, -.5, -.5))
+                else:
+                    t3_theme.outline(p, bar, t3_theme.track(person.color), 1, ui_px(5), dashed=True)
         if bars:
             left = max(self.LEFT, bars[0][0].left()) + ui_px(6)
             width = min(self.width() - self.RIGHT, cell.right()) - left - ui_px(6)
             if width > ui_px(10):
-                p.setPen(QColor(theme_color('#aebeb4')))
+                p.setPen(track_text(person.color, '#aebeb4', 80 if bars[0][1].ready else 25))
                 p.drawText(QRectF(left, cell.top(), width, cell.height()), Qt.AlignVCenter,
                            self.fontMetrics().elidedText(' | '.join(filter(None, (person.name, suffix))), Qt.ElideRight, round(width)))
         return [bar for bar, _ in bars]
@@ -664,17 +690,20 @@ class SequenceView(QWidget):
     def _paint_piece(self, p, link, rect):
         """The generated transition: hatched in the colour of generated frames, solid once the row is joined."""
         color, joined = QColor(theme_color(*GENERATED)), self._row_state(link.target) == 'joined'
-        tint = QColor(color);tint.setAlpha(120 if joined else 35)
-        p.fillRect(rect, tint)
+        if is_classic_theme():
+            tint = QColor(color);tint.setAlpha(120 if joined else 35)
+            p.fillRect(rect, tint)
+        else:
+            paint_track_bar(p, rect, GENERATED[0], 80 if joined else 20)
         if not joined:
             hatch = QColor(color);hatch.setAlpha(170)
-            p.fillRect(rect, QBrush(hatch, Qt.BDiagPattern))
+            p.fillRect(rect.adjusted(2, 0, -2, 0) if not is_classic_theme() and rect.width() > 8 else rect, QBrush(hatch, Qt.BDiagPattern))
         width, seconds, metrics = rect.width() - 2 * ui_px(4), self.sequence.gap(link.target[0]), self.fontMetrics()
         if width > ui_px(10):
             # A narrow piece keeps its length rather than half a method name; the tooltip has the rest.
             text = piece_text(seconds, link.method)
             if metrics.horizontalAdvance(text) > width:text = f'{seconds:.1f} s'
-            p.setPen(QColor(theme_color('#e6e6e6', '#202020')))
+            p.setPen(track_text(GENERATED[0], '#e6e6e6', 80 if joined else 20) if not is_classic_theme() else QColor(theme_color('#e6e6e6', '#202020')))
             p.drawText(rect.adjusted(ui_px(4), 0, -ui_px(4), 0), Qt.AlignCenter, metrics.elidedText(text, Qt.ElideRight, round(width)))
 
     def _paint_row(self, p, first, row_state, bars, pieces):
@@ -686,6 +715,8 @@ class SequenceView(QWidget):
         for shape in shapes[1:]:box = box.united(shape)
         person = next((q for q in self._people(self.sequence.block(first[0])) if q.id == first[1]), None)
         color = QColor(theme_color(person.color)) if person else QColor(theme_color('#d9e8fa'))
+        if not is_classic_theme():
+            return t3_theme.outline(p, box.adjusted(-2, -2, 2, 2), theme_color('#ffffff', '#202020'), 1.5, ui_px(6), dashed=row_state != 'joined')
         p.setBrush(Qt.NoBrush);p.setPen(QPen(color, 1.5, Qt.SolidLine if row_state == 'joined' else Qt.DashLine))
         p.drawRect(box.adjusted(-1, -1, 1, 1))
 
@@ -696,7 +727,7 @@ class SequenceView(QWidget):
         state = self.states.get(block.id)
         parts = (('working',) if block.id == self.busy else ()) + (Path(block.video).name, f'{format_time(block.start)}-{format_time(block.end)}') \
             + ((state.label,) if state and state.label else ())
-        p.setPen(QColor(theme_color('#b1b9c1')))
+        p.setPen(track_text(VIDEO, '#b1b9c1', self._block_alpha(block)))
         p.drawText(QRectF(shown.left() + ui_px(6), shown.top(), width, shown.height()), Qt.AlignVCenter,
                    self.fontMetrics().elidedText(' | '.join(parts), Qt.ElideRight, round(width)))
 
@@ -714,7 +745,7 @@ class SequenceView(QWidget):
         """Ticks and grid as the slider's, in sequence time; the ruler labels are drawn by the same steps."""
         span, step = self.span(), self.ruler_step()
         end = self.view_start + span
-        for size, color in ((step / 5, QColor(133, 133, 133, 40)), (step, QColor(115, 115, 115, 145))):
+        for size, color in ((step / 5, grid_color(False)), (step, grid_color(True))):
             p.setPen(QPen(color, 1))
             for n in range(math.ceil(self.view_start / size - 1e-9), math.floor(end / size + 1e-9) + 1):
                 x = self.x_of(n * size)

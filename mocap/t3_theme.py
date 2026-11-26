@@ -6,10 +6,12 @@ program names is still the Classic Dark one: `color()` turns it into this look's
 widget style sheets need no second set of colours.
 """
 import re
+import sys
 
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
-from PySide6.QtWidgets import QMenu
+from PySide6.QtCore import QEvent, QObject, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication, QIcon, QLinearGradient, QPainter,
+                           QPainterPath, QPalette, QPen, QPixmap, QPolygonF)
+from PySide6.QtWidgets import QApplication, QMainWindow, QMenu, QPushButton, QStyle, QWidget
 
 from .paths import ROOT
 
@@ -19,19 +21,29 @@ FONT_FILES = ('Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'In
 # Written in the dark colours; LIGHT turns each one into its light counterpart.
 STYLE = """
 QWidget { color:#f5f5f5; font-size:12px; }
-QMainWindow,QDialog { background:#0a0a0a; }
+QMainWindow { background:#000000; }
+QDialog { background:#0a0a0a; }
 QLabel#brand { font-size:13px; font-weight:600; color:#f5f5f5; padding:0 8px; }
 QLabel#muted { color:#818181; }
 QLabel#status { color:#a3a3a3; padding:3px 6px; }
 QLabel#taskInfo { color:#51a2ff; padding:3px 6px; }
-QFrame#editor { background:#0a0a0a; border:1px solid #1f1f1f; }
-QWidget#editorHeader { background:#0a0a0a; border-bottom:1px solid #1f1f1f; }
+QFrame#editor { background:#0a0a0a; border:1px solid #1f1f1f; border-radius:10px; padding:2px; }
+QFrame#editor QFrame#editor { border:0; border-right:1px solid #1f1f1f; border-radius:0; padding:0; }
+QWidget#editorHeader { background:transparent; border:0; }
+QWidget#editorHeader QPushButton { background:transparent; border-color:transparent; color:#d4d4d4; }
+QWidget#editorHeader QPushButton:hover { background:#1e1e1e; color:#f5f5f5; }
+QWidget#editorHeader QPushButton:pressed { background:#161616; }
+QWidget#editorHeader QPushButton:checked { background:#1e1e1e; border-color:#262626; color:#f5f5f5; }
+QWidget#editorHeader QPushButton:disabled { background:transparent; border-color:transparent; color:#525252; }
+QToolButton { background:transparent; border:1px solid transparent; border-radius:6px; padding:3px; }
+QToolButton:hover { background:#1e1e1e; }
+QToolButton:checked { background:#17213a; border-color:#264a9e; }
 QTabWidget#peopleTabs::pane { background:#0a0a0a; border:0; }
 QTabWidget#peopleTabs QTabBar, QTabBar#modelManagerTabs { qproperty-drawBase:0; }
 QTabWidget#peopleTabs QTabBar::tab, QTabBar#modelManagerTabs::tab { background:#0a0a0a; color:#a3a3a3; border:1px solid #0a0a0a; border-radius:6px; padding:5px 10px; }
 QTabWidget#peopleTabs QTabBar::tab:!selected:hover, QTabBar#modelManagerTabs::tab:!selected:hover { background:#161616; color:#f5f5f5; }
 QTabWidget#peopleTabs QTabBar::tab:selected, QTabBar#modelManagerTabs::tab:selected { background:#1e1e1e; border-color:#262626; color:#f5f5f5; }
-QGroupBox { background:#111111; border:1px solid #1f1f1f; border-radius:8px; margin-top:17px; padding:9px 7px 7px; font-weight:600; }
+QGroupBox { background:#111111; border:1px solid #1f1f1f; border-radius:10px; margin-top:19px; padding:10px 8px 8px; font-weight:600; }
 QGroupBox::title { subcontrol-origin:margin; left:4px; padding:0 3px; color:#f5f5f5; }
 QPushButton { background:#171717; border:1px solid #262626; border-radius:6px; padding:5px 9px; font-weight:500; }
 QPushButton:hover { background:#1e1e1e; border-color:#2f2f2f; }
@@ -42,6 +54,7 @@ QPushButton#primary { background:#346bf1; border-color:#346bf1; color:#ffffff; f
 QPushButton#primary:hover { background:#3061d9; border-color:#3061d9; }
 QPushButton#primary:disabled { background:#16233f; border-color:#16233f; color:#6f7c99; }
 QPushButton#transport { padding:3px; min-width:25px; }
+QPushButton[accessibleName="People Help"],QPushButton[accessibleName="Timeline Help"] { padding:3px 0; color:#a3a3a3; }
 QComboBox,QAbstractSpinBox,QLineEdit { background:#141414; border:1px solid #262626; border-radius:6px; padding:3px 6px; min-height:20px; selection-background-color:#264a9e; selection-color:#ffffff; }
 QComboBox:hover,QAbstractSpinBox:hover,QLineEdit:hover { border-color:#3a3a3a; }
 QAbstractSpinBox:focus,QLineEdit:focus { border-color:#346bf1; }
@@ -60,18 +73,20 @@ QCheckBox::indicator:checked { border-color:#346bf1; background:#346bf1; image:u
 QCheckBox::indicator:disabled { border-color:#262626; background:#0f0f0f; }
 QCheckBox::indicator:checked:disabled { border-color:#16233f; background:#16233f; }
 QListWidget#peopleList::item,QListWidget#streamPeopleList::item { min-height:24px; }
+QListWidget#peopleList { border:0; }
 QListWidget#peopleList::indicator,QListWidget#streamPeopleList::indicator { width:16px; height:16px; border:1px solid #3a3a3a; border-radius:4px; background:#141414; }
 QListWidget#peopleList::indicator:hover,QListWidget#streamPeopleList::indicator:hover { border-color:#5b8af5; background:#17213a; }
 QListWidget#peopleList::indicator:checked,QListWidget#streamPeopleList::indicator:checked { border-color:#346bf1; background:#346bf1; image:url("CHECK_ICON"); }
 QListWidget#peopleList::indicator:disabled,QListWidget#streamPeopleList::indicator:disabled { border-color:#262626; background:#0f0f0f; }
 QListWidget,QTreeWidget { background:#0a0a0a; selection-background-color:#1e1e1e; selection-color:#f5f5f5; outline:0; }
-QProgressBar { background:#141414; border:0; height:3px; }
+QFrame#editor QListWidget { border:0; }
+QProgressBar { background:transparent; border:0; height:3px; }
 QProgressBar::chunk { background:#346bf1; }
 QTextEdit,QPlainTextEdit,QTableWidget { background:#0a0a0a; border:1px solid #1f1f1f; border-radius:6px; selection-background-color:#264a9e; selection-color:#ffffff; }
 QTableWidget { selection-background-color:#1e1e1e; selection-color:#f5f5f5; gridline-color:#1f1f1f; }
 QTextEdit { font-family:Consolas; font-size:11px; }
 QHeaderView::section { background:#111111; color:#a3a3a3; border:0; border-bottom:1px solid #1f1f1f; padding:6px; }
-QMenuBar { background:#0a0a0a; border-bottom:1px solid #1f1f1f; }
+QMenuBar { background:#000000; border:0; padding:2px 4px 0; }
 QMenuBar::item { padding:4px 8px; border-radius:6px; background:transparent; }
 QMenuBar::item:selected { background:#1e1e1e; }
 QMenu { background:#111111; border:1px solid #262626; border-radius:8px; padding:4px; }
@@ -79,11 +94,12 @@ QMenu::item { padding:5px 22px; border-radius:4px; }
 QMenu::item:selected { background:#1e1e1e; color:#f5f5f5; }
 QMenu::item:disabled { color:#525252; }
 QMenu::separator { height:1px; background:#1f1f1f; margin:4px 6px; }
-QSplitter::handle { background:#0a0a0a; }
+QSplitter::handle { background:transparent; }
 QScrollArea { background:#0a0a0a; border:0; }
 QWidget#modelSidebar,QStackedWidget#modelPages,QWidget[motion_tool],
-QWidget#modelSettingsViewport,QFrame#modelActions { background:#0a0a0a; }
-QWidget#modelSidebar QGroupBox { background:#111111; }
+QWidget#modelSettingsViewport,QFrame#modelActions { background:#000000; }
+QScrollArea#modelSettings,QStackedWidget#modelPages > QWidget { background:#000000; }
+QWidget#modelSidebar QGroupBox { background:#0a0a0a; }
 QScrollBar:vertical { width:9px; background:transparent; }
 QScrollBar::handle:vertical { background:#2a2a2a; border-radius:3px; min-height:25px; }
 QScrollBar::handle:vertical:hover { background:#3a3a3a; }
@@ -94,7 +110,7 @@ QScrollBar::handle:horizontal { background:#2a2a2a; border-radius:3px; min-width
 QScrollBar::handle:horizontal:hover { background:#3a3a3a; }
 QScrollBar::add-line:horizontal,QScrollBar::sub-line:horizontal { width:0; }
 QScrollBar::add-page:horizontal,QScrollBar::sub-page:horizontal { background:transparent; }
-QToolTip { background:#111111; color:#f5f5f5; border:1px solid #262626; padding:5px; }
+QToolTip { background:#171717; color:#f5f5f5; border:1px solid #2f2f2f; padding:6px 8px; }
 """
 
 # The dark colours of STYLE and of DARK below, each with its light counterpart.
@@ -130,6 +146,10 @@ LIGHT_ACCENTS = {
     '#245786': '#1447e6', '#174674': '#1b4ed8', '#47729b': '#3160db', '#e0ebf7': '#e0e6f7', '#dce9f7': '#e0e6f7',
     '#8a4809': '#bb4d00',
 }
+# Classic colours of the timeline's tracks (the video, the motion, the two feet, the two hands, generated frames),
+# each with this look's livelier colour.
+TRACKS = {'#6289ad': '#615fff', '#6aa186': '#00d492', '#56b6a7': '#00d3f2', '#c78f5f': '#ff8904', '#79a9db': '#a684ff',
+          '#bf8dcf': '#fb64b6', '#d8a24a': '#ffb900', '#8a4809': '#ffb900'}
 # Grey level of Classic Dark -> grey level of this look, for greys DARK does not name.
 GREYS = ((0x00, 0x00), (0x25, 0x0a), (0x30, 0x11), (0x45, 0x1c), (0x55, 0x2a), (0x74, 0x52), (0xa0, 0x81),
          (0xb8, 0xa3), (0xd5, 0xf5), (0xff, 0xff))
@@ -189,6 +209,142 @@ def color(classic_dark, classic_light, is_light):
     return LIGHT_ACCENTS.get(classic_light, classic_light)
 
 
+def track(color):
+    """The colour of a timeline bar for the colour the code gives it: a track's own colour from TRACKS, the green of the
+    motion row for a person whose colour is a grey, any other colour of a person made livelier. None for a dark grey,
+    which the code gives a row that has nothing in it."""
+    color = QColor(color).name()
+    if color in TRACKS:
+        return TRACKS[color]
+    if is_grey(color):
+        return TRACKS['#6aa186'] if _levels(color)[0] >= 0x70 else None
+    hue, saturation, value, _ = QColor(color).getHsvF()
+    return QColor.fromHsvF(max(0., hue), min(1., saturation * 1.35 + .1), max(value, .9)).name()
+
+
+def bar_opacity(alpha):
+    """How solid a bar is for the alpha Classic tints it with: its usual 80 and above are solid."""
+    return min(1., alpha / 80)
+
+
+def paint_bar(p, rect, color, alpha, radius, is_light):
+    """A rounded bar of a timeline track, solid for a Classic alpha of 80 and above and fainter below."""
+    if rect.width() <= 0 or rect.height() <= 0:
+        return
+    vivid, opacity = track(color), bar_opacity(alpha)
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    radius = min(radius, rect.height() / 2, rect.width() / 2)
+    if vivid is None:
+        p.setBrush(QColor(light('#111111') if is_light else '#111111'))
+    else:
+        top, bottom = QColor(vivid).lighter(108), QColor(vivid).darker(112)
+        top.setAlphaF(opacity);bottom.setAlphaF(opacity)
+        fill = QLinearGradient(rect.topLeft(), rect.bottomLeft())
+        fill.setColorAt(0, top);fill.setColorAt(1, bottom)
+        p.setBrush(fill)
+    p.drawRoundedRect(rect, radius, radius)
+    p.restore()
+
+
+def bar_text(color, alpha, is_light):
+    """The colour of text on a bar: white or near-black on a solid bar, whichever reads better, the look's text
+    colour on a faint bar and its muted colour on an empty row."""
+    vivid = track(color)
+    if vivid is None:
+        return QColor(light('#818181') if is_light else '#818181')
+    if bar_opacity(alpha) < .7:
+        return QColor(light('#f5f5f5') if is_light else '#f5f5f5')
+    red, green, blue = (level / 255 for level in _levels(vivid))
+    return QColor('#ffffff' if .2126 * red + .7152 * green + .0722 * blue < .5 else '#0a0a0a')
+
+
+def grid(major, is_light):
+    """The time grid: thin lines that stay quiet over a solid bar."""
+    level = 0 if is_light else 255
+    return QColor(level, level, level, (34 if major else 12) if not is_light else (40 if major else 14))
+
+
+def outline(p, rect, color, width, radius, dashed=False):
+    """A rounded outline, as around the chosen block."""
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(QColor(color), width, Qt.DashLine if dashed else Qt.SolidLine))
+    inset = width / 2
+    box = rect.adjusted(inset, inset, -inset, -inset)
+    radius = max(0., min(radius, box.height() / 2, box.width() / 2))
+    p.drawRoundedRect(box, radius, radius)
+    p.restore()
+
+
+def paint_person(p, row, color, swatch, is_light):
+    """A row of the People list as Dark and Light draw it: a rounded background when it is the chosen row or under the
+    cursor, the check box where the list answers clicks, the person's picture with round corners (their initial while
+    there is none), the name, and their colour as a dot inside `swatch`, the place the list opens the colour from."""
+    tone = light if is_light else (lambda value: value)
+    style, box = row.widget.style(), QRectF(row.rect).adjusted(1.5, 1.5, -1.5, -1.5)
+    p.save()
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.SmoothPixmapTransform)
+    if row.state & (QStyle.State_Selected | QStyle.State_MouseOver):
+        chosen = bool(row.state & QStyle.State_Selected)
+        p.setPen(QPen(QColor(tone('#262626')), 1) if chosen else Qt.NoPen)
+        p.setBrush(QColor(tone('#1e1e1e' if chosen else '#161616')))
+        p.drawRoundedRect(box, 8, 8)
+    p.setOpacity(1 if row.state & QStyle.State_Enabled else .45)
+    check = QRectF(style.subElementRect(QStyle.SE_ItemViewItemCheckIndicator, row, row.widget))
+    side = min(check.width(), check.height())
+    check = QRectF(check.center().x() - side / 2, check.center().y() - side / 2, side, side).adjusted(.5, .5, -.5, -.5)
+    checked = row.checkState == Qt.Checked
+    p.setPen(QPen(QColor(tone('#346bf1' if checked else '#3a3a3a')), 1))
+    p.setBrush(QColor(tone('#346bf1' if checked else '#141414')))
+    p.drawRoundedRect(check, 4, 4)
+    if checked:
+        p.setPen(QPen(QColor('#ffffff'), 1.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        left, top, unit = check.left(), check.top(), check.width() / 15
+        p.drawPolyline(QPolygonF([QPointF(left + 3.6 * unit, top + 7.8 * unit), QPointF(left + 6.4 * unit, top + 10.6 * unit),
+                                  QPointF(left + 11.4 * unit, top + 4.8 * unit)]))
+    height = max(8., min(float(row.decorationSize.height()), box.height() - 6))
+    picture = QRectF(check.right() + 9, box.center().y() - height / 2, height * 3 / 4, height)
+    shape = QPainterPath()
+    shape.addRoundedRect(picture, 6, 6)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(tone('#171717')))
+    p.drawPath(shape)
+    image = row.icon.pixmap(row.decorationSize * 2) if not row.icon.isNull() else QPixmap()
+    blank = image.isNull() or image.toImage().pixelColor(image.width() // 2, image.height() // 2).alpha() == 0
+    if not blank:
+        p.setClipPath(shape)
+        scale = max(picture.width() / image.width(), picture.height() / image.height())
+        width, tall = image.width() * scale, image.height() * scale
+        p.drawPixmap(QRectF(picture.center().x() - width / 2, picture.center().y() - tall / 2, width, tall), image, QRectF(image.rect()))
+        p.setClipping(False)
+    else:
+        initial = QFont(row.font)
+        initial.setWeight(QFont.DemiBold)
+        initial.setPointSizeF(row.font.pointSizeF() * 1.25)
+        p.setFont(initial)
+        p.setPen(QColor(tone('#a3a3a3') if is_grey(QColor(color).name()) else track(color)))
+        p.drawText(picture, Qt.AlignCenter, row.text.strip()[:1].upper())
+    p.setBrush(Qt.NoBrush)
+    p.setPen(QPen(QColor(tone('#262626')), 1))
+    p.drawPath(shape)
+    name = QFont(row.font)
+    name.setWeight(QFont.Medium)
+    p.setFont(name)
+    p.setPen(QColor(tone('#f5f5f5')))
+    space = QRectF(picture.right() + 9, box.top(), max(0., swatch.left() - picture.right() - 13), box.height())
+    p.drawText(space, Qt.AlignVCenter | Qt.AlignLeft, QFontMetricsF(name).elidedText(row.text, Qt.ElideRight, space.width()))
+    dot = QRectF(0, 0, round(side * .875), round(side * .875))
+    dot.moveCenter(QRectF(swatch).center())
+    p.setPen(QPen(QColor(tone('#3a3a3a')), 1))
+    p.setBrush(QColor(color))
+    p.drawEllipse(dot)
+    p.restore()
+
+
 def stylesheet(is_light):
     style = STYLE
     if is_light:
@@ -230,6 +386,114 @@ def font(fallback, points):
     return result
 
 
+TRANSPORT = {'|<': 'first', '<': 'previous', '>': 'next', '>|': 'last'}   # the text of a transport button -> its picture
+
+
+def transport_picture(kind, size, color):
+    """A transport button's picture in a 16-unit box: a triangle towards the frame it goes to, with a bar for the
+    first and the last frame; the play triangle and the two bars of pause."""
+    image = QPixmap(size, size)
+    image.fill(Qt.transparent)
+    p = QPainter(image)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.scale(size / 16, size / 16)
+    if kind in ('next', 'last'):   # drawn pointing back, mirrored for forward
+        p.translate(16, 0)
+        p.scale(-1, 1)
+    p.setPen(QPen(QColor(color), 1.3, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+    p.setBrush(QColor(color))
+    if kind in ('play', 'pause'):
+        if kind == 'play':
+            p.drawPolygon(QPolygonF([QPointF(4.6, 2.8), QPointF(4.6, 13.2), QPointF(13, 8)]))
+        else:
+            p.setPen(QPen(QColor(color), 2.6, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(QPointF(5.2, 3.6), QPointF(5.2, 12.4))
+            p.drawLine(QPointF(10.8, 3.6), QPointF(10.8, 12.4))
+        p.end()
+        return image
+    barred = kind in ('first', 'last')
+    right = 12.2 if barred else 10.8
+    p.drawPolygon(QPolygonF([QPointF(right, 3.8), QPointF(right, 12.2), QPointF(right - 6, 8)]))
+    if barred:
+        p.setPen(QPen(QColor(color), 1.7, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(3.8, 3.8), QPointF(3.8, 12.2))
+    p.end()
+    return image
+
+
+def dress(widget, classic, is_light, scale=100):
+    """What a style sheet cannot do for one widget: a transport button shows a picture in Dark and Light and its text
+    (|<, <, >, >|) in the Classic looks, the play button shows its two pictures in the look's colour, and a window's
+    title bar takes the look's colour."""
+    tone = light if is_light else (lambda value: value)
+
+    def icon(kind, side):
+        result = QIcon()
+        result.addPixmap(transport_picture(kind, side * 2, tone('#d4d4d4')), QIcon.Normal)
+        result.addPixmap(transport_picture(kind, side * 2, tone('#525252')), QIcon.Disabled)
+        return result
+
+    if isinstance(widget, QPushButton) and widget.objectName() == 'transport':
+        kind = widget.property('transportKind') or TRANSPORT.get(widget.text())
+        window = widget.window()
+        if getattr(window, 'play_button', None) is widget and hasattr(window, 'pause_icon'):
+            # The window swaps its play and pause icons itself; here they become the look's.
+            if not hasattr(window, 'classic_play_icons'):
+                window.classic_play_icons = window.play_icon, window.pause_icon
+            window.play_icon, window.pause_icon = window.classic_play_icons if classic else (
+                icon('play', round(16 * scale / 100)), icon('pause', round(16 * scale / 100)))
+            widget.setIcon(window.pause_icon if widget.accessibleName() == 'Pause' else window.play_icon)
+        elif kind:
+            if widget.property('transportKind') is None:
+                widget.setProperty('transportKind', kind)
+                widget.setProperty('transportText', widget.text())
+            if classic:
+                widget.setIcon(QIcon())
+                widget.setText(widget.property('transportText'))
+            else:
+                side = round(14 * scale / 100)
+                widget.setText('')
+                widget.setIcon(icon(kind, side))
+                widget.setIconSize(QSize(side, side))
+    if widget.isWindow() and widget.windowType() in (Qt.Window, Qt.Dialog, Qt.Tool):
+        title_bar(widget, classic, is_light)
+
+
+def title_bar(window, classic, is_light):
+    """On Windows 11, paints the window's title bar in the colour of the window under it, so the program's own surface
+    starts at the top edge; the Classic looks give the title bar back to Windows. Says whether it did anything."""
+    if sys.platform != 'win32' or QGuiApplication.platformName() != 'windows' or window.windowHandle() is None:
+        return False
+    import ctypes
+    tone = light if is_light else (lambda value: value)
+
+    def reference(color):
+        red, green, blue = _levels(color)
+        return red | green << 8 | blue << 16
+
+    if classic:   # 0xffffffff asks for the colour Windows would use
+        dark_bar = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        values = ((20, int(dark_bar)), (35, 0xffffffff), (36, 0xffffffff), (34, 0xffffffff))
+    else:
+        canvas = '#000000' if isinstance(window, QMainWindow) else '#0a0a0a'
+        values = ((20, int(not is_light)), (35, reference(tone(canvas))), (36, reference(tone('#a3a3a3'))),
+                  (34, reference(tone('#1f1f1f'))))
+    try:
+        set_attribute = ctypes.windll.dwmapi.DwmSetWindowAttribute
+        set_attribute.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_uint)
+        handle = int(window.winId())
+        for attribute, value in values:   # immersive dark mode, caption colour, text colour, border colour
+            set_attribute(handle, attribute, ctypes.byref(ctypes.c_uint(value)), 4)
+    except (AttributeError, OSError):
+        return False
+    return True
+
+
+def dress_all(app, classic, is_light, scale):
+    for widget in app.allWidgets():
+        dress(widget, classic, is_light, scale)
+
+
 class RoundMenus(QObject):
     """Lets the rounded corners of a menu show what is behind them: a menu is a window of its own, and without a
     see-through background its corners outside the rounded border are painted square."""
@@ -239,4 +503,12 @@ class RoundMenus(QObject):
             watched.setWindowFlag(Qt.FramelessWindowHint, True)
             watched.setWindowFlag(Qt.NoDropShadowWindowHint, True)
             watched.setAttribute(Qt.WA_TranslucentBackground, True)
+        elif event.type() in (QEvent.Polish, QEvent.Show) and isinstance(watched, QWidget) and (
+                watched.isWindow() if event.type() == QEvent.Show else watched.objectName() == 'transport'):
+            app = QApplication.instance()
+            theme, scale = app.property('uiTheme') or 'dark', app.property('uiScale') or 100
+            dress(watched, theme.startswith('classic'), theme.endswith('light'), scale)
+            if event.type() == QEvent.Show:   # a button polished before its window was complete
+                for button in watched.findChildren(QPushButton, 'transport'):
+                    dress(button, theme.startswith('classic'), theme.endswith('light'), scale)
         return False

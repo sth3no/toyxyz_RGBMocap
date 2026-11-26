@@ -37,6 +37,11 @@ class PersonColorDelegate(QStyledItemDelegate):
     def paint(self,painter,option,index):
         if isinstance(index.data(Qt.UserRole),str):
             super().paint(painter,option,index);return
+        from .theme import is_classic_theme,is_light_theme
+        if not is_classic_theme():
+            from .t3_theme import paint_person
+            row=QStyleOptionViewItem(option);self.initStyleOption(row,index)
+            paint_person(painter,row,index.data(Qt.UserRole+1),self.parent().color_rect(index),is_light_theme());return
         content=QStyleOptionViewItem(option)
         content.rect.adjust(0,0,-42,0)
         super().paint(painter,content,index)

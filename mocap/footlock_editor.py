@@ -3,7 +3,7 @@ from bisect import bisect_left,bisect_right
 from PySide6.QtCore import Qt,QRectF,QPointF
 from PySide6.QtGui import QColor,QPen
 from PySide6.QtWidgets import QMenu
-from .theme import is_light_theme, theme_color
+from .theme import is_light_theme, paint_track_bar, theme_color, track_tint
 from .foot_contacts import FOOT_COLORS
 CONTACT_COLORS=(*FOOT_COLORS,"#79a9db","#bf8dcf")
 
@@ -227,7 +227,7 @@ class FootLockEditor:
             if not self.contacts_available or foot>=len(self.contacts):
                 p.setPen(QColor(theme_color('#777777')));p.drawText(QRectF(self.LEFT+8,y,max(0,self.width()-self.LEFT-25),self.TRACK_HEIGHT),Qt.AlignVCenter,'Apply Correction to generate locks');continue
             p.save();p.setClipRect(QRectF(self.LEFT,y,max(1,self.width()-self.LEFT-self.RIGHT),self.TRACK_HEIGHT))
-            tint=QColor(color);tint.setAlpha(90 if self.contact_edit_enabled else 40)
+            alpha=90 if self.contact_edit_enabled else 40;tint=track_tint(color,alpha)
             lo=bisect_right(self._contact_ends[foot],self.view_start)
             hi=bisect_right(self._contact_starts[foot],self.view_start+self.span())
             if hi-lo>max(1,(self.width()-self.LEFT-self.RIGHT)//3):
@@ -243,8 +243,7 @@ class FootLockEditor:
                 for index in range(lo,hi):
                     self.contact_draw_queries+=1
                     if self._foot_drag and (foot,index)==(self._foot_drag['foot'],self._foot_drag['index']) and self._foot_drag['original'] is not None:continue
-                    rect=self._contact_rect(foot,self.contacts[foot][index]);p.fillRect(rect,tint)
-                    p.setPen(QPen(QColor(color),1));p.drawRect(rect)
+                    rect=self._contact_rect(foot,self.contacts[foot][index]);paint_track_bar(p,rect,color,alpha,outline=True)
                     if rect.width()>42:
                         s,e=self.contacts[foot][index]
                         if is_light_theme():p.setPen(QColor('#333e48'))

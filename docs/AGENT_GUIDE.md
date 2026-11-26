@@ -748,7 +748,15 @@ Classic Dark colours: `theme_color`, `themed_colors` and
 `set_appearance_style` turn them into the current look's colours, so a new
 widget needs no second palette. A grey Classic line is darker than its
 surface and a Dark line is lighter, so add a grey to `t3_theme.DARK` when
-the curve in `GREYS` gives it the wrong role. The app updates the
+the curve in `GREYS` gives it the wrong role. The timelines paint their
+tracks through `paint_track_bar`, `track_tint`, `track_text` and `grid_color`
+of `mocap/theme.py`: the Classic looks tint a track as before, Dark and Light
+draw solid rounded bars in the colours of `t3_theme.TRACKS` (a person's own
+colour made stronger, the motion green for a grey one). `t3_theme.dress` does
+what a style sheet cannot: pictures on the transport buttons, the play and
+pause icons in the look's colour and the Windows 11 title bar colour through
+`DwmSetWindowAttribute`; `t3_theme.paint_person` draws a row of the People
+list. The app updates the
 Qt palette, fonts, widget styles, and timeline geometry when the user clicks
 **OK**. The system display scale still applies.
 

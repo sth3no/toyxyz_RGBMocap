@@ -2,7 +2,7 @@
 import re
 
 from PySide6.QtCore import QLocale
-from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QPalette, QFontDatabase, QPen
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QMessageBox, QPushButton, QVBoxLayout, QWidget)
 from . import t3_theme
@@ -145,6 +145,47 @@ def theme_color(color, light=None):
     return (light or LIGHT_COLORS.get(color.lower(), color)) if is_light_theme() else color
 
 
+def paint_track_bar(p, rect, color, alpha=80, outline=False):
+    """A bar of a timeline track in `color`. Classic tints the track with it, with a line around it for `outline` whose
+    pen stays for the text; Dark and Light draw a rounded bar, solid for an alpha of 80 and above, and leave the pen
+    that reads on it."""
+    if is_classic_theme():
+        tint = QColor(color)
+        tint.setAlpha(alpha)
+        p.fillRect(rect, tint)
+        if outline:
+            p.setPen(QPen(QColor(color), 1))
+            p.drawRect(rect)
+        return
+    t3_theme.paint_bar(p, rect, color, alpha, ui_px(5), is_light_theme())
+    p.setPen(t3_theme.bar_text(color, alpha, is_light_theme()))
+
+
+def track_tint(color, alpha):
+    """The fill of a track drawn column by column, where single bars are too many to draw."""
+    if is_classic_theme():
+        tint = QColor(color)
+        tint.setAlpha(alpha)
+    else:
+        tint = QColor(t3_theme.track(color) or theme_color('#303030'))
+        tint.setAlphaF(t3_theme.bar_opacity(alpha))
+    return tint
+
+
+def track_text(color, classic, alpha=80):
+    """The colour of text on a bar painted by paint_track_bar; `classic` is the colour Classic Dark writes it in."""
+    if is_classic_theme():
+        return QColor(theme_color(classic))
+    return t3_theme.bar_text(color, alpha, is_light_theme())
+
+
+def grid_color(major):
+    """The colour of the timeline's time grid, for its major or its minor lines."""
+    if is_classic_theme():
+        return QColor(115, 115, 115, 145) if major else QColor(133, 133, 133, 40)
+    return t3_theme.grid(major, is_light_theme())
+
+
 def themed_colors(text):
     if not is_classic_theme():
         return re.sub(r'#[0-9a-fA-F]{6}\b', lambda match: theme_color(match[0]), text)
@@ -273,3 +314,4 @@ def apply_appearance(app, theme, scale):
         if style:
             widget.setStyleSheet(appearance_style(style))
         QWidget.update(widget)
+    t3_theme.dress_all(app, classic, theme.endswith('light'), scale)
