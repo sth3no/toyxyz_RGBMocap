@@ -110,9 +110,11 @@ class WidgetsTest(AppearanceCase):
         self.assertGreater(self.card(60).height(), self.card(5).height())
 
     def test_card_style_follows_the_theme(self):
-        APP.setProperty('uiTheme', 'light')
-        card = self.card()
-        self.assertIn('#f1f3f6', card.styleSheet());self.assertNotIn('#303030', card.styleSheet())
+        for theme, shown, absent in (('light', '#ffffff', '#111111'), ('dark', '#111111', '#303030'),
+                                     ('classic-light', '#f1f3f6', '#303030'), ('classic-dark', '#303030', '#111111')):
+            APP.setProperty('uiTheme', theme)
+            card = self.card()
+            self.assertIn(f'background:{shown}', card.styleSheet(), theme);self.assertNotIn(absent, card.styleSheet(), theme)
 
     def test_card_shows_what_it_was_given(self):
         card = self.card(3)
@@ -173,19 +175,20 @@ class WidgetsTest(AppearanceCase):
         overlay = self.overlay();image = overlay.grab().toImage()
         self.assertNotEqual(image.pixelColor(140, 120), image.pixelColor(10, 10))
         self.assertEqual(image.pixelColor(10, 10), image.pixelColor(390, 290))
-        self.assertIn(QColor('#74a6e0'), [image.pixelColor(x, 120) for x in range(90, 100)])
+        self.assertIn(QColor('#5b8af5'), [image.pixelColor(x, 120) for x in range(90, 100)])
         self.assertEqual(overlay.holes, [QRect(100, 100, 80, 40)])
 
     def test_overlay_without_dim_draws_only_the_ring(self):
         with patch.object(tutorial, 'DIM', False):
             overlay = self.overlay();image = overlay.grab().toImage()
         self.assertEqual(image.pixelColor(140, 120), image.pixelColor(10, 10))
-        self.assertIn(QColor('#74a6e0'), [image.pixelColor(x, 120) for x in range(90, 100)])
+        self.assertIn(QColor('#5b8af5'), [image.pixelColor(x, 120) for x in range(90, 100)])
 
     def test_ring_is_darker_on_the_light_theme(self):
-        APP.setProperty('uiTheme', 'light')
-        image = self.overlay().grab().toImage()
-        self.assertIn(QColor('#2866a3'), [image.pixelColor(x, 120) for x in range(90, 100)])
+        for theme, ring in (('light', '#1b4ed8'), ('classic-light', '#2866a3'), ('classic-dark', '#74a6e0')):
+            APP.setProperty('uiTheme', theme)
+            image = self.overlay().grab().toImage()
+            self.assertIn(QColor(ring), [image.pixelColor(x, 120) for x in range(90, 100)], theme)
 
 
 class Stand(QWidget):

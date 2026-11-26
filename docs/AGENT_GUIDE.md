@@ -729,7 +729,15 @@ baking must not accumulate whole mesh sequences in RAM. No new inference,
 runtime dependency, source motion or contact change is part of export.
 
 **File > Settings...** stores `ui_theme` and `ui_scale` in the installation-local
-`config/local.json`. Dark and 100% are the defaults. The app updates the
+`config/local.json`. `ui_theme` is `dark`, `light`, `classic-dark` or
+`classic-light`; Dark and 100% are the defaults. `mocap/theme.py` holds the
+two Classic looks and `mocap/t3_theme.py` holds Dark and Light (the stock
+colours, radii and Inter font of the T3 Code desktop app). Code keeps naming
+Classic Dark colours: `theme_color`, `themed_colors` and
+`set_appearance_style` turn them into the current look's colours, so a new
+widget needs no second palette. A grey Classic line is darker than its
+surface and a Dark line is lighter, so add a grey to `t3_theme.DARK` when
+the curve in `GREYS` gives it the wrong role. The app updates the
 Qt palette, fonts, widget styles, and timeline geometry when the user clicks
 **OK**. The system display scale still applies.
 

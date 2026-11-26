@@ -30,8 +30,11 @@ class FillBandTest(unittest.TestCase):
                 self.assertEqual(rows, list(range(top, top + ui_px(3))))
 
     def test_band_is_darker_on_the_light_theme(self):
-        self.assertEqual(len(self.band('light', 100, '#8a4809')[1]), 3)
+        self.assertEqual(len(self.band('light', 100, '#bb4d00')[1]), 3)
         self.assertEqual(self.band('light', 100, '#d8a24a')[1], [])
+        self.assertEqual(len(self.band('classic-light', 100, '#8a4809')[1]), 3)
+        self.assertEqual(self.band('classic-light', 100, '#d8a24a')[1], [])
+        self.assertEqual(len(self.band('classic-dark', 100, '#d8a24a')[1]), 3)
 
 
 class RowsHeightTest(unittest.TestCase):
